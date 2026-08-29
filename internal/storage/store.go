@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,77 +11,83 @@ import (
 	"time"
 
 	"RealityChecker/internal/types"
+
+	_ "modernc.org/sqlite"
 )
 
-// TargetStore REALITY 目标资产持久化数据库
+// TargetStore REALITY 目标资产 SQLite 持久化数据库
 type TargetStore struct {
-	mu       sync.RWMutex
-	filePath string
-	records  map[string]*types.TargetRecord // key: domainLower
+	mu sync.RWMutex
+	db *sql.DB
 }
 
-// NewTargetStore 创建或载入目标资产数据库
-func NewTargetStore(filePath string) (*TargetStore, error) {
-	if filePath == "" {
-		filePath = "data/reality_targets.json"
+// NewTargetStore 创建或打开 SQLite 目标资产数据库
+func NewTargetStore(dbPath string) (*TargetStore, error) {
+	if dbPath == "" {
+		dbPath = "data/reality_targets.db"
 	}
+
+	dir := filepath.Dir(dbPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("创建数据库目录失败: %w", err)
+	}
+
+	dsn := fmt.Sprintf("%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)", dbPath)
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("打开 SQLite 数据库失败: %w", err)
+	}
+
+	// 限制单个文件连接池
+	db.SetMaxOpenConns(1)
 
 	store := &TargetStore{
-		filePath: filePath,
-		records:  make(map[string]*types.TargetRecord),
+		db: db,
 	}
 
-	if err := store.load(); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("载入资产库失败: %w", err)
+	if err := store.initSchema(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("初始化数据库表结构失败: %w", err)
 	}
 
 	return store, nil
 }
 
-// load 从文件载入记录
-func (s *TargetStore) load() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// initSchema 创建表和索引
+func (s *TargetStore) initSchema() error {
+	schema := `
+	CREATE TABLE IF NOT EXISTS reality_targets (
+		domain TEXT PRIMARY KEY,
+		asn TEXT NOT NULL,
+		country TEXT NOT NULL,
+		ip TEXT NOT NULL,
+		handshake_ms INTEGER NOT NULL,
+		cert_days INTEGER NOT NULL,
+		status_code INTEGER NOT NULL,
+		page_title TEXT,
+		is_cdn INTEGER NOT NULL DEFAULT 0,
+		is_hot INTEGER NOT NULL DEFAULT 0,
+		is_default_page INTEGER NOT NULL DEFAULT 0,
+		default_page_type TEXT,
+		stars INTEGER NOT NULL DEFAULT 0,
+		last_checked_at DATETIME NOT NULL
+	);
 
-	data, err := os.ReadFile(s.filePath)
-	if err != nil {
-		return err
-	}
-
-	var list []*types.TargetRecord
-	if err := json.Unmarshal(data, &list); err != nil {
-		return err
-	}
-
-	for _, rec := range list {
-		if rec != nil && rec.Domain != "" {
-			s.records[strings.ToLower(rec.Domain)] = rec
-		}
-	}
-	return nil
+	CREATE INDEX IF NOT EXISTS idx_targets_asn ON reality_targets (asn);
+	CREATE INDEX IF NOT EXISTS idx_targets_country ON reality_targets (country);
+	CREATE INDEX IF NOT EXISTS idx_targets_asn_country ON reality_targets (asn, country);
+	CREATE INDEX IF NOT EXISTS idx_targets_last_checked ON reality_targets (last_checked_at);
+	`
+	_, err := s.db.Exec(schema)
+	return err
 }
 
-// Save 保存记录到文件
-func (s *TargetStore) Save() error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	dir := filepath.Dir(s.filePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
+// Close 关闭数据库连接
+func (s *TargetStore) Close() error {
+	if s.db != nil {
+		return s.db.Close()
 	}
-
-	list := make([]*types.TargetRecord, 0, len(s.records))
-	for _, rec := range s.records {
-		list = append(list, rec)
-	}
-
-	data, err := json.MarshalIndent(list, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(s.filePath, data, 0644)
+	return nil
 }
 
 // UpsertTarget 插入或更新单条资产记录
@@ -88,38 +95,96 @@ func (s *TargetStore) UpsertTarget(record *types.TargetRecord) error {
 	if record == nil || record.Domain == "" {
 		return nil
 	}
-
-	s.mu.Lock()
-	key := strings.ToLower(record.Domain)
-	if record.LastCheckedAt.IsZero() {
-		record.LastCheckedAt = time.Now()
-	}
-	s.records[key] = record
-	s.mu.Unlock()
-
-	return s.Save()
+	return s.UpsertTargets([]*types.TargetRecord{record})
 }
 
-// UpsertTargets 批量插入或更新资产记录
+// UpsertTargets 批量插入或更新资产记录（事务安全）
 func (s *TargetStore) UpsertTargets(records []*types.TargetRecord) error {
 	if len(records) == 0 {
 		return nil
 	}
 
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO reality_targets (
+			domain, asn, country, ip, handshake_ms, cert_days, status_code,
+			page_title, is_cdn, is_hot, is_default_page, default_page_type,
+			stars, last_checked_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(domain) DO UPDATE SET
+			asn = excluded.asn,
+			country = excluded.country,
+			ip = excluded.ip,
+			handshake_ms = excluded.handshake_ms,
+			cert_days = excluded.cert_days,
+			status_code = excluded.status_code,
+			page_title = excluded.page_title,
+			is_cdn = excluded.is_cdn,
+			is_hot = excluded.is_hot,
+			is_default_page = excluded.is_default_page,
+			default_page_type = excluded.default_page_type,
+			stars = excluded.stars,
+			last_checked_at = excluded.last_checked_at
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
 	now := time.Now()
-	for _, record := range records {
-		if record != nil && record.Domain != "" {
-			key := strings.ToLower(record.Domain)
-			if record.LastCheckedAt.IsZero() {
-				record.LastCheckedAt = now
-			}
-			s.records[key] = record
+	for _, rec := range records {
+		if rec == nil || rec.Domain == "" {
+			continue
+		}
+		domainKey := strings.ToLower(strings.TrimSpace(rec.Domain))
+		lastChecked := rec.LastCheckedAt
+		if lastChecked.IsZero() {
+			lastChecked = now
+		}
+
+		isCDN := 0
+		if rec.IsCDN {
+			isCDN = 1
+		}
+		isHot := 0
+		if rec.IsHot {
+			isHot = 1
+		}
+		isDefault := 0
+		if rec.IsDefaultPage {
+			isDefault = 1
+		}
+
+		_, err := stmt.Exec(
+			domainKey,
+			strings.ToUpper(strings.TrimSpace(rec.ASN)),
+			strings.ToUpper(strings.TrimSpace(rec.Country)),
+			rec.IP,
+			rec.HandshakeMS,
+			rec.CertDays,
+			rec.StatusCode,
+			rec.PageTitle,
+			isCDN,
+			isHot,
+			isDefault,
+			rec.DefaultPageType,
+			rec.Stars,
+			lastChecked,
+		)
+		if err != nil {
+			return err
 		}
 	}
-	s.mu.Unlock()
 
-	return s.Save()
+	return tx.Commit()
 }
 
 // GetTargetsByASN 根据 ASN 和 国家 查询未过期的有效资产
@@ -127,50 +192,150 @@ func (s *TargetStore) GetTargetsByASN(asn, country string, maxAge time.Duration)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var result []*types.TargetRecord
-	now := time.Now()
-
 	asnNorm := strings.ToUpper(strings.TrimSpace(asn))
 	countryNorm := strings.ToUpper(strings.TrimSpace(country))
 
-	for _, rec := range s.records {
-		if rec == nil {
-			continue
-		}
+	asnWithPrefix := asnNorm
+	if !strings.HasPrefix(asnWithPrefix, "AS") && asnWithPrefix != "" {
+		asnWithPrefix = "AS" + asnWithPrefix
+	}
+	asnWithoutPrefix := strings.TrimPrefix(asnNorm, "AS")
 
-		// 校验 ASN (忽略大小写与 AS 前缀差异)
-		recASN := strings.ToUpper(strings.TrimSpace(rec.ASN))
-		if asnNorm != "" && recASN != "" {
-			if !strings.EqualFold(recASN, asnNorm) &&
-				!strings.EqualFold(strings.TrimPrefix(recASN, "AS"), strings.TrimPrefix(asnNorm, "AS")) {
-				continue
-			}
-		}
+	query := `
+		SELECT domain, asn, country, ip, handshake_ms, cert_days, status_code,
+		       page_title, is_cdn, is_hot, is_default_page, default_page_type,
+		       stars, last_checked_at
+		FROM reality_targets
+		WHERE (asn = ? OR asn = ?)
+	`
+	args := []interface{}{asnWithPrefix, asnWithoutPrefix}
 
-		// 校验国家 (若指定)
-		if countryNorm != "" && rec.Country != "" && !strings.EqualFold(rec.Country, countryNorm) {
-			continue
-		}
-
-		// 校验缓存时效
-		if maxAge > 0 && now.Sub(rec.LastCheckedAt) > maxAge {
-			continue
-		}
-
-		result = append(result, rec)
+	if countryNorm != "" {
+		query += " AND (country = ? OR country = '')"
+		args = append(args, countryNorm)
 	}
 
-	return result, nil
+	if maxAge > 0 {
+		minTime := time.Now().Add(-maxAge)
+		query += " AND last_checked_at >= ?"
+		args = append(args, minTime)
+	}
+
+	query += " ORDER BY stars DESC, handshake_ms ASC"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []*types.TargetRecord
+	for rows.Next() {
+		var rec types.TargetRecord
+		var isCDN, isHot, isDefault int
+		var pageTitle, defaultPageType sql.NullString
+
+		err := rows.Scan(
+			&rec.Domain,
+			&rec.ASN,
+			&rec.Country,
+			&rec.IP,
+			&rec.HandshakeMS,
+			&rec.CertDays,
+			&rec.StatusCode,
+			&pageTitle,
+			&isCDN,
+			&isHot,
+			&isDefault,
+			&defaultPageType,
+			&rec.Stars,
+			&rec.LastCheckedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		rec.IsCDN = (isCDN == 1)
+		rec.IsHot = (isHot == 1)
+		rec.IsDefaultPage = (isDefault == 1)
+		if pageTitle.Valid {
+			rec.PageTitle = pageTitle.String
+		}
+		if defaultPageType.Valid {
+			rec.DefaultPageType = defaultPageType.String
+		}
+
+		results = append(results, &rec)
+	}
+
+	return results, rows.Err()
+}
+
+// GetAllTargets 获取数据库中全部资产记录
+func (s *TargetStore) GetAllTargets() ([]*types.TargetRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `
+		SELECT domain, asn, country, ip, handshake_ms, cert_days, status_code,
+		       page_title, is_cdn, is_hot, is_default_page, default_page_type,
+		       stars, last_checked_at
+		FROM reality_targets
+		ORDER BY stars DESC, handshake_ms ASC
+	`
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []*types.TargetRecord
+	for rows.Next() {
+		var rec types.TargetRecord
+		var isCDN, isHot, isDefault int
+		var pageTitle, defaultPageType sql.NullString
+
+		err := rows.Scan(
+			&rec.Domain,
+			&rec.ASN,
+			&rec.Country,
+			&rec.IP,
+			&rec.HandshakeMS,
+			&rec.CertDays,
+			&rec.StatusCode,
+			&pageTitle,
+			&isCDN,
+			&isHot,
+			&isDefault,
+			&defaultPageType,
+			&rec.Stars,
+			&rec.LastCheckedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		rec.IsCDN = (isCDN == 1)
+		rec.IsHot = (isHot == 1)
+		rec.IsDefaultPage = (isDefault == 1)
+		if pageTitle.Valid {
+			rec.PageTitle = pageTitle.String
+		}
+		if defaultPageType.Valid {
+			rec.DefaultPageType = defaultPageType.String
+		}
+
+		results = append(results, &rec)
+	}
+
+	return results, rows.Err()
 }
 
 // Export 导出所有资产到指定 JSON 文件
 func (s *TargetStore) Export(exportPath string) error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	list := make([]*types.TargetRecord, 0, len(s.records))
-	for _, rec := range s.records {
-		list = append(list, rec)
+	list, err := s.GetAllTargets()
+	if err != nil {
+		return err
 	}
 
 	data, err := json.MarshalIndent(list, "", "  ")
@@ -186,7 +351,7 @@ func (s *TargetStore) Export(exportPath string) error {
 	return os.WriteFile(exportPath, data, 0644)
 }
 
-// Import 从外部 JSON 文件导入资产
+// Import 从外部 JSON 文件导入资产到 SQLite
 func (s *TargetStore) Import(importPath string) (int, error) {
 	data, err := os.ReadFile(importPath)
 	if err != nil {
@@ -198,27 +363,20 @@ func (s *TargetStore) Import(importPath string) (int, error) {
 		return 0, err
 	}
 
-	count := 0
-	s.mu.Lock()
-	for _, rec := range list {
-		if rec != nil && rec.Domain != "" {
-			s.records[strings.ToLower(rec.Domain)] = rec
-			count++
-		}
+	if err := s.UpsertTargets(list); err != nil {
+		return 0, err
 	}
-	s.mu.Unlock()
-
-	if err := s.Save(); err != nil {
-		return count, err
-	}
-	return count, nil
+	return len(list), nil
 }
 
 // Count 获取当前资产总量
 func (s *TargetStore) Count() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return len(s.records)
+
+	var count int
+	_ = s.db.QueryRow("SELECT COUNT(*) FROM reality_targets").Scan(&count)
+	return count
 }
 
 // DetectionResultToRecord 将流水线检测结果转化为资产持久化对象

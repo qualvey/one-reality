@@ -103,7 +103,10 @@ func (r *RootCmd) executeAuto(cidrs []string, maxTargets int, checkAll bool, exp
 	scannerEngine := scanner.NewScanner()
 	defer scannerEngine.Close()
 
-	targetStore, _ := storage.NewTargetStore("data/reality_targets.json")
+	targetStore, _ := storage.NewTargetStore("data/reality_targets.db")
+	if targetStore != nil {
+		defer targetStore.Close()
+	}
 
 	// 2. 构造流水线 Channel
 	scanResultChan := make(chan *scanner.ScanResult, 100)
@@ -587,8 +590,9 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 
 	// Cache-First 快速通道：若本地库存在同 ASN 且未过期的资产，优先进行秒级并发健康复核
 	if filter.UseCache && !noCache && !checkAll && asnStr != "" {
-		store, err := storage.NewTargetStore("data/reality_targets.json")
+		store, err := storage.NewTargetStore("data/reality_targets.db")
 		if err == nil {
+			defer store.Close()
 			maxAge := time.Duration(filter.CacheMaxDays) * 24 * time.Hour
 			cachedRecords, _ := store.GetTargetsByASN(asnStr, countryStr, maxAge)
 

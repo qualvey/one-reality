@@ -10,12 +10,13 @@ import (
 
 func TestTargetStore_UpsertAndQueryByASN(t *testing.T) {
 	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "targets.json")
+	dbPath := filepath.Join(tempDir, "targets.db")
 
 	store, err := NewTargetStore(dbPath)
 	if err != nil {
 		t.Fatalf("failed to create TargetStore: %v", err)
 	}
+	defer store.Close()
 
 	records := []*types.TargetRecord{
 		{
@@ -82,8 +83,8 @@ func TestTargetStore_UpsertAndQueryByASN(t *testing.T) {
 
 func TestTargetStore_ExportAndImport(t *testing.T) {
 	tempDir := t.TempDir()
-	dbPath1 := filepath.Join(tempDir, "db1.json")
-	dbPath2 := filepath.Join(tempDir, "db2.json")
+	dbPath1 := filepath.Join(tempDir, "db1.db")
+	dbPath2 := filepath.Join(tempDir, "db2.db")
 	exportPath := filepath.Join(tempDir, "export.json")
 
 	store1, _ := NewTargetStore(dbPath1)
@@ -91,12 +92,14 @@ func TestTargetStore_ExportAndImport(t *testing.T) {
 		ASN:    "AS1234",
 		Domain: "export-test.com",
 	})
+	defer store1.Close()
 
 	if err := store1.Export(exportPath); err != nil {
 		t.Fatalf("export failed: %v", err)
 	}
 
 	store2, _ := NewTargetStore(dbPath2)
+	defer store2.Close()
 	imported, err := store2.Import(exportPath)
 	if err != nil {
 		t.Fatalf("import failed: %v", err)
