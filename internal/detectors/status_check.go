@@ -24,6 +24,23 @@ func (scs *StatusCheckStage) Execute(ctx *types.PipelineContext) error {
 	statusCode := ctx.Result.Network.StatusCode
 	accessible := ctx.Result.Network.Accessible
 
+	if !accessible {
+		ctx.Result.StatusCodeCategory = types.StatusCodeCategoryNetwork
+		return nil
+	}
+
+	// 优先根据配置的 ExcludeStatus 判断
+	if ctx.Config != nil && len(ctx.Config.RealityFilter.ExcludeStatus) > 0 {
+		for _, s := range ctx.Config.RealityFilter.ExcludeStatus {
+			if s == statusCode {
+				ctx.Result.StatusCodeCategory = types.StatusCodeCategoryExcluded
+				return nil
+			}
+		}
+		ctx.Result.StatusCodeCategory = types.StatusCodeCategorySafe
+		return nil
+	}
+
 	// 分类状态码
 	category := types.ClassifyStatusCode(statusCode, accessible)
 	ctx.Result.StatusCodeCategory = category

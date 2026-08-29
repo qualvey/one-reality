@@ -104,15 +104,15 @@ func (r *RootCmd) Execute() {
 		domainsStr := strings.Join(os.Args[2:], " ")
 		r.executeBatch(domainsStr)
 	case "csv":
-		if len(os.Args) < 3 {
-			ui.PrintErrorWithDetails(
-				"错误：缺少CSV文件参数",
-				"用法: reality-checker csv <csv_file>",
-				"示例: reality-checker csv domains.csv",
-			)
-			os.Exit(1)
-		}
-		r.executeCSV(os.Args[2])
+		ui.PrintErrorWithDetails(
+			"提示：'csv' 命令已废弃并整合",
+			"请直接使用更为高效的流式管道命令：",
+			"  cat file.csv | reality-checker pipe  (Linux/macOS)",
+			"  Get-Content file.csv | reality-checker pipe  (Windows PowerShell)",
+			"或者使用全自动内嵌扫描检测命令：",
+			"  reality-checker auto <ip/cidr>",
+		)
+		os.Exit(1)
 	case "version", "-v", "--version":
 		r.showVersion()
 	case "help", "-h", "--help":
@@ -120,7 +120,7 @@ func (r *RootCmd) Execute() {
 	default:
 		ui.PrintErrorWithDetails(
 			fmt.Sprintf("错误：未知命令 '%s'", os.Args[1]),
-			"可用命令: asn, auto, pipe, check, batch, csv, version",
+			"可用命令: asn, auto, pipe, check, batch, version",
 		)
 		os.Exit(1)
 	}

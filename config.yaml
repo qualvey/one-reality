@@ -23,6 +23,58 @@ reality_filter:
   # 5. 最低推荐星级门槛: (1~5 星)
   min_stars: 3
 
+  # 6. 默认返回页过滤 (true: 识别并剔除 Nginx/OpenResty 等默认欢迎页、测试页或默认错误页)
+  require_no_default_page: true
+
+  # 7. 外部排除规则文件路径 (默认载入 data/exclude_rules.txt)
+  exclude_rules_file: "data/exclude_rules.txt"
+
+  # 8. 排除域名后缀（如未在外部文件中配置，可在此处直接注入）
+  exclude_suffixes:
+    - ".local"
+    - ".internal"
+    - ".lan"
+    - ".home"
+    - ".corp"
+    - ".arpa"
+    - ".test"
+    - ".example"
+    - ".invalid"
+    - ".localhost"
+    - ".onion"
+
+  # 9. 明确排除的域名或证书主机名
+  exclude_domains:
+    - "localhost"
+    - "server.domain.com"
+    - "johnnasmalley.hostname"
+    - "Kubernetes Ingress Controller Fake Certificate"
+    - "CloudFlare Origin Certificate"
+    - "FortiGate"
+    - "Unspecified"
+
+  # 10. 排除特征关键词与模式
+  exclude_patterns:
+    - "kubernetes"
+    - "ingress controller fake certificate"
+    - "fake certificate"
+
+  # 11. 排除的 HTTP 页面状态码（被排除的状态码将被标记为不适合）
+  # 例如若仅希望保留 200，可将 301/302 加入排除列表
+  exclude_status:
+    - 400
+    - 401
+    - 403
+    - 404
+    - 407
+    - 408
+    - 429
+    - 500
+    - 501
+    - 502
+    - 503
+    - 504
+
 # 网络检测配置
 network:
   timeout: 3s

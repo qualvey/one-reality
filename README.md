@@ -19,8 +19,10 @@ Reality SNI目标域名的最佳实践
 * **证书检测** - 检测证书有效性和SNI匹配
 * **CDN检测** - 智能检测CDN使用情况
 * **热门网站检测** - 检测是否为热门网站
+* **Nginx/Web 默认页识别** - 精准识别并剔除 Nginx/OpenResty 默认欢迎页与测试页
+* **灵活过滤规则** - 支持外部规则文件与后缀/通配符注入（排除 .local, .internal, .arpa 等私有后缀）
 * **重定向检测** - 检测域名重定向
-* **批量检测** - 支持多域名并发检测，可与RealiTLScanner配合使用
+* **批量与流式检测** - 支持标准输入 (Stdin) 管道流式极速并发检测
 * **智能报告** - 生成详细的检测分析报告
 
 ### 推荐工作流程
@@ -35,47 +37,43 @@ Reality SNI目标域名的最佳实践
 
    国家参数支持 ISO 两位代码（如 `US`、`DE`、`CN`）或 GeoIP 数据库中的名称。
 
-3. 把输出的ip段保存到文件(比如as7203-us.txt)，一行一条
+3. 直接一键全自动内嵌扫描检测目标：
 
 ```bash
 ./reality-checker auto <vps-ip> --limit 10
 ```
 
-也可以继续把自定义网段填入文件（每行一条），再用以下命令开始检测(本地电脑运行，请先关闭代理（确保请求为直连))
-   --limit 10是取前10条（大部分情况已经足够筛选中好用的目标)
+也可以继续把自定义网段填入文件（每行一条），再用以下命令开始检测 (本地电脑运行，请先关闭代理（确保请求为直连))：
+   `--limit 10` 是取前 10 条（大部分情况已经足够筛选中好用的目标）
 
 ```bash
-./reality-checker auto --in ./cidrs.txt  --limit 10
+./reality-checker auto --in ./cidrs.txt --limit 10
 ```
 
-3. 观察搜索结果，手动去浏览器查看每个域名, 观察是否像正式的网站(不是demo，不是欢迎页,不是可能涉及翻墙的面板),最好有真实的功能和业务
+4. 或通过标准输入管道流式处理已有域名/CSV：
 
-## 📊 检测结果说明
-
-### 检测结果示例
-
-原本设计为
-
+```bash
+cat domains.txt | ./reality-checker pipe
 ```
-输入vps的ip -> 自动查询ASN以及对应国家的同ASN ip段 -> 并发扫描所有ip -> 返回符合条件的结果
-```
-
-自动流程使用公开的 RIPEstat API 查询 ASN 和宣布网段，不需要额外的 ASN 数据库。
 
 ### 过滤条件
 
-二进制同目录下 congfig.yaml
+二进制同目录下 `config.yaml`（支持挂载 `data/exclude_rules.txt`）：
 
 ```yaml
 reality_filter:
-    #是否要求无cdn，默认true(推荐)
-    require_no_cdn:true
-    #TLS握手延迟上限，根据具体情况调整，默认800ms
-    max_hadshake_ms: 800
-    #最少证书有效期（如果过低可能是无人维护的死站）
-    min_cert_days: 20
+    # 是否要求无cdn，默认true (推荐)
+    require_no_cdn: true
+    # TLS握手延迟上限，默认400ms
+    max_handshake_ms: 400
+    # 最少证书有效期（天）
+    min_cert_days: 10
+    # 默认返回页过滤 (true: 自动剔除 Nginx/OpenResty 默认欢迎页与测试页)
+    require_no_default_page: true
+    # 外部排除规则文件
+    exclude_rules_file: "data/exclude_rules.txt"
 
-#并发性能
+# 并发性能
 concurrency:
     max_concurrent: 10
     check_timeout: 3s
@@ -148,11 +146,11 @@ Windows PowerShell：
 ./reality-checker batch apple.com tesla.com microsoft.com
 ```
 
-### CSV文件检测
+### 管道流式检测 (Pipe)
 
 ```bash
-# 从CSV文件批量检测域名
-./reality-checker csv file.csv
+# 从文件或输出流管道读取检测（支持域名或 CSV 格式）
+cat domains.txt | ./reality-checker pipe
 ```
 
 

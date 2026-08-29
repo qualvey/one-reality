@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"RealityChecker/internal/config"
 	"RealityChecker/internal/types"
 	"RealityChecker/internal/ui"
 )
@@ -15,6 +16,11 @@ import (
 // executePipe 从标准输入(Stdin)流式读取 CSV 数据或域名，进行实时并行检测并输出彩色表格
 func (r *RootCmd) executePipe() {
 	ui.PrintTimestampedMessage("开启管道流式检测模式 (Pipe Mode)...")
+
+	filter := types.RealityFilterConfig{}
+	if r.batchManager != nil && r.batchManager.GetConfig() != nil {
+		filter = r.batchManager.GetConfig().RealityFilter
+	}
 
 	scanner := bufio.NewScanner(os.Stdin)
 
@@ -94,7 +100,7 @@ func (r *RootCmd) executePipe() {
 				// 容错: 查找包含 '.' 的可能域名列
 				for _, part := range parts {
 					p := strings.Trim(strings.TrimSpace(part), "\"")
-					if strings.Contains(p, ".") && !strings.HasPrefix(p, "TLS") && !shouldExcludeDomain(p) {
+					if strings.Contains(p, ".") && !strings.HasPrefix(p, "TLS") && !config.ShouldExcludeDomain(p, filter) {
 						candidateDomain = p
 						break
 					}
@@ -106,7 +112,7 @@ func (r *RootCmd) executePipe() {
 			candidateDomain = strings.Trim(strings.TrimSpace(line), "\"")
 		}
 
-		if candidateDomain == "" || shouldExcludeDomain(candidateDomain) {
+		if candidateDomain == "" || config.ShouldExcludeDomain(candidateDomain, filter) {
 			continue
 		}
 

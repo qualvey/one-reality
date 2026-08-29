@@ -150,14 +150,24 @@ func (tf *TableFormatter) FormatSuitableTable(results []*types.DetectionResult) 
 		if result.Network != nil {
 			if result.Network.Accessible {
 				statusCode := result.Network.StatusCode
-				// 根据状态码设置颜色
-				switch statusCode {
-				case 200:
-					pageStatusText = text.FgGreen.Sprint(fmt.Sprintf("%d", statusCode))
-				case 301, 302:
-					pageStatusText = text.FgYellow.Sprint(fmt.Sprintf("%d", statusCode))
-				default:
-					pageStatusText = text.FgRed.Sprint(fmt.Sprintf("%d", statusCode))
+				if result.Network.IsDefaultPage {
+					typeName := result.Network.DefaultPageType
+					if typeName == "" {
+						typeName = "默认页"
+					} else {
+						typeName += "默认页"
+					}
+					pageStatusText = text.FgYellow.Sprint(fmt.Sprintf("%d (%s)", statusCode, typeName))
+				} else {
+					// 根据状态码设置颜色
+					switch statusCode {
+					case 200:
+						pageStatusText = text.FgGreen.Sprint(fmt.Sprintf("%d", statusCode))
+					case 301, 302:
+						pageStatusText = text.FgYellow.Sprint(fmt.Sprintf("%d", statusCode))
+					default:
+						pageStatusText = text.FgRed.Sprint(fmt.Sprintf("%d", statusCode))
+					}
 				}
 			} else {
 				pageStatusText = text.FgRed.Sprint("不可访问")

@@ -25,14 +25,13 @@ func PrintUsage() {
 	fmt.Println("  reality-checker pipe                    从标准输入(Stdin)管道流式读取检测")
 	fmt.Println("  reality-checker check <domain>          检测单个域名")
 	fmt.Println("  reality-checker batch <d1> <d2> ...     批量检测多个域名")
-	fmt.Println("  reality-checker csv <csv_file>          从CSV文件批量检测域名")
 	fmt.Println("")
 	fmt.Println("示例:")
 	fmt.Println("  reality-checker asn AS15169 US > as15169-us.txt")
 	fmt.Println("  reality-checker auto 85.155.184.100 --limit 5")
-	fmt.Println("  ./RealiTLScanner -addr 85.155.184.0/23 -out /dev/stdout | ./reality-checker pipe")
+	fmt.Println("  cat domains.txt | reality-checker pipe")
 	fmt.Println("  reality-checker check apple.com")
-	fmt.Println("  reality-checker csv file.csv")
+	fmt.Println("  reality-checker batch apple.com google.com microsoft.com")
 }
 
 // PrintTimestampedMessage 打印带时间戳的消息

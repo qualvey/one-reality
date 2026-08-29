@@ -191,17 +191,40 @@ func (p *Pipeline) evaluateSuitability(result *types.DetectionResult) {
 		return
 	}
 
-	// 检查状态码是否安全
+	// 检查状态码是否安全或被排除
 	if result.Network != nil && result.Network.Accessible {
-		statusCodeCategory := types.ClassifyStatusCode(result.Network.StatusCode, true)
-		result.StatusCodeCategory = statusCodeCategory
+		statusCode := result.Network.StatusCode
+		isExcluded := false
 
-		// 如果状态码不安全，标记为不适合
-		if statusCodeCategory == types.StatusCodeCategoryExcluded {
+		if p.config != nil && len(p.config.RealityFilter.ExcludeStatus) > 0 {
+			for _, s := range p.config.RealityFilter.ExcludeStatus {
+				if s == statusCode {
+					isExcluded = true
+					break
+				}
+			}
+		} else {
+			isExcluded = types.IsStatusCodeExcluded(statusCode)
+		}
+
+		if isExcluded {
+			result.StatusCodeCategory = types.StatusCodeCategoryExcluded
 			result.Suitable = false
-			result.Error = fmt.Errorf("状态码不自然: %d", result.Network.StatusCode)
+			result.Error = fmt.Errorf("状态码不自然或已被排除: %d", statusCode)
 			return
 		}
+		result.StatusCodeCategory = types.StatusCodeCategorySafe
+	}
+
+	// 检查是否为 Nginx 或 Web 服务器默认返回页
+	if p.config != nil && p.config.RealityFilter.RequireNoDefaultPage && result.Network != nil && result.Network.IsDefaultPage {
+		result.Suitable = false
+		typeName := result.Network.DefaultPageType
+		if typeName == "" {
+			typeName = "默认"
+		}
+		result.Error = fmt.Errorf("检测到%s默认页 (%s)", typeName, result.Network.DefaultPageReason)
+		return
 	}
 
 	if result.TLS != nil {

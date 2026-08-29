@@ -87,6 +87,11 @@ type NetworkResult struct {
 	Headers            map[string]string `json:"headers,omitempty"`             // HTTP响应头
 	CertificateIssuer  string            `json:"certificate_issuer,omitempty"`  // 证书颁发者
 	CertificateSubject string            `json:"certificate_subject,omitempty"` // 证书主题
+	IsDefaultPage      bool              `json:"is_default_page,omitempty"`      // 是否为默认返回页（如nginx默认欢迎页）
+	DefaultPageType    string            `json:"default_page_type,omitempty"`    // 默认页类型（如"nginx", "apache"）
+	DefaultPageReason  string            `json:"default_page_reason,omitempty"`  // 默认页判定原因
+	PageTitle          string            `json:"page_title,omitempty"`           // 页面Title
+	ServerHeader       string            `json:"server_header,omitempty"`        // Web服务器Header
 }
 
 // TLSResult TLS检测结果
@@ -333,11 +338,17 @@ type TLSConfig struct {
 
 // RealityFilterConfig REALITY 选型策略配置
 type RealityFilterConfig struct {
-	RequireNoCDN   bool  `yaml:"require_no_cdn"`
-	MaxHandshakeMS int64 `yaml:"max_handshake_ms"`
-	RequireNoHot   bool  `yaml:"require_no_hot"`
-	MinCertDays    int   `yaml:"min_cert_days"`
-	MinStars       int   `yaml:"min_stars"`
+	RequireNoCDN         bool     `yaml:"require_no_cdn"`
+	MaxHandshakeMS       int64    `yaml:"max_handshake_ms"`
+	RequireNoHot         bool     `yaml:"require_no_hot"`
+	MinCertDays          int      `yaml:"min_cert_days"`
+	MinStars             int      `yaml:"min_stars"`
+	RequireNoDefaultPage bool     `yaml:"require_no_default_page"`
+	ExcludeRulesFile     string   `yaml:"exclude_rules_file"`
+	ExcludeDomains       []string `yaml:"exclude_domains"`
+	ExcludeSuffixes      []string `yaml:"exclude_suffixes"`
+	ExcludePatterns      []string `yaml:"exclude_patterns"`
+	ExcludeStatus        []int    `yaml:"exclude_status"`
 }
 
 // LogConfig 日志配置

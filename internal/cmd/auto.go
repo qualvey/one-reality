@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"RealityChecker/internal/asn"
+	"RealityChecker/internal/config"
 	"RealityChecker/internal/logger"
 	"RealityChecker/internal/scanner"
 	"RealityChecker/internal/types"
@@ -197,7 +198,7 @@ CIDRLoop:
 		go func() {
 			defer pipeWg.Done()
 			for res := range subChan {
-				if res == nil || res.CertDomain == "" || shouldExcludeDomain(res.CertDomain) {
+				if res == nil || res.CertDomain == "" || config.ShouldExcludeDomain(res.CertDomain, filter) {
 					continue
 				}
 
@@ -478,7 +479,7 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 			"  --in FILE            从文件中批量读取 CIDR/IP 列表 (每行一个)",
 			"  --country CODE       按两位 ISO 国家代码过滤（默认使用入口 IP 国家）",
 			"  --no-check           跳过data资源检测",
-			"  --limit N            指定获取合适目标的数量上限 (默认 5)",
+			"  --limit N / -m       指定获取合适目标的数量上限 (默认 5)",
 			"  --no-cdn             强制筛选无 CDN 节点 (默认开启)",
 			"  --allow-cdn          允许 CDN 节点",
 			"  --max-handshake MS   设置最大握手延迟 (毫秒, 默认 800)",
@@ -518,7 +519,7 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 				country = args[i+1]
 				i++
 			}
-		case "--limit", "-n":
+		case "--limit", "-m":
 			if i+1 < len(args) {
 				if n, err := strconv.Atoi(args[i+1]); err == nil {
 					maxTargets = n
