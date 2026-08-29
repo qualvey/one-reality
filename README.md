@@ -147,6 +147,8 @@ reality-checker version                      显示版本、提交和构建信�
 --check-all / -a        开启全量摸底扫描模式 (不提前终止，全量入库)
 --no-cache              跳过本地资产库缓存，强制重新发起网络扫描
 --recheck               对本地命中的资产发起在线网络健康复核 (默认直接复用历史参数)
+--ipv4-only / -4        仅拉取与扫描 IPv4 网段
+--ipv6-only / -6        仅拉取与扫描 IPv6 网段
 --export FILE           将扫描发现的所有合格资产导出为 JSON 文件
 --country CODE          指定国家过滤 (两位 ISO 代码，如 US, DE)
 --max-handshake MS      设置最大握手延迟 (毫秒, 默认 400)
@@ -178,9 +180,14 @@ reality_filter:
   # 2. GFW 静态黑名单检测 (false: 本地家宽直连时建议关闭，纯靠真实网络握手连通性自然淘汰，避免静态名单误杀)
   check_gfw: false
 
-  # 3. 资产数据库与缓存快速通道 (true: 优先复用本地 SQLite 数据库中已验证的同 ASN/国家 优质资产并秒级复核)
-  use_cache: true
-  cache_max_days: 7
+  # 3. IP 协议族过滤 (拉取与解析 CIDR 时直接过滤)
+  ipv4_only: false             # 是否仅拉取与扫描 IPv4 网段 (默认 false)
+  ipv6_only: false             # 是否仅拉取与扫描 IPv6 网段 (默认 false)
+
+  # 4. 资产数据库与缓存快速通道
+  use_cache: true              # 是否优先使用本地 SQLite 资产库 (默认 true)
+  verify_cache: false          # 是否对本地缓存发起在线网络复核 (默认 false: 直接使用历史参数 0 延迟秒出; true: 在线并发复核)
+  cache_max_days: 7            # 缓存有效天数 (默认 7)
 
   # ==================== 阶段二：进阶偏好过滤策略 ====================
   # 4. 强制非 CDN 过滤 (true: 剔除 Cloudflare/Akamai/Fastly 等 CDN 节点，防止 VPS 变成公网免费反代)

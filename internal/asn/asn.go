@@ -162,3 +162,25 @@ func FilterByCountry(prefixes []string, db *geoip2.Reader, country string) ([]st
 	}
 	return filtered, nil
 }
+
+// FilterIPVersion 根据 IPv4/IPv6 偏好过滤 CIDR 前缀
+func FilterIPVersion(prefixes []string, ipv4Only, ipv6Only bool) []string {
+	if !ipv4Only && !ipv6Only {
+		return prefixes
+	}
+	filtered := make([]string, 0, len(prefixes))
+	for _, raw := range prefixes {
+		_, network, err := net.ParseCIDR(raw)
+		if err != nil {
+			continue
+		}
+		isIPv4 := network.IP.To4() != nil
+		if ipv4Only && isIPv4 {
+			filtered = append(filtered, network.String())
+		} else if ipv6Only && !isIPv4 {
+			filtered = append(filtered, network.String())
+		}
+	}
+	return filtered
+}
+

@@ -361,7 +361,7 @@ func contains(slice []string, item string) bool {
 }
 
 // resolveInputToCIDRs 原生构建 CIDR 扫描队列（无需依赖易失效的第三方 HTTP API）
-func resolveInputToCIDRs(targetInput string, inFile string) []string {
+func resolveInputToCIDRs(targetInput string, inFile string, filter types.RealityFilterConfig) []string {
 	var cidrs []string
 
 	// 从文件批量读取 CIDRs
@@ -375,28 +375,28 @@ func resolveInputToCIDRs(targetInput string, inFile string) []string {
 				if line == "" || strings.HasPrefix(line, "#") {
 					continue
 				}
-				cidrs = appendCIDR(cidrs, line)
+				cidrs = appendCIDR(cidrs, line, filter)
 			}
 		}
 	}
 
 	// 处理单个命令行目标输入 (支持 CIDR 或 IP)
 	if targetInput != "" {
-		cidrs = appendCIDR(cidrs, targetInput)
+		cidrs = appendCIDR(cidrs, targetInput, filter)
 	}
 
 	return cidrs
 }
 
 // resolveAutoInput discovers announced prefixes for a target IP and keeps only
-// prefixes whose representative address is in the target IP's country.
-func resolveAutoInput(ctx context.Context, targetInput string, inFile string, country string) ([]string, string, string, error) {
+// prefixes whose representative address is in the target IP's country and matches IPv4/IPv6 filter.
+func resolveAutoInput(ctx context.Context, targetInput string, inFile string, country string, filter types.RealityFilterConfig) ([]string, string, string, error) {
 	if inFile != "" || targetInput == "" || strings.Contains(targetInput, "/") {
-		return resolveInputToCIDRs(targetInput, inFile), "", "", nil
+		return resolveInputToCIDRs(targetInput, inFile, filter), "", "", nil
 	}
 	ip := net.ParseIP(targetInput)
 	if ip == nil {
-		return resolveInputToCIDRs(targetInput, inFile), "", "", nil
+		return resolveInputToCIDRs(targetInput, inFile, filter), "", "", nil
 	}
 
 	reader, err := geoip2.Open("data/Country.mmdb")
@@ -428,13 +428,21 @@ func resolveAutoInput(ctx context.Context, targetInput string, inFile string, co
 		if err != nil {
 			continue
 		}
+		// 协议族过滤
+		if filter.IPv4Only && !prefix.Addr().Is4() {
+			continue
+		}
+		if filter.IPv6Only && !prefix.Addr().Is6() {
+			continue
+		}
+
 		record, err := reader.Country(net.ParseIP(prefix.Addr().String()))
 		if err == nil && record.Country.IsoCode == targetCountry {
 			filtered = append(filtered, prefix.String())
 		}
 	}
 	if len(filtered) == 0 {
-		return nil, asnStr, targetCountry, fmt.Errorf("AS%d 没有与入口 IP 同国家（%s）的宣布网段", asnNumber, targetCountry)
+		return nil, asnStr, targetCountry, fmt.Errorf("AS%d 没有与入口 IP 同国家（%s）且符合 IP 协议族限制的宣布网段", asnNumber, targetCountry)
 	}
 	ui.PrintTimestampedMessage("入口 IP %s 属于 %s，国家 %s；已过滤为 %d 个同国家网段",
 		targetInput, asnStr, targetCountry, len(filtered))
@@ -442,7 +450,7 @@ func resolveAutoInput(ctx context.Context, targetInput string, inFile string, co
 }
 
 // appendCIDR 解析并追加 CIDR 或单 IP 扩展网段，自动去重并规范化
-func appendCIDR(list []string, input string) []string {
+func appendCIDR(list []string, input string, filter types.RealityFilterConfig) []string {
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return list
@@ -452,6 +460,13 @@ func appendCIDR(list []string, input string) []string {
 	if strings.Contains(input, "/") {
 		_, ipNet, err := net.ParseCIDR(input)
 		if err == nil {
+			isIPv4 := ipNet.IP.To4() != nil
+			if filter.IPv4Only && !isIPv4 {
+				return list
+			}
+			if filter.IPv6Only && isIPv4 {
+				return list
+			}
 			cidrStr := ipNet.String()
 			if !contains(list, cidrStr) {
 				list = append(list, cidrStr)
@@ -468,6 +483,9 @@ func appendCIDR(list []string, input string) []string {
 
 	// IPv4: 扩展为包含该 IP 的标准 /24 网段
 	if v4 := ip.To4(); v4 != nil {
+		if filter.IPv6Only {
+			return list
+		}
 		c24 := fmt.Sprintf("%d.%d.%d.0/24", v4[0], v4[1], v4[2])
 		if !contains(list, c24) {
 			list = append(list, c24)
@@ -476,6 +494,9 @@ func appendCIDR(list []string, input string) []string {
 	}
 
 	// IPv6: 扩展为包含该 IP 的标准 /64 前缀网段
+	if filter.IPv4Only {
+		return list
+	}
 	mask := net.CIDRMask(64, 128)
 	ipNet := &net.IPNet{
 		IP:   ip.Mask(mask),
@@ -504,6 +525,9 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 			"  --limit N / -m       指定获取合适目标的数量上限 (默认 5)",
 			"  --check-all / -a     开启全量摸底扫描模式 (不提前终止，全量入库)",
 			"  --no-cache           跳过本地资产库缓存，强制重新网络扫描",
+			"  --recheck            对本地资产库命中目标发起在线网络复核",
+			"  --ipv4-only / -4     仅拉取与扫描 IPv4 网段",
+			"  --ipv6-only / -6     仅拉取与扫描 IPv6 网段",
 			"  --export FILE        将扫描发现的所有合格资产导出为 JSON 文件",
 			"  --no-cdn             强制筛选无 CDN 节点 (默认开启)",
 			"  --allow-cdn          允许 CDN 节点",
@@ -599,6 +623,12 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 				}
 				i++
 			}
+		case "--ipv4-only", "-4":
+			filter.IPv4Only = true
+			filter.IPv6Only = false
+		case "--ipv6-only", "-6":
+			filter.IPv6Only = true
+			filter.IPv4Only = false
 		case "--debug":
 			logger.Init("debug", "")
 		case "--log-level":
@@ -609,7 +639,7 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 		}
 	}
 
-	cidrs, asnStr, countryStr, err := resolveAutoInput(r.ctx, targetInput, inFile, country)
+	cidrs, asnStr, countryStr, err := resolveAutoInput(r.ctx, targetInput, inFile, country, filter)
 	if err != nil {
 		ui.PrintError(fmt.Sprintf("自动查询 ASN 网段失败: %v", err))
 		return

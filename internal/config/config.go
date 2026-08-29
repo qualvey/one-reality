@@ -134,6 +134,8 @@ func mergeConfig(defaultConfig *types.Config, fileConfig *types.Config) {
 	// REALITY 选型策略配置
 	defaultConfig.RealityFilter.RequireNoCN = fileConfig.RealityFilter.RequireNoCN
 	defaultConfig.RealityFilter.CheckGFW = fileConfig.RealityFilter.CheckGFW
+	defaultConfig.RealityFilter.IPv4Only = fileConfig.RealityFilter.IPv4Only
+	defaultConfig.RealityFilter.IPv6Only = fileConfig.RealityFilter.IPv6Only
 	defaultConfig.RealityFilter.UseCache = fileConfig.RealityFilter.UseCache
 	defaultConfig.RealityFilter.VerifyCache = fileConfig.RealityFilter.VerifyCache
 	if fileConfig.RealityFilter.CacheMaxDays > 0 {

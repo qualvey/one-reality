@@ -22,6 +22,7 @@ exclude_suffixes:
   .intranet
   .box
   .priv
+  .xyz
 
 ########################################
 # 2) 明确排除的域名或证书主机名
@@ -66,4 +67,5 @@ exclude_status:
   502
   503
   504
+  302
 

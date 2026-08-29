@@ -15,7 +15,11 @@ reality_filter:
   # 2. GFW 静态黑名单检测 (false: 本地家宽直连时建议关闭，纯靠真实网络握手连通性自然淘汰，避免静态名单误杀)
   check_gfw: false
 
-  # 3. 资产数据库与缓存快速通道
+  # 3. IP 协议族过滤 (拉取 CIDR 网段时直接过滤)
+  ipv4_only: false             # 是否仅拉取与扫描 IPv4 网段 (默认 false)
+  ipv6_only: false             # 是否仅拉取与扫描 IPv6 网段 (默认 false)
+
+  # 4. 资产数据库与缓存快速通道
   use_cache: true              # 是否优先使用本地 SQLite 资产库 (默认 true)
   verify_cache: false          # 是否对本地缓存发起在线网络复核 (默认 false: 直接使用历史参数 0 延迟秒出; true: 在线并发复核)
   cache_max_days: 7            # 缓存有效天数 (默认 7)
@@ -25,7 +29,7 @@ reality_filter:
   require_no_cdn: true
 
   # 5. 握手时间延迟上限 (毫秒): 高于此延迟的节点抛弃 (默认 800ms)
-  max_handshake_ms: 400
+  max_handshake_ms: 500
 
   # 6. 热门大站过滤 (true: 依据 data/hot_websites.txt 匹配剔除 Google/Apple 等超级大站)
   require_no_hot: true
@@ -34,7 +38,7 @@ reality_filter:
   min_cert_days: 10
 
   # 8. 最低推荐星级门槛: (1~5 星)
-  min_stars: 3
+  min_stars: 1
 
   # 9. 默认返回页过滤 (true: 识别并剔除 Nginx/OpenResty 等默认欢迎页、测试页或默认错误页)
   require_no_default_page: true
@@ -43,8 +47,8 @@ reality_filter:
   exclude_rules_file: "data/exclude_rules.txt"
 
   # 11. 白名单域名后缀（可选，若配置则只保留指定后缀，如只要 .com/.de）
-  # include_suffixes:
-  #   - ".com"
+  include_suffixes:
+     - ".com"
   #   - ".de"
   #   - ".org"
 
