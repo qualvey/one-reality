@@ -1,6 +1,6 @@
 # RealityChecker
 
-RealityChecker 是一个用于自动发现、深度检测与智能筛选 Xray Reality SNI 目标的网站检测与资产管理引擎。它整合了 ASN 网段发现、内置原生并发 TLS 扫描器、密码学协议检验、两阶段极速过滤体系以及本地资产数据库，帮助你从入口 VPS 的 IP 出发，一键找到符合最佳实践的高质量 Reality 真实目标。
+RealityChecker 是一个用于自动发现、深度检测与智能筛选 Xray Reality SNI 目标的网站检测与资产管理引擎。它整合了 ASN 网段智能发现、内置原生并发 TLS 扫描器、密码学协议检验、两阶段极速过滤体系以及 SQLite 资产数据库，帮助你从入口 VPS 的 IP 出发，一键找到符合最佳实践的高质量 Reality 真实目标。
 
 > 本项目仅用于网络技术研究与学习。请遵守当地法律法规，合理使用网络资源。
 
@@ -12,20 +12,28 @@ RealityChecker 是一个用于自动发现、深度检测与智能筛选 Xray Re
 - **不使用公共 CDN**：防止 VPS 变成公网免费反代，避免 CDN 封锁；
 - **非热门大厂网站**：避开 Google、Apple 等流量异常显眼的超大站点；
 - **TLS 握手延迟尽量低**：确保科学出海连接体验极速流畅；
-- **真实业务网站**：排除 Nginx/OpenResty 默认页、演示页或测试页。
+- **真实运营的业务网站**：排除 Nginx/OpenResty/Apache/Caddy 默认欢迎页、Tunnel 占位页或短回显服务。
 
 ---
 
 ## ✨ 核心特性
 
 - **两阶段过滤架构 (Two-Stage Filtering)**：
-  - **阶段一（网络扫描）**：只执行一次真实的 TLS 握手与技术底线检验（TLS 1.3、X25519、H2、SNI 匹配、证书未过期等），生成候选资产池；
-  - **阶段二（纯内存过滤器）**：纯内存 0 耗时即时计算，支持白名单后缀、黑名单后缀、延迟阈值、状态码排除、星级门槛等。
-- **本地资产库与 Cache-First 秒级直出**：按 `ASN + 国家` 自动持久化资产库 (`data/reality_targets.json`)，再次遇到同机房 IP 时自动秒级并发复核直出结果（< 1秒）。
-- **全量摸底扫描 (`--check-all`) 与资产导出 (`--export`)**：支持全量网段摸排与标准化 JSON 导出，为构建公共 Reality 资产库提供支撑。
-- **网络环境策略化配置**：支持 `require_no_cn`（默认排除国内，海外回国翻墙可设为 false）与 `check_gfw`（家宽直连模式以实测连通性为准，避免静态误杀）。
-- **Nginx/Web 默认页识别**：精准识别并剔除 Nginx/OpenResty/Debian/CentOS 默认欢迎页与测试页。
+  - **阶段一（网络扫描与硬性技术底线）**：只执行一次真实的 TLS 握手与技术底线检验（TLS 1.3、X25519 密钥交换、HTTP/2、SNI 匹配、证书未过期、非国内保留地址、排除默认页与 Dummy 占位等），生成候选资产池；
+  - **阶段二（纯内存进阶偏好过滤）**：纯内存 0 耗时即时计算，支持白名单后缀 (`include_suffixes`)、黑名单后缀 (`exclude_suffixes`)、延迟阈值 (`max_handshake_ms`)、状态码排除 (`exclude_status`)、星级门槛等。
+- **本地 SQLite 资产库与 Cache-First 秒级直出**：
+  - 自动持久化存储于 `data/reality_targets.db`（SQLite WAL 模式，带 ASN/国家复合索引）；
+  - 同机房/同 ASN + 国家 IP 二次查询时自动触发 **Cache-First 快速通道**，并发安全复核（15 工作线程，6s 熔断保护），**1~5 秒瞬间输出**！
+- **全量摸底扫描 (`--check-all`) 与资产导出 (`--export`)**：
+  - 支持全量网段摸排模式（不提前终止），摸清并沉淀该 ASN 下所有合规资产入库，并可导出为标准化 JSON 文件。
+- **Tunnel 占位与微型回显服务识别 (Anti-Dummy / Anti-Tunnel)**：
+  - 智能识别并剔除 `tuwunel`、`boringproxy`、`default backend`、`<150字节` 极短无 HTML 结构回显以及 Nginx / OpenResty / Apache / Caddy / Microsoft IIS 等默认欢迎页与错误页。
+- **网络环境策略化配置**：
+  - `require_no_cn`：默认 `true`（排除国内站点），海外回国翻墙用户可设为 `false`；
+  - `check_gfw`：默认 `false`（本地家宽直连模式依靠真实网络握手连通性自然淘汰，避免静态规则误杀）。
 - **灵活规则引擎**：支持白名单后缀 (`include_suffixes`) 与外部规则文件 (`data/exclude_rules.txt`)。
+- **优雅信号中断 (Ctrl+C Graceful Exit)**：
+  - 单击 `Ctrl+C` 立即停止网络扫描并格式化输出当前已发现的可用目标表格；双击即刻强制终止。
 - **标准输入流式检测**：支持 `cat domains.txt | reality-checker pipe` 管道极速并发检测。
 
 ---
@@ -37,8 +45,8 @@ RealityChecker 是一个用于自动发现、深度检测与智能筛选 Xray Re
 输入一个 VPS IP 后，程序会：
 1. 查询该 IP 所属 ASN 及已宣布网段；
 2. 依据入口 IP 的国家（或 `--country` 指定国家）智能过滤网段；
-3. 优先检查本地资产库（**Cache-First**），命中则秒级直出；
-4. 未命中时自动启动原生并发扫描，执行两阶段过滤并按星级输出结果。
+3. 优先检查本地 SQLite 资产库（**Cache-First**），命中则秒级直出；
+4. 未命中时自动启动原生并发扫描，执行两阶段过滤并按推荐星级输出结果。
 
 ```bash
 ./reality-checker auto 85.155.184.100 --limit 5
@@ -50,7 +58,7 @@ RealityChecker 是一个用于自动发现、深度检测与智能筛选 Xray Re
 ./reality-checker auto 5.45.102.0/24 --limit 10
 ```
 
-指定国家过滤（ISO 两位代码）：
+指定国家过滤（ISO 两位代码，如 `US`、`DE`、`JP`、`HK`）：
 
 ```bash
 ./reality-checker auto 85.155.184.100 --country US --limit 10
@@ -58,7 +66,7 @@ RealityChecker 是一个用于自动发现、深度检测与智能筛选 Xray Re
 
 ### 工作流二：全量摸底扫描并导出 JSON 数据集
 
-使用 `--check-all` 开启全量摸底模式（不提前刹车），摸清该 ASN 下所有合规资产并存档：
+使用 `--check-all` 开启全量摸底模式（不提前刹车），摸清该 ASN 下所有合规资产并存档到本地 SQLite 库：
 
 ```bash
 ./reality-checker auto 85.155.184.100 --check-all --export targets.json
@@ -100,7 +108,7 @@ Get-Content domains.txt | .\reality-checker.exe pipe
 - **密码学与协议**：TLS 1.3、X25519 密钥交换和 HTTP/2 支持；
 - **握手延迟**：真实 TLS 密码学握手往返延迟 (RTT)；
 - **证书有效性**：证书剩余有效天数（默认 >= 10天）和 SNI 匹配度；
-- **页面状态与默认页**：HTTP 状态码（支持自定义 `exclude_status` 排除 301/302/404 等）及 Nginx 默认欢迎页识别；
+- **页面状态与默认页**：HTTP 状态码（支持自定义 `exclude_status` 排除 301/302/404 等）、Nginx/Apache/Caddy 默认欢迎页及 Tunnel/回显服务识别；
 - **CDN 与热门站点**：智能识别 CDN 厂商及 Alexa/Tranco 热门大站；
 - **地理位置**：目标 IP 的 GeoIP 归属地判定。
 
@@ -108,12 +116,13 @@ Get-Content domains.txt | .\reality-checker.exe pipe
 
 ```text
 适合的域名:
-+---------------------------------+----------+----------+----------+-----+------+------+----------+
-| 最终域名                        | 基础条件 | 握手时间 | 证书时间 | CDN | 热门 | 推荐 | 页面状态 |
-+---------------------------------+----------+----------+----------+-----+------+------+----------+
-| https://mirror-csail.debian.org |     ✓    |   445ms  |   87天   |  无 |   -  | **** |    200   |
-| https://specimens.avrenela.com  |     ✓    |   552ms  |   79天   |  无 |   -  | **** |    200   |
-+---------------------------------+----------+----------+----------+-----+------+------+----------+
++------------------------------------+----------+----------+----------+-----+------+------+----------+
+| 最终域名                           | 基础条件 | 握手时间 | 证书时间 | CDN | 热门 | 推荐 | 页面状态 |
++------------------------------------+----------+----------+----------+-----+------+------+----------+
+| https://mirror-csail.debian.org    |     ✓    |   282ms  |   87天   |  无 |   -  | **** |    200   |
+| https://specimens.avrenela.com     |     ✓    |   285ms  |   79天   |  无 |   -  | **** |    200   |
+| https://xn--chq864an8ppa.cc        |     ✓    |   283ms  |   80天   |  无 |   -  | **** |    200   |
++------------------------------------+----------+----------+----------+-----+------+------+----------+
 ```
 
 ---
@@ -167,7 +176,7 @@ reality_filter:
   # 2. GFW 静态黑名单检测 (false: 本地家宽直连时建议关闭，纯靠真实网络握手连通性自然淘汰，避免静态名单误杀)
   check_gfw: false
 
-  # 3. 资产数据库与缓存快速通道 (true: 优先复用本地数据库中已验证的同 ASN/国家 优质资产并快速秒级复核)
+  # 3. 资产数据库与缓存快速通道 (true: 优先复用本地 SQLite 数据库中已验证的同 ASN/国家 优质资产并秒级复核)
   use_cache: true
   cache_max_days: 7
 
@@ -187,7 +196,7 @@ reality_filter:
   # 8. 最低推荐星级门槛: (1~5 星)
   min_stars: 3
 
-  # 9. 默认返回页过滤 (true: 识别并剔除 Nginx/OpenResty 等默认欢迎页、测试页或默认错误页)
+  # 9. 默认返回页与占位服务过滤 (true: 识别并剔除 Nginx/Apache/Caddy 等默认欢迎页及 Tunnel/极短回显占位)
   require_no_default_page: true
 
   # 10. 外部排除规则文件路径 (默认载入 data/exclude_rules.txt)
@@ -235,7 +244,7 @@ concurrency:
 
 ### 2. 本地构建
 
-需要 Go 1.25 或更高版本。构建产物自动输出到 `dist/`，包含 Linux `amd64`/`arm64` 和 Windows `amd64`：
+需要 Go 1.25 或更高版本。构建产物自动输出到 `dist/`，包含 Linux `amd64`/`arm64` 和 Windows `amd64`（采用纯 Go 驱动，完全免 CGO 静态编译）：
 
 ```bash
 # Linux / macOS
@@ -255,6 +264,7 @@ concurrency:
 - `cdn_keywords.txt`（CDN 识别特征库）
 - `hot_websites.txt`（热门大站特征库）
 - `exclude_rules.txt`（排除规则库）
+- `reality_targets.db`（SQLite 资产持久化数据库，自动生成）
 
 ---
 
