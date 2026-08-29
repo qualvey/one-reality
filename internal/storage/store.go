@@ -77,6 +77,14 @@ func (s *TargetStore) initSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_targets_country ON reality_targets (country);
 	CREATE INDEX IF NOT EXISTS idx_targets_asn_country ON reality_targets (asn, country);
 	CREATE INDEX IF NOT EXISTS idx_targets_last_checked ON reality_targets (last_checked_at);
+
+	CREATE TABLE IF NOT EXISTS scan_checkpoints (
+		task_key TEXT NOT NULL,
+		cidr TEXT NOT NULL,
+		completed_at DATETIME NOT NULL,
+		PRIMARY KEY (task_key, cidr)
+	);
+	CREATE INDEX IF NOT EXISTS idx_checkpoints_task ON scan_checkpoints (task_key);
 	`
 	_, err := s.db.Exec(schema)
 	return err
@@ -460,3 +468,56 @@ func RecordToDetectionResult(rec *types.TargetRecord) *types.DetectionResult {
 
 	return res
 }
+
+// GetCompletedCIDRs 获取某个任务已完成扫描的 CIDR 集合
+func (s *TargetStore) GetCompletedCIDRs(taskKey string) (map[string]bool, error) {
+	if s == nil || s.db == nil || taskKey == "" {
+		return nil, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query("SELECT cidr FROM scan_checkpoints WHERE task_key = ?", taskKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	completed := make(map[string]bool)
+	for rows.Next() {
+		var cidr string
+		if err := rows.Scan(&cidr); err == nil {
+			completed[cidr] = true
+		}
+	}
+	return completed, nil
+}
+
+// RecordCompletedCIDR 记录单条已完成扫描的 CIDR
+func (s *TargetStore) RecordCompletedCIDR(taskKey, cidr string) error {
+	if s == nil || s.db == nil || taskKey == "" || cidr == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`
+		INSERT INTO scan_checkpoints (task_key, cidr, completed_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(task_key, cidr) DO UPDATE SET completed_at = excluded.completed_at
+	`, taskKey, cidr, time.Now())
+	return err
+}
+
+// ClearCheckpoints 清空某个任务的断点记录（如全量扫描已全部成功完成）
+func (s *TargetStore) ClearCheckpoints(taskKey string) error {
+	if s == nil || s.db == nil || taskKey == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec("DELETE FROM scan_checkpoints WHERE task_key = ?", taskKey)
+	return err
+}
+

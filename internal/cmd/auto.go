@@ -64,6 +64,46 @@ func (r *RootCmd) executeAuto(cidrs []string, maxTargets int, checkAll bool, exp
 		return
 	}
 
+	// 1. 初始化内嵌 Go 扫描器与本地资产库
+	scannerEngine := scanner.NewScanner()
+	defer scannerEngine.Close()
+
+	targetStore, _ := storage.NewTargetStore("data/reality_targets.db")
+	if targetStore != nil {
+		defer targetStore.Close()
+	}
+
+	taskKey := ""
+	if asnStr != "" && countryStr != "" {
+		taskKey = fmt.Sprintf("%s_%s", asnStr, countryStr)
+	}
+
+	// 检查全量摸底扫描的断点续传状态 (默认开启断点续传，除非传入 --reset-scan)
+	if checkAll && targetStore != nil && taskKey != "" && !filter.NoResume {
+		completedMap, err := targetStore.GetCompletedCIDRs(taskKey)
+		if err == nil && len(completedMap) > 0 {
+			var remainingCIDRs []string
+			var skippedCount int
+			for _, c := range cidrs {
+				if completedMap[c] {
+					skippedCount++
+				} else {
+					remainingCIDRs = append(remainingCIDRs, c)
+				}
+			}
+
+			if skippedCount > 0 {
+				if len(remainingCIDRs) == 0 {
+					ui.PrintTimestampedMessage("✅ 全量摸排任务 (%s) 的所有 %d 个网段此前已全部扫描完成！如需重新全量扫描请指定 --reset-scan", taskKey, len(cidrs))
+					return
+				}
+				ui.PrintTimestampedMessage("🔄 发现断点续传记录 (%s)：自动跳过已完成的 %d 个网段，继续断点扫描剩余 %d 个网段...",
+					taskKey, skippedCount, len(remainingCIDRs))
+				cidrs = remainingCIDRs
+			}
+		}
+	}
+
 	// 计算待扫描 IP 理论总数
 	totalIPCount := CalculateTotalIPs(cidrs)
 
@@ -97,15 +137,6 @@ func (r *RootCmd) executeAuto(cidrs []string, maxTargets int, checkAll bool, exp
 	}
 	if len(cidrs) > 5 {
 		fmt.Printf("  ...以及其余 %d 个网段\n", len(cidrs)-5)
-	}
-
-	// 1. 初始化内嵌 Go 扫描器与本地资产库
-	scannerEngine := scanner.NewScanner()
-	defer scannerEngine.Close()
-
-	targetStore, _ := storage.NewTargetStore("data/reality_targets.db")
-	if targetStore != nil {
-		defer targetStore.Close()
 	}
 
 	// 2. 构造流水线 Channel
@@ -272,6 +303,11 @@ CIDRLoop:
 		)
 		close(subChan)
 		pipeWg.Wait()
+
+		// 若当前网段完整扫描完成且未被用户中断，记录断点
+		if ctx.Err() == nil && checkAll && targetStore != nil && taskKey != "" {
+			_ = targetStore.RecordCompletedCIDR(taskKey, cidr)
+		}
 	}
 
 	workerWg.Wait()
@@ -280,6 +316,9 @@ CIDRLoop:
 
 	if r.ctx.Err() != nil {
 		ui.PrintTimestampedMessage("扫描已响应用户中断 (Ctrl+C) 并安全退出。")
+		if checkAll && taskKey != "" {
+			ui.PrintTimestampedMessage("💡 已自动保存当前网段扫描进度断点，再次运行时将无缝续传。")
+		}
 		if len(suitableResults) > 0 {
 			suitableResults = core.FilterPool(suitableResults, filter)
 			r.batchManager.SortByRecommendationStars(suitableResults)
@@ -287,6 +326,11 @@ CIDRLoop:
 			fmt.Println(r.batchManager.FormatSuitableTable(suitableResults))
 		}
 		return
+	}
+
+	// 全量扫描正常完全结束，清空该任务的历史断点
+	if checkAll && targetStore != nil && taskKey != "" {
+		_ = targetStore.ClearCheckpoints(taskKey)
 	}
 
 	// 导出候选资产池 (如果指定了 --export)
@@ -523,7 +567,8 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 			"  --country CODE       按两位 ISO 国家代码过滤（默认使用入口 IP 国家）",
 			"  --no-check           跳过data资源检测",
 			"  --limit N / -m       指定获取合适目标的数量上限 (默认 5)",
-			"  --check-all / -a     开启全量摸底扫描模式 (不提前终止，全量入库)",
+			"  --check-all / -a     开启全量摸底扫描模式 (不提前终止，全量入库，支持断点续传)",
+			"  --reset-scan         重置断点记录，从第 1 个网段重新扫描",
 			"  --no-cache           跳过本地资产库缓存，强制重新网络扫描",
 			"  --recheck            对本地资产库命中目标发起在线网络复核",
 			"  --ipv4-only / -4     仅拉取与扫描 IPv4 网段",
@@ -581,6 +626,8 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 			}
 		case "--check-all", "-a":
 			checkAll = true
+		case "--reset-scan", "--no-resume":
+			filter.NoResume = true
 		case "--no-cache":
 			noCache = true
 		case "--recheck", "--verify-cache":

@@ -346,6 +346,7 @@ type RealityFilterConfig struct {
 	UseCache             bool     `yaml:"use_cache"`              // 是否启用本地资产库缓存快速通道 (默认 true)
 	VerifyCache          bool     `yaml:"verify_cache"`           // 是否对本地缓存发起在线网络复核 (默认 false: 直接读取旧参数 0 延迟秒出; true: 在线复核)
 	CacheMaxDays         int      `yaml:"cache_max_days"`         // 资产缓存有效天数 (默认 7)
+	NoResume             bool     `yaml:"no_resume"`              // 是否禁用断点续传 (默认 false: 自动断点续传)
 
 	// --- 阶段二/进阶偏好过滤 ---
 	RequireNoCDN         bool     `yaml:"require_no_cdn"`         // 是否强制排除 CDN

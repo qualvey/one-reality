@@ -108,3 +108,45 @@ func TestTargetStore_ExportAndImport(t *testing.T) {
 		t.Errorf("expected 1 imported target, got %d (count %d)", imported, store2.Count())
 	}
 }
+
+func TestTargetStore_Checkpoints(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "targets_cp.db")
+
+	store, err := NewTargetStore(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create TargetStore: %v", err)
+	}
+	defer store.Close()
+
+	taskKey := "AS37963_CN"
+
+	// Initial check
+	cps, err := store.GetCompletedCIDRs(taskKey)
+	if err != nil {
+		t.Fatalf("GetCompletedCIDRs failed: %v", err)
+	}
+	if len(cps) != 0 {
+		t.Errorf("expected 0 checkpoints, got %d", len(cps))
+	}
+
+	// Record completed CIDRs
+	_ = store.RecordCompletedCIDR(taskKey, "8.134.244.0/23")
+	_ = store.RecordCompletedCIDR(taskKey, "119.42.252.0/22")
+
+	cps, err = store.GetCompletedCIDRs(taskKey)
+	if err != nil {
+		t.Fatalf("GetCompletedCIDRs failed: %v", err)
+	}
+	if len(cps) != 2 || !cps["8.134.244.0/23"] || !cps["119.42.252.0/22"] {
+		t.Errorf("expected 2 checkpoints, got %v", cps)
+	}
+
+	// Clear checkpoints
+	_ = store.ClearCheckpoints(taskKey)
+	cps, _ = store.GetCompletedCIDRs(taskKey)
+	if len(cps) != 0 {
+		t.Errorf("expected 0 checkpoints after clear, got %d", len(cps))
+	}
+}
+

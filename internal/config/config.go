@@ -138,6 +138,7 @@ func mergeConfig(defaultConfig *types.Config, fileConfig *types.Config) {
 	defaultConfig.RealityFilter.IPv6Only = fileConfig.RealityFilter.IPv6Only
 	defaultConfig.RealityFilter.UseCache = fileConfig.RealityFilter.UseCache
 	defaultConfig.RealityFilter.VerifyCache = fileConfig.RealityFilter.VerifyCache
+	defaultConfig.RealityFilter.NoResume = fileConfig.RealityFilter.NoResume
 	if fileConfig.RealityFilter.CacheMaxDays > 0 {
 		defaultConfig.RealityFilter.CacheMaxDays = fileConfig.RealityFilter.CacheMaxDays
 	}
