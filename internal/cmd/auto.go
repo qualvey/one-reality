@@ -349,7 +349,11 @@ CIDRLoop:
 		currentIdx := idx + 1
 		totalCIDRs := len(cidrs)
 
-		var lastScannedIP string
+		var lastScannedIP string = startIP
+		var lastMaxAddr netip.Addr
+		if startIP != "" {
+			lastMaxAddr, _ = netip.ParseAddr(startIP)
+		}
 		var lastIPMu sync.Mutex
 		var lastSaveTime time.Time
 		var lastSaveIPCount int
@@ -374,14 +378,19 @@ CIDRLoop:
 				updateMu.Unlock()
 
 				lastIPMu.Lock()
-				lastScannedIP = ip
+				if parsedIP, err := netip.ParseAddr(ip); err == nil {
+					if !lastMaxAddr.IsValid() || parsedIP.Compare(lastMaxAddr) > 0 {
+						lastMaxAddr = parsedIP
+						lastScannedIP = ip
+					}
+				}
 				lastSaveIPCount += n
 				now := time.Now()
 				// 节流断点保存：每隔 1 秒或累计探测 500 个 IP 在后台写入一次 SQLite
 				if checkAll && targetStore != nil && taskKey != "" && (now.Sub(lastSaveTime) > time.Second || lastSaveIPCount >= 500) {
 					lastSaveTime = now
 					lastSaveIPCount = 0
-					ipToSave := ip
+					ipToSave := lastScannedIP
 					go func(cip string) {
 						_ = targetStore.RecordCheckpoint(taskKey, currentCIDR, cip, false)
 					}(ipToSave)

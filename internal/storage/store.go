@@ -77,7 +77,32 @@ func (s *TargetStore) initSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_targets_country ON reality_targets (country);
 	CREATE INDEX IF NOT EXISTS idx_targets_asn_country ON reality_targets (asn, country);
 	CREATE INDEX IF NOT EXISTS idx_targets_last_checked ON reality_targets (last_checked_at);
+	`
+	if _, err := s.db.Exec(schema); err != nil {
+		return err
+	}
 
+	// 检查并自动升级 scan_checkpoints 旧表结构
+	var hasLastIP bool
+	rows, err := s.db.Query("PRAGMA table_info(scan_checkpoints)")
+	if err == nil {
+		for rows.Next() {
+			var cid int
+			var name, ctype string
+			var notnull, pk int
+			var dfltValue any
+			_ = rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk)
+			if name == "last_ip" {
+				hasLastIP = true
+			}
+		}
+		rows.Close()
+	}
+	if !hasLastIP {
+		_, _ = s.db.Exec("DROP TABLE IF EXISTS scan_checkpoints")
+	}
+
+	cpSchema := `
 	CREATE TABLE IF NOT EXISTS scan_checkpoints (
 		task_key TEXT NOT NULL,
 		cidr TEXT NOT NULL,
@@ -88,7 +113,7 @@ func (s *TargetStore) initSchema() error {
 	);
 	CREATE INDEX IF NOT EXISTS idx_checkpoints_task ON scan_checkpoints (task_key);
 	`
-	_, err := s.db.Exec(schema)
+	_, err = s.db.Exec(cpSchema)
 	return err
 }
 
