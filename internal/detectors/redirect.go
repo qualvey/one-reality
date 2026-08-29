@@ -1,6 +1,7 @@
 package detectors
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/url"
@@ -29,8 +30,13 @@ func (rs *RedirectStage) Execute(ctx *types.PipelineContext) error {
 		},
 	}
 
+	reqCtx := ctx.Context
+	if reqCtx == nil {
+		reqCtx = context.Background()
+	}
+
 	// 跟踪重定向
-	result := rs.followRedirects(client, ctx.Domain)
+	result := rs.followRedirects(reqCtx, client, ctx.Domain)
 
 	// 设置网络结果
 	ctx.Result.Network = &types.NetworkResult{
@@ -82,7 +88,7 @@ type RedirectResult struct {
 }
 
 // followRedirects 跟踪重定向
-func (rs *RedirectStage) followRedirects(client *http.Client, domain string) *RedirectResult {
+func (rs *RedirectStage) followRedirects(ctx context.Context, client *http.Client, domain string) *RedirectResult {
 	const (
 		maxRedirects = 5
 		httpsScheme  = "https://"
@@ -101,7 +107,7 @@ func (rs *RedirectStage) followRedirects(client *http.Client, domain string) *Re
 	currentURL := httpsScheme + domain
 
 	for i := 0; i < maxRedirects; i++ {
-		req, err := http.NewRequest("GET", currentURL, nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", currentURL, nil)
 		if err != nil {
 			break
 		}

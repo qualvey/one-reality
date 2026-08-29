@@ -58,7 +58,7 @@ func CalculateTotalIPs(cidrs []string) int64 {
 }
 
 // executeAuto 处理 CIDR/IP 列表，内存中调用内置 TLS 扫描器并根据 REALITY 策略输出彩色表格结果
-func (r *RootCmd) executeAuto(cidrs []string, maxTargets int, checkAll bool, exportFile string, filter types.RealityFilterConfig, asnStr string, countryStr string) {
+func (r *RootCmd) executeAuto(cidrs []string, maxTargets int, checkAll bool, exportFile string, filter types.RealityFilterConfig, asnStr string, countryStr string, initialResults []*types.DetectionResult) {
 	if len(cidrs) == 0 {
 		ui.PrintError("错误：未提供有效的 CIDR 扫描网段")
 		return
@@ -115,6 +115,18 @@ func (r *RootCmd) executeAuto(cidrs []string, maxTargets int, checkAll bool, exp
 
 	var rawCandidatePool []*types.DetectionResult
 	var suitableResults []*types.DetectionResult
+
+	// 装载已通过缓存复核的初始目标
+	if len(initialResults) > 0 {
+		for _, res := range initialResults {
+			if res != nil && res.Domain != "" {
+				domainSet[res.Domain] = true
+				suitableResults = append(suitableResults, res)
+				rawCandidatePool = append(rawCandidatePool, res)
+			}
+		}
+	}
+
 	concurrency := 10
 	var workerWg sync.WaitGroup
 
@@ -600,6 +612,7 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 	}
 
 	// Cache-First 快速通道：若本地库存在同 ASN 且未过期的资产，优先进行秒级并发健康复核
+	var cachedVerified []*types.DetectionResult
 	if filter.UseCache && !noCache && !checkAll && asnStr != "" {
 		store, err := storage.NewTargetStore("data/reality_targets.db")
 		if err == nil {
@@ -611,20 +624,37 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 				ui.PrintTimestampedMessage("发现同 ASN/国家 (%s, %s) 的历史资产 %d 条，正在极速复核连通性...",
 					asnStr, countryStr, len(cachedRecords))
 
-				var verified []*types.DetectionResult
 				var vMu sync.Mutex
 				var vWg sync.WaitGroup
+				sem := make(chan struct{}, 15) // 控制并发数为 15，防止瞬间并发大量 HTTP 请求导致 Windows Socket 耗尽
+
+				checkCtx, cancelCheck := context.WithTimeout(r.ctx, 6*time.Second)
+				defer cancelCheck()
 
 				for _, rec := range cachedRecords {
+					select {
+					case <-checkCtx.Done():
+						break
+					default:
+					}
+
 					vWg.Add(1)
 					go func(record *types.TargetRecord) {
 						defer vWg.Done()
-						res, err := r.engine.CheckDomain(r.ctx, record.Domain)
+
+						select {
+						case sem <- struct{}{}:
+							defer func() { <-sem }()
+						case <-checkCtx.Done():
+							return
+						}
+
+						res, err := r.engine.CheckDomain(checkCtx, record.Domain)
 						if err == nil && res != nil && res.Suitable {
 							passed, _ := core.FilterTarget(res, filter)
 							if passed {
 								vMu.Lock()
-								verified = append(verified, res)
+								cachedVerified = append(cachedVerified, res)
 								vMu.Unlock()
 							}
 						}
@@ -632,22 +662,28 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 				}
 				vWg.Wait()
 
-				if len(verified) >= maxTargets {
-					ui.PrintTimestampedMessage("✅ 成功从本地资产库秒级复用 %d 个优质 REALITY 目标！", len(verified))
-					if len(verified) > maxTargets {
-						verified = verified[:maxTargets]
-					}
-					r.batchManager.SortByRecommendationStars(verified)
-					fmt.Println("\n适合的域名:")
-					fmt.Println(r.batchManager.FormatSuitableTable(verified))
+				if r.ctx.Err() != nil {
+					ui.PrintTimestampedMessage("任务已被用户中断 (Ctrl+C)。")
 					return
-				} else if len(verified) > 0 {
-					ui.PrintTimestampedMessage("本地缓存复核通过 %d 个目标，不足指定数量 (%d)，继续启动网络扫描补充...",
-						len(verified), maxTargets)
+				}
+
+				if len(cachedVerified) >= maxTargets {
+					ui.PrintTimestampedMessage("✅ 成功从本地资产库秒级复用 %d 个优质 REALITY 目标！", len(cachedVerified))
+					cachedVerified = core.FilterPool(cachedVerified, filter)
+					if len(cachedVerified) > maxTargets {
+						cachedVerified = cachedVerified[:maxTargets]
+					}
+					r.batchManager.SortByRecommendationStars(cachedVerified)
+					fmt.Println("\n适合的域名:")
+					fmt.Println(r.batchManager.FormatSuitableTable(cachedVerified))
+					return
+				} else if len(cachedVerified) > 0 {
+					ui.PrintTimestampedMessage("本地缓存复核通过 %d 个目标，不足指定数量 (%d)，已预置并继续启动网络扫描补充...",
+						len(cachedVerified), maxTargets)
 				}
 			}
 		}
 	}
 
-	r.executeAuto(cidrs, maxTargets, checkAll, exportFile, filter, asnStr, countryStr)
+	r.executeAuto(cidrs, maxTargets, checkAll, exportFile, filter, asnStr, countryStr, cachedVerified)
 }
