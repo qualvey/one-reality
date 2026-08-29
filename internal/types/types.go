@@ -342,6 +342,7 @@ type RealityFilterConfig struct {
 	RequireNoCN          bool     `yaml:"require_no_cn"`          // 是否排除国内网站 (默认 true，翻回国内设为 false)
 	CheckGFW             bool     `yaml:"check_gfw"`              // 是否启用 GFW 静态黑名单 (本地直连建议 false)
 	UseCache             bool     `yaml:"use_cache"`              // 是否启用本地资产库缓存快速通道 (默认 true)
+	VerifyCache          bool     `yaml:"verify_cache"`           // 是否对本地缓存发起在线网络复核 (默认 false: 直接读取旧参数 0 延迟秒出; true: 在线复核)
 	CacheMaxDays         int      `yaml:"cache_max_days"`         // 资产缓存有效天数 (默认 7)
 
 	// --- 阶段二/进阶偏好过滤 ---

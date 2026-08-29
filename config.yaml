@@ -15,9 +15,10 @@ reality_filter:
   # 2. GFW 静态黑名单检测 (false: 本地家宽直连时建议关闭，纯靠真实网络握手连通性自然淘汰，避免静态名单误杀)
   check_gfw: false
 
-  # 3. 资产数据库与缓存快速通道 (true: 优先复用本地数据库中已验证的同 ASN/国家 优质资产并快速秒级复核)
-  use_cache: true
-  cache_max_days: 7
+  # 3. 资产数据库与缓存快速通道
+  use_cache: true              # 是否优先使用本地 SQLite 资产库 (默认 true)
+  verify_cache: false          # 是否对本地缓存发起在线网络复核 (默认 false: 直接使用历史参数 0 延迟秒出; true: 在线并发复核)
+  cache_max_days: 7            # 缓存有效天数 (默认 7)
 
   # ==================== 阶段二：进阶偏好过滤策略 ====================
   # 4. 强制非 CDN 过滤 (true: 剔除 Cloudflare/Akamai/Fastly 等 CDN 节点，防止 VPS 变成公网免费反代)

@@ -23,7 +23,8 @@ RealityChecker 是一个用于自动发现、深度检测与智能筛选 Xray Re
   - **阶段二（纯内存进阶偏好过滤）**：纯内存 0 耗时即时计算，支持白名单后缀 (`include_suffixes`)、黑名单后缀 (`exclude_suffixes`)、延迟阈值 (`max_handshake_ms`)、状态码排除 (`exclude_status`)、星级门槛等。
 - **本地 SQLite 资产库与 Cache-First 秒级直出**：
   - 自动持久化存储于 `data/reality_targets.db`（SQLite WAL 模式，带 ASN/国家复合索引）；
-  - 同机房/同 ASN + 国家 IP 二次查询时自动触发 **Cache-First 快速通道**，并发安全复核（15 工作线程，6s 熔断保护），**1~5 秒瞬间输出**！
+  - **默认 0 网络请求极速直出**：同机房/同 ASN + 国家 IP 二次查询时直接复用本地历史参数秒出结果；
+  - **按需在线复核 (`--recheck`)**：如需对缓存资产进行在线连通性与握手延迟重新复核，传入 `--recheck` 或 `--verify-cache` 即可触发安全并发检测。
 - **全量摸底扫描 (`--check-all`) 与资产导出 (`--export`)**：
   - 支持全量网段摸排模式（不提前终止），摸清并沉淀该 ASN 下所有合规资产入库，并可导出为标准化 JSON 文件。
 - **Tunnel 占位与微型回显服务识别 (Anti-Dummy / Anti-Tunnel)**：
@@ -145,6 +146,7 @@ reality-checker version                      显示版本、提交和构建信�
 --limit N / -m          指定获取合适目标的数量上限 (默认 5)
 --check-all / -a        开启全量摸底扫描模式 (不提前终止，全量入库)
 --no-cache              跳过本地资产库缓存，强制重新发起网络扫描
+--recheck               对本地命中的资产发起在线网络健康复核 (默认直接复用历史参数)
 --export FILE           将扫描发现的所有合格资产导出为 JSON 文件
 --country CODE          指定国家过滤 (两位 ISO 代码，如 US, DE)
 --max-handshake MS      设置最大握手延迟 (毫秒, 默认 400)

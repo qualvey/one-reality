@@ -559,6 +559,10 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 			checkAll = true
 		case "--no-cache":
 			noCache = true
+		case "--recheck", "--verify-cache":
+			filter.VerifyCache = true
+		case "--no-recheck":
+			filter.VerifyCache = false
 		case "--export":
 			if i+1 < len(args) {
 				exportFile = args[i+1]
@@ -611,7 +615,7 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 		return
 	}
 
-	// Cache-First 快速通道：若本地库存在同 ASN 且未过期的资产，优先进行秒级并发健康复核
+	// Cache-First 快速通道：若本地库存在同 ASN 且未过期的资产，优先进行秒级直出（默认 0 网络请求，可加 --recheck 在线复核）
 	var cachedVerified []*types.DetectionResult
 	if filter.UseCache && !noCache && !checkAll && asnStr != "" {
 		store, err := storage.NewTargetStore("data/reality_targets.db")
@@ -621,65 +625,94 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 			cachedRecords, _ := store.GetTargetsByASN(asnStr, countryStr, maxAge)
 
 			if len(cachedRecords) > 0 {
-				ui.PrintTimestampedMessage("发现同 ASN/国家 (%s, %s) 的历史资产 %d 条，正在极速复核连通性...",
-					asnStr, countryStr, len(cachedRecords))
-
-				var vMu sync.Mutex
-				var vWg sync.WaitGroup
-				sem := make(chan struct{}, 15) // 控制并发数为 15，防止瞬间并发大量 HTTP 请求导致 Windows Socket 耗尽
-
-				checkCtx, cancelCheck := context.WithTimeout(r.ctx, 6*time.Second)
-				defer cancelCheck()
-
-				for _, rec := range cachedRecords {
-					select {
-					case <-checkCtx.Done():
-						break
-					default:
-					}
-
-					vWg.Add(1)
-					go func(record *types.TargetRecord) {
-						defer vWg.Done()
-
-						select {
-						case sem <- struct{}{}:
-							defer func() { <-sem }()
-						case <-checkCtx.Done():
-							return
-						}
-
-						res, err := r.engine.CheckDomain(checkCtx, record.Domain)
-						if err == nil && res != nil && res.Suitable {
+				if !filter.VerifyCache {
+					// 默认模式：直接使用本地历史参数，0 网络请求极速秒出
+					for _, rec := range cachedRecords {
+						res := storage.RecordToDetectionResult(rec)
+						if res != nil {
 							passed, _ := core.FilterTarget(res, filter)
 							if passed {
-								vMu.Lock()
 								cachedVerified = append(cachedVerified, res)
-								vMu.Unlock()
 							}
 						}
-					}(rec)
-				}
-				vWg.Wait()
-
-				if r.ctx.Err() != nil {
-					ui.PrintTimestampedMessage("任务已被用户中断 (Ctrl+C)。")
-					return
-				}
-
-				if len(cachedVerified) >= maxTargets {
-					ui.PrintTimestampedMessage("✅ 成功从本地资产库秒级复用 %d 个优质 REALITY 目标！", len(cachedVerified))
-					cachedVerified = core.FilterPool(cachedVerified, filter)
-					if len(cachedVerified) > maxTargets {
-						cachedVerified = cachedVerified[:maxTargets]
 					}
-					r.batchManager.SortByRecommendationStars(cachedVerified)
-					fmt.Println("\n适合的域名:")
-					fmt.Println(r.batchManager.FormatSuitableTable(cachedVerified))
-					return
-				} else if len(cachedVerified) > 0 {
-					ui.PrintTimestampedMessage("本地缓存复核通过 %d 个目标，不足指定数量 (%d)，已预置并继续启动网络扫描补充...",
-						len(cachedVerified), maxTargets)
+
+					if len(cachedVerified) >= maxTargets {
+						ui.PrintTimestampedMessage("✅ 从本地资产库秒级命中 %d 个历史资产（0 网络延迟，极速直出）！如需在线连通性复核可添加 --recheck", len(cachedVerified))
+						cachedVerified = core.FilterPool(cachedVerified, filter)
+						if len(cachedVerified) > maxTargets {
+							cachedVerified = cachedVerified[:maxTargets]
+						}
+						r.batchManager.SortByRecommendationStars(cachedVerified)
+						fmt.Println("\n适合的域名:")
+						fmt.Println(r.batchManager.FormatSuitableTable(cachedVerified))
+						return
+					} else if len(cachedVerified) > 0 {
+						ui.PrintTimestampedMessage("本地资产库命中 %d 个目标，不足指定数量 (%d)，已预置并启动网络扫描补充...",
+							len(cachedVerified), maxTargets)
+					}
+				} else {
+					// 传入了 --recheck / --verify-cache：在线并发复核连通性
+					ui.PrintTimestampedMessage("发现同 ASN/国家 (%s, %s) 的历史资产 %d 条，正在在线并发复核连通性...",
+						asnStr, countryStr, len(cachedRecords))
+
+					var vMu sync.Mutex
+					var vWg sync.WaitGroup
+					sem := make(chan struct{}, 15) // 控制并发数为 15，防止瞬间并发大量 HTTP 请求导致 Windows Socket 耗尽
+
+					checkCtx, cancelCheck := context.WithTimeout(r.ctx, 6*time.Second)
+					defer cancelCheck()
+
+					for _, rec := range cachedRecords {
+						select {
+						case <-checkCtx.Done():
+							break
+						default:
+						}
+
+						vWg.Add(1)
+						go func(record *types.TargetRecord) {
+							defer vWg.Done()
+
+							select {
+							case sem <- struct{}{}:
+								defer func() { <-sem }()
+							case <-checkCtx.Done():
+								return
+							}
+
+							res, err := r.engine.CheckDomain(checkCtx, record.Domain)
+							if err == nil && res != nil && res.Suitable {
+								passed, _ := core.FilterTarget(res, filter)
+								if passed {
+									vMu.Lock()
+									cachedVerified = append(cachedVerified, res)
+									vMu.Unlock()
+								}
+							}
+						}(rec)
+					}
+					vWg.Wait()
+
+					if r.ctx.Err() != nil {
+						ui.PrintTimestampedMessage("任务已被用户中断 (Ctrl+C)。")
+						return
+					}
+
+					if len(cachedVerified) >= maxTargets {
+						ui.PrintTimestampedMessage("✅ 成功从本地资产库复核通过 %d 个优质 REALITY 目标！", len(cachedVerified))
+						cachedVerified = core.FilterPool(cachedVerified, filter)
+						if len(cachedVerified) > maxTargets {
+							cachedVerified = cachedVerified[:maxTargets]
+						}
+						r.batchManager.SortByRecommendationStars(cachedVerified)
+						fmt.Println("\n适合的域名:")
+						fmt.Println(r.batchManager.FormatSuitableTable(cachedVerified))
+						return
+					} else if len(cachedVerified) > 0 {
+						ui.PrintTimestampedMessage("本地缓存复核通过 %d 个目标，不足指定数量 (%d)，已预置并继续启动网络扫描补充...",
+							len(cachedVerified), maxTargets)
+					}
 				}
 			}
 		}

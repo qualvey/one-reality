@@ -135,6 +135,7 @@ func mergeConfig(defaultConfig *types.Config, fileConfig *types.Config) {
 	defaultConfig.RealityFilter.RequireNoCN = fileConfig.RealityFilter.RequireNoCN
 	defaultConfig.RealityFilter.CheckGFW = fileConfig.RealityFilter.CheckGFW
 	defaultConfig.RealityFilter.UseCache = fileConfig.RealityFilter.UseCache
+	defaultConfig.RealityFilter.VerifyCache = fileConfig.RealityFilter.VerifyCache
 	if fileConfig.RealityFilter.CacheMaxDays > 0 {
 		defaultConfig.RealityFilter.CacheMaxDays = fileConfig.RealityFilter.CacheMaxDays
 	}
