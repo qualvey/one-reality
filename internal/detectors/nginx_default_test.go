@@ -40,6 +40,38 @@ working. Further configuration is required.</p>
 	}
 }
 
+func TestDetectNginxDefaultPage_TunnelPlaceholder(t *testing.T) {
+	body := []byte("hewwo from tuwunel woof!#")
+	headers := map[string]string{
+		"Content-Type": "text/plain",
+	}
+
+	res := DetectNginxDefaultPage(200, headers, body)
+	if !res.IsDefaultPage {
+		t.Fatalf("expected tuwunel tunnel placeholder to be detected as default page, got: %+v", res)
+	}
+	if res.PageType != "tunnel/dummy" && res.PageType != "dummy" {
+		t.Fatalf("expected PageType dummy/tunnel, got %q", res.PageType)
+	}
+}
+
+func TestDetectNginxDefaultPage_ShortPlainTextDummy(t *testing.T) {
+	tests := []string{
+		"ok",
+		"hello world",
+		"test response",
+		"404 page not found",
+		"default backend - 404",
+	}
+
+	for _, text := range tests {
+		res := DetectNginxDefaultPage(200, nil, []byte(text))
+		if !res.IsDefaultPage {
+			t.Errorf("expected plain text %q to be detected as default page, got false", text)
+		}
+	}
+}
+
 func TestDetectNginxDefaultPage_OpenRestyWelcome(t *testing.T) {
 	html := `<!DOCTYPE html>
 <html>

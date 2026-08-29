@@ -9,8 +9,8 @@ COMMIT="${COMMIT:-$(git -C "${ROOT_DIR}" rev-parse --short HEAD 2>/dev/null || e
 BUILD_TIME="${BUILD_TIME:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
 LDFLAGS="-s -w -X RealityChecker/internal/version.Version=${VERSION} -X RealityChecker/internal/version.Commit=${COMMIT} -X RealityChecker/internal/version.BuildTime=${BUILD_TIME}"
 
-rm -rf "${DIST_DIR}"
 mkdir -p "${DIST_DIR}"
+rm -f "${DIST_DIR}"/reality-checker*
 
 build_target() {
   local os="$1"
