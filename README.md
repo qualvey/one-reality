@@ -146,14 +146,16 @@ reality-checker version                      显示版本、提交和构建信�
 --limit N / -m          指定获取合适目标的数量上限 (默认 5)
 --check-all / -a        开启全量摸底扫描模式 (不提前终止，全量入库，自动支持断点续传)
 --reset-scan            重置断点记录，从第 1 个网段重新开始全量扫描
+--threads N / -t        设置网络扫描并发协程数 (默认 200，高性能 VPS 建议 500~1000)
+--timeout SEC           单 IP 握手超时秒数 (默认 3 秒，死 IP 快速熔断建议 1~2 秒)
 --no-cache              跳过本地资产库缓存，强制重新发起网络扫描
 --recheck               对本地命中的资产发起在线网络健康复核 (默认直接复用历史参数)
 --ipv4-only / -4        仅拉取与扫描 IPv4 网段
 --ipv6-only / -6        仅拉取与扫描 IPv6 网段
 --export FILE           将扫描发现的所有合格资产导出为 JSON 文件
 --country CODE          指定国家过滤 (两位 ISO 代码，如 US, DE)
---max-handshake MS      设置最大握手延迟 (毫秒, 默认 400)
---min-cert-days DAYS    证书最低剩余天数 (默认 10)
+--max-handshake MS      设置最大握手延迟 (毫秒, 默认 800)
+--min-cert-days DAYS    证书最低剩余天数 (默认 7)
 --min-stars STARS       最低推荐星级 1-5 (默认 3)
 --no-cdn / --allow-cdn  强制排除 / 允许 CDN 节点
 --no-hot / --allow-hot  强制排除 / 允许热门大站

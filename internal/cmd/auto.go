@@ -365,14 +365,23 @@ CIDRLoop:
 		var lastSaveTime time.Time
 		var lastSaveIPCount int
 
+		threads := filter.ScanThreads
+		if threads <= 0 {
+			threads = 200
+		}
+		timeout := filter.ScanTimeout
+		if timeout <= 0 {
+			timeout = 3
+		}
+
 		// 执行并发 TLS 握手扫描
 		scannerEngine.ScanCIDRStream(
 			ctx,
 			cidr,
 			startIP,
 			443,
-			100,
-			5,
+			threads,
+			timeout,
 			false,
 			subChan,
 			func(n int, ip string) {
@@ -676,6 +685,8 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 			"  --limit N / -m       指定获取合适目标的数量上限 (默认 5)",
 			"  --check-all / -a     开启全量摸底扫描模式 (不提前终止，全量入库，支持断点续传)",
 			"  --reset-scan         重置断点记录，从第 1 个网段重新扫描",
+			"  --threads N / -t     设置网络扫描并发协程数 (默认 200，高性能机器可设 500-1000)",
+			"  --timeout SEC        单 IP 握手超时秒数 (默认 3 秒，死 IP 快速熔断建议 1-2 秒)",
 			"  --no-cache           跳过本地资产库缓存，强制重新网络扫描",
 			"  --recheck            对本地资产库命中目标发起在线网络复核",
 			"  --ipv4-only / -4     仅拉取与扫描 IPv4 网段",
@@ -691,6 +702,7 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 			"示例:",
 			"  reality-checker auto 85.155.184.100 --limit 5",
 			"  reality-checker auto 85.155.184.100 --check-all --export all.json",
+			"  reality-checker auto 59.110.190.69 --check-all --threads 500 --timeout 2",
 			"  reality-checker auto 5.45.102.0/24 --limit 2",
 			"  reality-checker auto --in cidrs.txt --limit 5",
 		)
@@ -728,6 +740,20 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 			if i+1 < len(args) {
 				if n, err := strconv.Atoi(args[i+1]); err == nil {
 					maxTargets = n
+				}
+				i++
+			}
+		case "--threads", "-t":
+			if i+1 < len(args) {
+				if t, err := strconv.Atoi(args[i+1]); err == nil && t > 0 {
+					filter.ScanThreads = t
+				}
+				i++
+			}
+		case "--timeout":
+			if i+1 < len(args) {
+				if to, err := strconv.Atoi(args[i+1]); err == nil && to > 0 {
+					filter.ScanTimeout = to
 				}
 				i++
 			}
@@ -928,6 +954,12 @@ func formatNonDefaultFilters(filter types.RealityFilterConfig) []string {
 	}
 	if filter.RequireNoCDN != def.RequireNoCDN {
 		diffs = append(diffs, fmt.Sprintf("非CDN限制=%v", filter.RequireNoCDN))
+	}
+	if filter.ScanThreads != def.ScanThreads && filter.ScanThreads > 0 {
+		diffs = append(diffs, fmt.Sprintf("并发协程=%d (默认%d)", filter.ScanThreads, def.ScanThreads))
+	}
+	if filter.ScanTimeout != def.ScanTimeout && filter.ScanTimeout > 0 {
+		diffs = append(diffs, fmt.Sprintf("单IP超时=%d秒 (默认%d秒)", filter.ScanTimeout, def.ScanTimeout))
 	}
 	if filter.MaxHandshakeMS != def.MaxHandshakeMS && filter.MaxHandshakeMS > 0 {
 		diffs = append(diffs, fmt.Sprintf("最大握手延迟=%dms", filter.MaxHandshakeMS))

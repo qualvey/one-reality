@@ -24,6 +24,10 @@ reality_filter:
   verify_cache: false          # 是否对本地缓存发起在线网络复核 (默认 false: 直接使用历史参数 0 延迟秒出; true: 在线并发复核)
   cache_max_days: 7            # 缓存有效天数 (默认 7)
 
+  # 5. 网络扫描性能调优
+  scan_threads: 200            # 网络扫描并发协程数 (默认 200，在高性能 VPS 上可设 500~1000)
+  scan_timeout: 3              # 单 IP 握手超时秒数 (默认 3 秒，死 IP 快速熔断推荐 1~2 秒)
+
   # ==================== 阶段二：进阶偏好过滤策略 ====================
   # 4. 强制非 CDN 过滤 (true: 剔除 Cloudflare/Akamai/Fastly 等 CDN 节点，防止 VPS 变成公网免费反代)
   require_no_cdn: true

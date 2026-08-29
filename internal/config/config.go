@@ -142,6 +142,12 @@ func mergeConfig(defaultConfig *types.Config, fileConfig *types.Config) {
 	if fileConfig.RealityFilter.CacheMaxDays > 0 {
 		defaultConfig.RealityFilter.CacheMaxDays = fileConfig.RealityFilter.CacheMaxDays
 	}
+	if fileConfig.RealityFilter.ScanThreads > 0 {
+		defaultConfig.RealityFilter.ScanThreads = fileConfig.RealityFilter.ScanThreads
+	}
+	if fileConfig.RealityFilter.ScanTimeout > 0 {
+		defaultConfig.RealityFilter.ScanTimeout = fileConfig.RealityFilter.ScanTimeout
+	}
 	defaultConfig.RealityFilter.RequireNoCDN = fileConfig.RealityFilter.RequireNoCDN
 	defaultConfig.RealityFilter.RequireNoHot = fileConfig.RealityFilter.RequireNoHot
 	defaultConfig.RealityFilter.RequireNoDefaultPage = fileConfig.RealityFilter.RequireNoDefaultPage
@@ -226,6 +232,8 @@ func getDefaultConfig() *types.Config {
 			CheckGFW:             false,
 			UseCache:             true,
 			CacheMaxDays:         7,
+			ScanThreads:          200,
+			ScanTimeout:          3,
 			RequireNoCDN:         true,
 			MaxHandshakeMS:       800,
 			RequireNoHot:         true,
