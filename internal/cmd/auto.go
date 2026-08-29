@@ -106,6 +106,9 @@ func (r *RootCmd) executeAuto(cidrs []string, maxTargets int, checkAll bool, exp
 		taskKey = fmt.Sprintf("%s_%s", asnStr, countryStr)
 	}
 
+	// 记录所有网段的原始理论总 IP 数
+	grandTotalIPCount := CalculateTotalIPs(cidrs)
+
 	var checkpointsMap map[string]*storage.CheckpointRecord
 	// 检查全量摸底扫描的断点续传状态 (默认开启断点续传，除非传入 --reset-scan)
 	if checkAll && targetStore != nil && taskKey != "" && !filter.NoResume {
@@ -145,9 +148,10 @@ func (r *RootCmd) executeAuto(cidrs []string, maxTargets int, checkAll bool, exp
 	}
 
 	// 精确计算剩余待扫描 IP 理论总数（扣除断点前已扫描的 IP）
-	totalIPCount := CalculateRemainingIPs(cidrs, checkpointsMap)
+	remainingIPCount := CalculateRemainingIPs(cidrs, checkpointsMap)
+	alreadyScannedIPCount := grandTotalIPCount - remainingIPCount
 
-	bar := progressbar.NewOptions64(totalIPCount,
+	bar := progressbar.NewOptions64(grandTotalIPCount,
 		progressbar.OptionEnableColorCodes(true),
 		progressbar.OptionShowCount(),
 		progressbar.OptionSetWidth(25),
@@ -161,6 +165,9 @@ func (r *RootCmd) executeAuto(cidrs []string, maxTargets int, checkAll bool, exp
 			BarEnd:        "]",
 		}),
 	)
+	if alreadyScannedIPCount > 0 {
+		_ = bar.Set64(alreadyScannedIPCount)
+	}
 	ui.PrintTimestampedMessage("开启内嵌自动化扫描与检测模式 (Native Engine)...")
 	if checkAll {
 		ui.PrintTimestampedMessage("模式: 全量摸底扫描 (--check-all)，将收集并存档所有合规资产入库")
