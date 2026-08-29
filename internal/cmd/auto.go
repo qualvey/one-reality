@@ -125,8 +125,13 @@ func (r *RootCmd) executeAuto(cidrs []string, maxTargets int, checkAll bool, exp
 	if checkAll {
 		ui.PrintTimestampedMessage("模式: 全量摸底扫描 (--check-all)，将收集并存档所有合规资产入库")
 	}
-	ui.PrintTimestampedMessage("应用 REALITY 选型策略: [非国内=%v, GFW检测=%v, 非CDN=%v, 最大握手=%dms, 排除热门=%v, 最小证书天数=%d天, 最低星级=%d星]",
-		filter.RequireNoCN, filter.CheckGFW, filter.RequireNoCDN, filter.MaxHandshakeMS, filter.RequireNoHot, filter.MinCertDays, filter.MinStars)
+
+	nonDefaults := formatNonDefaultFilters(filter)
+	if len(nonDefaults) > 0 {
+		ui.PrintTimestampedMessage("检测到自定义非默认过滤条件: [%s]", strings.Join(nonDefaults, ", "))
+	} else {
+		ui.PrintTimestampedMessage("应用 REALITY 选型策略: [全部使用推荐默认值]")
+	}
 
 	ui.PrintTimestampedMessage("待扫描网段总数: %d 个。排序如下:", len(cidrs))
 
@@ -288,6 +293,13 @@ CIDRLoop:
 			}
 		}()
 
+		// 动态节流更新进度条描述，保持进度条在最下方且实时显示当前网段与当前扫描 IP
+		var lastUpdate time.Time
+		var updateMu sync.Mutex
+		currentCIDR := cidr
+		currentIdx := idx + 1
+		totalCIDRs := len(cidrs)
+
 		// 执行并发 TLS 握手扫描
 		scannerEngine.ScanCIDRStream(
 			ctx,
@@ -297,8 +309,14 @@ CIDRLoop:
 			5,
 			false,
 			subChan,
-			func(n int) {
+			func(n int, ip string) {
 				_ = bar.Add(n)
+				updateMu.Lock()
+				if time.Since(lastUpdate) > 150*time.Millisecond {
+					lastUpdate = time.Now()
+					bar.Describe(fmt.Sprintf("[cyan][网段 %d/%d: %s | 探测: %s][reset]", currentIdx, totalCIDRs, currentCIDR, ip))
+				}
+				updateMu.Unlock()
 			},
 		)
 		close(subChan)
@@ -797,3 +815,76 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 
 	r.executeAuto(cidrs, maxTargets, checkAll, exportFile, filter, asnStr, countryStr, cachedVerified)
 }
+
+// formatNonDefaultFilters 格式化输出用户自定义/非默认的 REALITY 选型策略
+func formatNonDefaultFilters(filter types.RealityFilterConfig) []string {
+	var diffs []string
+
+	if !filter.RequireNoCN {
+		diffs = append(diffs, "允许国内站点 (require_no_cn=false)")
+	}
+	if filter.CheckGFW {
+		diffs = append(diffs, "启用GFW黑名单 (check_gfw=true)")
+	}
+	if filter.IPv4Only {
+		diffs = append(diffs, "仅IPv4 (ipv4_only=true)")
+	}
+	if filter.IPv6Only {
+		diffs = append(diffs, "仅IPv6 (ipv6_only=true)")
+	}
+	if !filter.RequireNoCDN {
+		diffs = append(diffs, "允许CDN节点 (require_no_cdn=false)")
+	}
+	if filter.MaxHandshakeMS != 400 && filter.MaxHandshakeMS > 0 {
+		diffs = append(diffs, fmt.Sprintf("最大握手延迟=%dms", filter.MaxHandshakeMS))
+	}
+	if !filter.RequireNoHot {
+		diffs = append(diffs, "允许热门大站 (require_no_hot=false)")
+	}
+	if filter.MinCertDays != 10 && filter.MinCertDays > 0 {
+		diffs = append(diffs, fmt.Sprintf("最小证书天数=%d天", filter.MinCertDays))
+	}
+	if filter.MinStars != 3 && filter.MinStars > 0 {
+		diffs = append(diffs, fmt.Sprintf("最低推荐星级=%d星", filter.MinStars))
+	}
+	if !filter.RequireNoDefaultPage {
+		diffs = append(diffs, "允许默认欢迎页 (require_no_default_page=false)")
+	}
+	if len(filter.IncludeSuffixes) > 0 {
+		diffs = append(diffs, fmt.Sprintf("白名单后缀=%v", filter.IncludeSuffixes))
+	}
+	if len(filter.ExcludeSuffixes) > 0 {
+		defaultSet := map[string]bool{
+			".local": true, ".internal": true, ".lan": true, ".home": true,
+			".corp": true, ".arpa": true, ".test": true, ".example": true,
+			".invalid": true, ".localhost": true, ".onion": true,
+		}
+		var customEx []string
+		for _, s := range filter.ExcludeSuffixes {
+			if !defaultSet[s] {
+				customEx = append(customEx, s)
+			}
+		}
+		if len(customEx) > 0 {
+			diffs = append(diffs, fmt.Sprintf("附加排除后缀=%v", customEx))
+		}
+	}
+	if len(filter.ExcludeStatus) > 0 {
+		defaultStatus := map[int]bool{
+			400: true, 401: true, 403: true, 404: true, 407: true, 408: true,
+			429: true, 500: true, 501: true, 502: true, 503: true, 504: true,
+		}
+		var customStatus []int
+		for _, st := range filter.ExcludeStatus {
+			if !defaultStatus[st] {
+				customStatus = append(customStatus, st)
+			}
+		}
+		if len(customStatus) > 0 {
+			diffs = append(diffs, fmt.Sprintf("附加排除状态码=%v", customStatus))
+		}
+	}
+
+	return diffs
+}
+

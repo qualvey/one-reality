@@ -134,7 +134,7 @@ func (s *Scanner) ScanTLS(ctx context.Context, host Host, port int, timeout int,
 
 // ScanCIDRStream 执行并发扫描并把结果通过 Channel 传出
 func (s *Scanner) ScanCIDRStream(ctx context.Context, cidrStr string, port int, threads int, timeout int, enableIPv6 bool, outChan chan<- *ScanResult,
-onProgress func(n int),
+	onProgress func(n int, currentIP string),
 ) {
 	hostChan := IterateCIDR(ctx, cidrStr, enableIPv6)
 
@@ -156,9 +156,9 @@ onProgress func(n int),
 				}
 
 				res := s.ScanTLS(ctx, host, port, timeout, enableIPv6)
-				// 2.【核心位置】无论成功还是失败，单 IP 探测结束立刻触发步进
+				// 2.【核心位置】无论成功还是失败，单 IP 探测结束立刻触发步进并回传当前探测的 IP
 				if onProgress != nil {
-					onProgress(1)
+					onProgress(1, host.IP.String())
 				}
 				if res != nil {
 					if logger.IsDebug() {
