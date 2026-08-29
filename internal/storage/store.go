@@ -81,7 +81,9 @@ func (s *TargetStore) initSchema() error {
 	CREATE TABLE IF NOT EXISTS scan_checkpoints (
 		task_key TEXT NOT NULL,
 		cidr TEXT NOT NULL,
-		completed_at DATETIME NOT NULL,
+		last_ip TEXT NOT NULL DEFAULT '',
+		completed INTEGER NOT NULL DEFAULT 0,
+		updated_at DATETIME NOT NULL,
 		PRIMARY KEY (task_key, cidr)
 	);
 	CREATE INDEX IF NOT EXISTS idx_checkpoints_task ON scan_checkpoints (task_key);
@@ -469,43 +471,68 @@ func RecordToDetectionResult(rec *types.TargetRecord) *types.DetectionResult {
 	return res
 }
 
-// GetCompletedCIDRs 获取某个任务已完成扫描的 CIDR 集合
-func (s *TargetStore) GetCompletedCIDRs(taskKey string) (map[string]bool, error) {
+// CheckpointRecord 扫描断点记录
+type CheckpointRecord struct {
+	TaskKey   string    `json:"task_key"`
+	CIDR      string    `json:"cidr"`
+	LastIP    string    `json:"last_ip"`
+	Completed bool      `json:"completed"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// GetCheckpoints 获取某个任务的所有断点记录
+func (s *TargetStore) GetCheckpoints(taskKey string) (map[string]*CheckpointRecord, error) {
 	if s == nil || s.db == nil || taskKey == "" {
 		return nil, nil
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	rows, err := s.db.Query("SELECT cidr FROM scan_checkpoints WHERE task_key = ?", taskKey)
+	rows, err := s.db.Query("SELECT cidr, last_ip, completed, updated_at FROM scan_checkpoints WHERE task_key = ?", taskKey)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	completed := make(map[string]bool)
+	checkpoints := make(map[string]*CheckpointRecord)
 	for rows.Next() {
-		var cidr string
-		if err := rows.Scan(&cidr); err == nil {
-			completed[cidr] = true
+		var cidr, lastIP string
+		var completedInt int
+		var updatedAt time.Time
+		if err := rows.Scan(&cidr, &lastIP, &completedInt, &updatedAt); err == nil {
+			checkpoints[cidr] = &CheckpointRecord{
+				TaskKey:   taskKey,
+				CIDR:      cidr,
+				LastIP:    lastIP,
+				Completed: completedInt == 1,
+				UpdatedAt: updatedAt,
+			}
 		}
 	}
-	return completed, nil
+	return checkpoints, nil
 }
 
-// RecordCompletedCIDR 记录单条已完成扫描的 CIDR
-func (s *TargetStore) RecordCompletedCIDR(taskKey, cidr string) error {
+// RecordCheckpoint 记录某个网段的断点进度（支持指定最后扫描的 IP 和是否完成）
+func (s *TargetStore) RecordCheckpoint(taskKey, cidr, lastIP string, completed bool) error {
 	if s == nil || s.db == nil || taskKey == "" || cidr == "" {
 		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	completedInt := 0
+	if completed {
+		completedInt = 1
+	}
+
 	_, err := s.db.Exec(`
-		INSERT INTO scan_checkpoints (task_key, cidr, completed_at)
-		VALUES (?, ?, ?)
-		ON CONFLICT(task_key, cidr) DO UPDATE SET completed_at = excluded.completed_at
-	`, taskKey, cidr, time.Now())
+		INSERT INTO scan_checkpoints (task_key, cidr, last_ip, completed, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(task_key, cidr) DO UPDATE SET 
+			last_ip = excluded.last_ip,
+			completed = excluded.completed,
+			updated_at = excluded.updated_at
+	`, taskKey, cidr, lastIP, completedInt, time.Now())
 	return err
 }
 
@@ -520,4 +547,5 @@ func (s *TargetStore) ClearCheckpoints(taskKey string) error {
 	_, err := s.db.Exec("DELETE FROM scan_checkpoints WHERE task_key = ?", taskKey)
 	return err
 }
+
 

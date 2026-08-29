@@ -9,8 +9,8 @@ import (
 	"regexp"
 )
 
-// IterateCIDR 返回迭代 CIDR 或单个 IP/域名的 Host 通道
-func IterateCIDR(ctx context.Context, cidrStr string, enableIPv6 bool) <-chan Host {
+// IterateCIDR 返回迭代 CIDR 或单个 IP/域名的 Host 通道 (支持从 startIP 断点处继续)
+func IterateCIDR(ctx context.Context, cidrStr string, startIP string, enableIPv6 bool) <-chan Host {
 	hostChan := make(chan Host, 100)
 	go func() {
 		defer close(hostChan)
@@ -42,6 +42,14 @@ func IterateCIDR(ctx context.Context, cidrStr string, enableIPv6 bool) <-chan Ho
 
 		p = p.Masked()
 		addr := p.Addr()
+
+		// 如果指定了断点 startIP，从该 IP 的下一个 IP 开始遍历
+		if startIP != "" {
+			if startAddr, err := netip.ParseAddr(startIP); err == nil && p.Contains(startAddr) {
+				addr = startAddr.Next()
+			}
+		}
+
 		for {
 			select {
 			case <-ctx.Done():

@@ -28,33 +28,61 @@ import (
 
 // CalculateTotalIPs 计算一组 CIDR 或单 IP 的总数量（支持 IPv4 和 IPv6，支持去重/越界大数）
 func CalculateTotalIPs(cidrs []string) int64 {
+	return CalculateRemainingIPs(cidrs, nil)
+}
+
+// CalculateRemainingIPs 计算扣除已完成/部分完成断点网段后的剩余待扫描 IP 理论总数
+func CalculateRemainingIPs(cidrs []string, checkpoints map[string]*storage.CheckpointRecord) int64 {
 	var total int64
 
 	for _, raw := range cidrs {
-		// 1. 尝试按 CIDR 解析（如 "192.168.1.0/24"）
-		_, ipNet, err := net.ParseCIDR(raw)
+		cp := checkpoints[raw]
+		if cp != nil && cp.Completed {
+			continue // 已完成的网段跳过
+		}
+
+		p, err := netip.ParsePrefix(raw)
 		if err != nil {
-			// 2. 如果不是 CIDR 格式，检查是否是单独的单个 IP（如 "1.1.1.1"）
 			if ip := net.ParseIP(raw); ip != nil {
-				total += 1
+				if cp == nil || cp.LastIP == "" {
+					total += 1
+				}
 			}
 			continue
 		}
 
-		// 获取掩码位数（IPv4 ones <= 32，bits == 32）
-		ones, bits := ipNet.Mask.Size()
-		if bits == 32 { // IPv4
-			hostBits := bits - ones
-			// 1 << hostBits 即 2^(32-ones)
-			total += int64(1) << hostBits
-		} else if bits == 128 { // IPv6 (若遇到超大段需考虑防护)
-			hostBits := bits - ones
+		p = p.Masked()
+		addr := p.Addr()
+
+		if cp != nil && cp.LastIP != "" {
+			if startAddr, err := netip.ParseAddr(cp.LastIP); err == nil && p.Contains(startAddr) {
+				addr = startAddr.Next()
+			}
+		}
+
+		if !p.Contains(addr) {
+			continue
+		}
+
+		if addr.Is4() {
+			startVal := ipv4ToUint32(addr.As4())
+			lastVal := ipv4ToUint32(p.Addr().As4()) + (uint32(1) << (32 - p.Bits())) - 1
+			if lastVal >= startVal {
+				total += int64(lastVal - startVal + 1)
+			}
+		} else {
+			ones := p.Bits()
+			hostBits := 128 - ones
 			if hostBits < 62 {
 				total += int64(1) << hostBits
 			}
 		}
 	}
 	return total
+}
+
+func ipv4ToUint32(b [4]byte) uint32 {
+	return uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
 }
 
 // executeAuto 处理 CIDR/IP 列表，内存中调用内置 TLS 扫描器并根据 REALITY 策略输出彩色表格结果
@@ -78,34 +106,46 @@ func (r *RootCmd) executeAuto(cidrs []string, maxTargets int, checkAll bool, exp
 		taskKey = fmt.Sprintf("%s_%s", asnStr, countryStr)
 	}
 
+	var checkpointsMap map[string]*storage.CheckpointRecord
 	// 检查全量摸底扫描的断点续传状态 (默认开启断点续传，除非传入 --reset-scan)
 	if checkAll && targetStore != nil && taskKey != "" && !filter.NoResume {
-		completedMap, err := targetStore.GetCompletedCIDRs(taskKey)
-		if err == nil && len(completedMap) > 0 {
+		checkpointsMap, _ = targetStore.GetCheckpoints(taskKey)
+		if len(checkpointsMap) > 0 {
 			var remainingCIDRs []string
-			var skippedCount int
+			var skippedCompletedCount int
+			var resumedPartiallyCount int
+
 			for _, c := range cidrs {
-				if completedMap[c] {
-					skippedCount++
+				cp := checkpointsMap[c]
+				if cp != nil && cp.Completed {
+					skippedCompletedCount++
 				} else {
+					if cp != nil && cp.LastIP != "" {
+						resumedPartiallyCount++
+					}
 					remainingCIDRs = append(remainingCIDRs, c)
 				}
 			}
 
-			if skippedCount > 0 {
+			if skippedCompletedCount > 0 || resumedPartiallyCount > 0 {
 				if len(remainingCIDRs) == 0 {
 					ui.PrintTimestampedMessage("✅ 全量摸排任务 (%s) 的所有 %d 个网段此前已全部扫描完成！如需重新全量扫描请指定 --reset-scan", taskKey, len(cidrs))
 					return
 				}
-				ui.PrintTimestampedMessage("🔄 发现断点续传记录 (%s)：自动跳过已完成的 %d 个网段，继续断点扫描剩余 %d 个网段...",
-					taskKey, skippedCount, len(remainingCIDRs))
+				if resumedPartiallyCount > 0 {
+					ui.PrintTimestampedMessage("🔄 发现精确 IP 断点续传记录 (%s)：跳过 %d 个已完成网段，从剩余 %d 个网段（含 IP 续传网段）继续...",
+						taskKey, skippedCompletedCount, len(remainingCIDRs))
+				} else {
+					ui.PrintTimestampedMessage("🔄 发现断点续传记录 (%s)：自动跳过已完成的 %d 个网段，继续断点扫描剩余 %d 个网段...",
+						taskKey, skippedCompletedCount, len(remainingCIDRs))
+				}
 				cidrs = remainingCIDRs
 			}
 		}
 	}
 
-	// 计算待扫描 IP 理论总数
-	totalIPCount := CalculateTotalIPs(cidrs)
+	// 精确计算剩余待扫描 IP 理论总数（扣除断点前已扫描的 IP）
+	totalIPCount := CalculateRemainingIPs(cidrs, checkpointsMap)
 
 	bar := progressbar.NewOptions64(totalIPCount,
 		progressbar.OptionEnableColorCodes(true),
@@ -259,7 +299,16 @@ CIDRLoop:
 			break CIDRLoop
 		}
 
-		logger.AboveBar(bar, "[%d/%d] 正在内嵌并发扫描网段: %s ...", idx+1, len(cidrs), cidr)
+		startIP := ""
+		if cp := checkpointsMap[cidr]; cp != nil && !cp.Completed {
+			startIP = cp.LastIP
+		}
+
+		if startIP != "" {
+			logger.AboveBar(bar, "[%d/%d] 正在并发扫描网段: %s (从断点 IP: %s 继续)...", idx+1, len(cidrs), cidr, startIP)
+		} else {
+			logger.AboveBar(bar, "[%d/%d] 正在并发扫描网段: %s ...", idx+1, len(cidrs), cidr)
+		}
 
 		// 单个 CIDR 的扫描输出中间通道
 		subChan := make(chan *scanner.ScanResult, 50)
@@ -300,10 +349,16 @@ CIDRLoop:
 		currentIdx := idx + 1
 		totalCIDRs := len(cidrs)
 
+		var lastScannedIP string
+		var lastIPMu sync.Mutex
+		var lastSaveTime time.Time
+		var lastSaveIPCount int
+
 		// 执行并发 TLS 握手扫描
 		scannerEngine.ScanCIDRStream(
 			ctx,
 			cidr,
+			startIP,
 			443,
 			100,
 			5,
@@ -317,14 +372,32 @@ CIDRLoop:
 					bar.Describe(fmt.Sprintf("[cyan][网段 %d/%d: %s | 探测: %s][reset]", currentIdx, totalCIDRs, currentCIDR, ip))
 				}
 				updateMu.Unlock()
+
+				lastIPMu.Lock()
+				lastScannedIP = ip
+				lastSaveIPCount += n
+				now := time.Now()
+				// 节流断点保存：每隔 1 秒或累计探测 500 个 IP 在后台写入一次 SQLite
+				if checkAll && targetStore != nil && taskKey != "" && (now.Sub(lastSaveTime) > time.Second || lastSaveIPCount >= 500) {
+					lastSaveTime = now
+					lastSaveIPCount = 0
+					ipToSave := ip
+					go func(cip string) {
+						_ = targetStore.RecordCheckpoint(taskKey, currentCIDR, cip, false)
+					}(ipToSave)
+				}
+				lastIPMu.Unlock()
 			},
 		)
 		close(subChan)
 		pipeWg.Wait()
 
-		// 若当前网段完整扫描完成且未被用户中断，记录断点
+		// 若当前网段完整扫描完成且未被用户中断，记录整段已完成
 		if ctx.Err() == nil && checkAll && targetStore != nil && taskKey != "" {
-			_ = targetStore.RecordCompletedCIDR(taskKey, cidr)
+			_ = targetStore.RecordCheckpoint(taskKey, cidr, lastScannedIP, true)
+		} else if ctx.Err() != nil && checkAll && targetStore != nil && taskKey != "" && lastScannedIP != "" {
+			// 用户中断 (Ctrl+C)，立即同步刷盘保存当前精确 IP 断点
+			_ = targetStore.RecordCheckpoint(taskKey, cidr, lastScannedIP, false)
 		}
 	}
 
@@ -335,7 +408,7 @@ CIDRLoop:
 	if r.ctx.Err() != nil {
 		ui.PrintTimestampedMessage("扫描已响应用户中断 (Ctrl+C) 并安全退出。")
 		if checkAll && taskKey != "" {
-			ui.PrintTimestampedMessage("💡 已自动保存当前网段扫描进度断点，再次运行时将无缝续传。")
+			ui.PrintTimestampedMessage("💡 已自动保存当前网段与当前 IP 扫描断点进度，再次运行时将无缝续传。")
 		}
 		if len(suitableResults) > 0 {
 			suitableResults = core.FilterPool(suitableResults, filter)
@@ -818,46 +891,50 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 
 // formatNonDefaultFilters 格式化输出用户自定义/非默认的 REALITY 选型策略
 func formatNonDefaultFilters(filter types.RealityFilterConfig) []string {
+	def := config.GetDefaultConfig().RealityFilter
 	var diffs []string
 
-	if !filter.RequireNoCN {
-		diffs = append(diffs, "允许国内站点 (require_no_cn=false)")
+	if filter.RequireNoCN != def.RequireNoCN {
+		if filter.RequireNoCN {
+			diffs = append(diffs, "排除国内站点 (require_no_cn=true)")
+		} else {
+			diffs = append(diffs, "允许国内站点 (require_no_cn=false)")
+		}
 	}
-	if filter.CheckGFW {
-		diffs = append(diffs, "启用GFW黑名单 (check_gfw=true)")
+	if filter.CheckGFW != def.CheckGFW {
+		diffs = append(diffs, fmt.Sprintf("GFW黑名单=%v", filter.CheckGFW))
 	}
-	if filter.IPv4Only {
+	if filter.IPv4Only != def.IPv4Only && filter.IPv4Only {
 		diffs = append(diffs, "仅IPv4 (ipv4_only=true)")
 	}
-	if filter.IPv6Only {
+	if filter.IPv6Only != def.IPv6Only && filter.IPv6Only {
 		diffs = append(diffs, "仅IPv6 (ipv6_only=true)")
 	}
-	if !filter.RequireNoCDN {
-		diffs = append(diffs, "允许CDN节点 (require_no_cdn=false)")
+	if filter.RequireNoCDN != def.RequireNoCDN {
+		diffs = append(diffs, fmt.Sprintf("非CDN限制=%v", filter.RequireNoCDN))
 	}
-	if filter.MaxHandshakeMS != 400 && filter.MaxHandshakeMS > 0 {
+	if filter.MaxHandshakeMS != def.MaxHandshakeMS && filter.MaxHandshakeMS > 0 {
 		diffs = append(diffs, fmt.Sprintf("最大握手延迟=%dms", filter.MaxHandshakeMS))
 	}
-	if !filter.RequireNoHot {
-		diffs = append(diffs, "允许热门大站 (require_no_hot=false)")
+	if filter.RequireNoHot != def.RequireNoHot {
+		diffs = append(diffs, fmt.Sprintf("排除热门大站=%v", filter.RequireNoHot))
 	}
-	if filter.MinCertDays != 10 && filter.MinCertDays > 0 {
+	if filter.MinCertDays != def.MinCertDays && filter.MinCertDays > 0 {
 		diffs = append(diffs, fmt.Sprintf("最小证书天数=%d天", filter.MinCertDays))
 	}
-	if filter.MinStars != 3 && filter.MinStars > 0 {
+	if filter.MinStars != def.MinStars && filter.MinStars > 0 {
 		diffs = append(diffs, fmt.Sprintf("最低推荐星级=%d星", filter.MinStars))
 	}
-	if !filter.RequireNoDefaultPage {
-		diffs = append(diffs, "允许默认欢迎页 (require_no_default_page=false)")
+	if filter.RequireNoDefaultPage != def.RequireNoDefaultPage {
+		diffs = append(diffs, fmt.Sprintf("排除默认欢迎页=%v", filter.RequireNoDefaultPage))
 	}
 	if len(filter.IncludeSuffixes) > 0 {
 		diffs = append(diffs, fmt.Sprintf("白名单后缀=%v", filter.IncludeSuffixes))
 	}
 	if len(filter.ExcludeSuffixes) > 0 {
-		defaultSet := map[string]bool{
-			".local": true, ".internal": true, ".lan": true, ".home": true,
-			".corp": true, ".arpa": true, ".test": true, ".example": true,
-			".invalid": true, ".localhost": true, ".onion": true,
+		defaultSet := make(map[string]bool)
+		for _, s := range def.ExcludeSuffixes {
+			defaultSet[s] = true
 		}
 		var customEx []string
 		for _, s := range filter.ExcludeSuffixes {
@@ -870,9 +947,9 @@ func formatNonDefaultFilters(filter types.RealityFilterConfig) []string {
 		}
 	}
 	if len(filter.ExcludeStatus) > 0 {
-		defaultStatus := map[int]bool{
-			400: true, 401: true, 403: true, 404: true, 407: true, 408: true,
-			429: true, 500: true, 501: true, 502: true, 503: true, 504: true,
+		defaultStatus := make(map[int]bool)
+		for _, st := range def.ExcludeStatus {
+			defaultStatus[st] = true
 		}
 		var customStatus []int
 		for _, st := range filter.ExcludeStatus {
@@ -887,4 +964,3 @@ func formatNonDefaultFilters(filter types.RealityFilterConfig) []string {
 
 	return diffs
 }
-

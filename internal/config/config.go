@@ -182,13 +182,18 @@ func mergeConfig(defaultConfig *types.Config, fileConfig *types.Config) {
 	}
 }
 
+// GetDefaultConfig 获取全局标准默认配置
+func GetDefaultConfig() *types.Config {
+	return getDefaultConfig()
+}
+
 // getDefaultConfig 获取默认配置
 func getDefaultConfig() *types.Config {
 	return &types.Config{
 		Network: types.NetworkConfig{
 			Timeout:    3 * time.Second, // 减少到3秒
 			Retries:    1,
-			DNSServers: []string{"8.8.8.8", "1.1.1.1"},
+			DNSServers: []string{"223.5.5.5", "114.114.114.114"},
 		},
 		TLS: types.TLSConfig{
 			MinVersion: 771, // TLS 1.2

@@ -132,11 +132,11 @@ func (s *Scanner) ScanTLS(ctx context.Context, host Host, port int, timeout int,
 	}
 }
 
-// ScanCIDRStream 执行并发扫描并把结果通过 Channel 传出
-func (s *Scanner) ScanCIDRStream(ctx context.Context, cidrStr string, port int, threads int, timeout int, enableIPv6 bool, outChan chan<- *ScanResult,
+// ScanCIDRStream 执行并发扫描并把结果通过 Channel 传出 (支持从 startIP 断点处继续)
+func (s *Scanner) ScanCIDRStream(ctx context.Context, cidrStr string, startIP string, port int, threads int, timeout int, enableIPv6 bool, outChan chan<- *ScanResult,
 	onProgress func(n int, currentIP string),
 ) {
-	hostChan := IterateCIDR(ctx, cidrStr, enableIPv6)
+	hostChan := IterateCIDR(ctx, cidrStr, startIP, enableIPv6)
 
 	var wg sync.WaitGroup
 	for i := 0; i < threads; i++ {

@@ -122,29 +122,40 @@ func TestTargetStore_Checkpoints(t *testing.T) {
 	taskKey := "AS37963_CN"
 
 	// Initial check
-	cps, err := store.GetCompletedCIDRs(taskKey)
+	cps, err := store.GetCheckpoints(taskKey)
 	if err != nil {
-		t.Fatalf("GetCompletedCIDRs failed: %v", err)
+		t.Fatalf("GetCheckpoints failed: %v", err)
 	}
 	if len(cps) != 0 {
 		t.Errorf("expected 0 checkpoints, got %d", len(cps))
 	}
 
-	// Record completed CIDRs
-	_ = store.RecordCompletedCIDR(taskKey, "8.134.244.0/23")
-	_ = store.RecordCompletedCIDR(taskKey, "119.42.252.0/22")
+	// Record partially completed CIDR with LastIP
+	_ = store.RecordCheckpoint(taskKey, "47.115.0.0/17", "47.115.60.206", false)
+	// Record fully completed CIDR
+	_ = store.RecordCheckpoint(taskKey, "119.42.252.0/22", "119.42.255.254", true)
 
-	cps, err = store.GetCompletedCIDRs(taskKey)
+	cps, err = store.GetCheckpoints(taskKey)
 	if err != nil {
-		t.Fatalf("GetCompletedCIDRs failed: %v", err)
+		t.Fatalf("GetCheckpoints failed: %v", err)
 	}
-	if len(cps) != 2 || !cps["8.134.244.0/23"] || !cps["119.42.252.0/22"] {
-		t.Errorf("expected 2 checkpoints, got %v", cps)
+	if len(cps) != 2 {
+		t.Fatalf("expected 2 checkpoints, got %d", len(cps))
+	}
+
+	p1 := cps["47.115.0.0/17"]
+	if p1 == nil || p1.LastIP != "47.115.60.206" || p1.Completed {
+		t.Errorf("unexpected p1: %#v", p1)
+	}
+
+	p2 := cps["119.42.252.0/22"]
+	if p2 == nil || !p2.Completed {
+		t.Errorf("unexpected p2: %#v", p2)
 	}
 
 	// Clear checkpoints
 	_ = store.ClearCheckpoints(taskKey)
-	cps, _ = store.GetCompletedCIDRs(taskKey)
+	cps, _ = store.GetCheckpoints(taskKey)
 	if len(cps) != 0 {
 		t.Errorf("expected 0 checkpoints after clear, got %d", len(cps))
 	}
