@@ -169,16 +169,17 @@ func (p *Pipeline) executeNetworkStagesConcurrently(ctx context.Context, pipelin
 	wg.Wait()
 }
 
-// evaluateSuitability 评估适合性
+// evaluateSuitability 评估适合性（硬性技术基线）
 func (p *Pipeline) evaluateSuitability(result *types.DetectionResult) {
-	// 检查硬性条件
-	if result.Blocked != nil && result.Blocked.IsBlocked {
+	// 检查 GFW 静态黑名单 (仅当启用了 check_gfw 时拦截)
+	if p.config != nil && p.config.RealityFilter.CheckGFW && result.Blocked != nil && result.Blocked.IsBlocked {
 		result.Suitable = false
 		result.Error = fmt.Errorf("域名被墙")
 		return
 	}
 
-	if result.Location != nil && result.Location.IsDomestic {
+	// 检查国内网站 (仅当启用了 require_no_cn 时拦截，海外回国场景可放行)
+	if p.config != nil && p.config.RealityFilter.RequireNoCN && result.Location != nil && result.Location.IsDomestic {
 		result.Suitable = false
 		result.Error = fmt.Errorf("国内网站")
 		return

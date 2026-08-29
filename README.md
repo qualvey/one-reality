@@ -1,188 +1,265 @@
-# Reality Target 寻找和分析工具
+# RealityChecker
 
-一键找到符合最佳实践的SNI
+RealityChecker 是一个用于自动发现、深度检测与智能筛选 Xray Reality SNI 目标的网站检测与资产管理引擎。它整合了 ASN 网段发现、内置原生并发 TLS 扫描器、密码学协议检验、两阶段极速过滤体系以及本地资产数据库，帮助你从入口 VPS 的 IP 出发，一键找到符合最佳实践的高质量 Reality 真实目标。
 
-基于原项目，整合Xray官方RealiTLScanner的功能，简化了操作步骤，实现 `输入ip段，返回符合条件的域名`,大大减少了心智负担和操作难度
-
-Reality SNI目标域名的最佳实践
-
-- 不使用CDN
-- 非热门大厂
-- 和入口机ip同ASN
-- TLS握手延迟尽量低
-
-## ✨ 功能特性
-
-* **被墙检测** - 基于GFWList检测网站是否被墙
-* **地理位置检测** - 检测IP地理位置，国内网站直接终止
-* **TLS协议检测** - 检测TLS 1.3和X25519支持
-* **证书检测** - 检测证书有效性和SNI匹配
-* **CDN检测** - 智能检测CDN使用情况
-* **热门网站检测** - 检测是否为热门网站
-* **Nginx/Web 默认页识别** - 精准识别并剔除 Nginx/OpenResty 默认欢迎页与测试页
-* **灵活过滤规则** - 支持外部规则文件与后缀/通配符注入（排除 .local, .internal, .arpa 等私有后缀）
-* **重定向检测** - 检测域名重定向
-* **批量与流式检测** - 支持标准输入 (Stdin) 管道流式极速并发检测
-* **智能报告** - 生成详细的检测分析报告
-
-### 推荐工作流程
-
-1. 用 VPS IP 启动自动流程。程序会通过 RIPEstat 查询 IP 所属 ASN 的宣布网段，并使用 `data/Country.mmdb` 过滤为与入口 IP 同国家的网段。
-
-2. 自动查询该ASN下的已公告IP段，并按国家过滤：
-
-   ```bash
-   ./reality-checker asn AS7203 US > as7203-us.txt
-   ```
-
-   国家参数支持 ISO 两位代码（如 `US`、`DE`、`CN`）或 GeoIP 数据库中的名称。
-
-3. 直接一键全自动内嵌扫描检测目标：
-
-```bash
-./reality-checker auto <vps-ip> --limit 10
-```
-
-也可以继续把自定义网段填入文件（每行一条），再用以下命令开始检测 (本地电脑运行，请先关闭代理（确保请求为直连))：
-   `--limit 10` 是取前 10 条（大部分情况已经足够筛选中好用的目标）
-
-```bash
-./reality-checker auto --in ./cidrs.txt --limit 10
-```
-
-4. 或通过标准输入管道流式处理已有域名/CSV：
-
-```bash
-cat domains.txt | ./reality-checker pipe
-```
-
-### 过滤条件
-
-二进制同目录下 `config.yaml`（支持挂载 `data/exclude_rules.txt`）：
-
-```yaml
-reality_filter:
-    # 是否要求无cdn，默认true (推荐)
-    require_no_cdn: true
-    # TLS握手延迟上限，默认400ms
-    max_handshake_ms: 400
-    # 最少证书有效期（天）
-    min_cert_days: 10
-    # 默认返回页过滤 (true: 自动剔除 Nginx/OpenResty 默认欢迎页与测试页)
-    require_no_default_page: true
-    # 外部排除规则文件
-    exclude_rules_file: "data/exclude_rules.txt"
-
-# 并发性能
-concurrency:
-    max_concurrent: 10
-    check_timeout: 3s
-```
-
-**实际运行效果：**
-
-![RealityChecker检测结果示例](RealityChecker.png)
-
-**只有满足Reality目标域名硬性条件的（TLS1.3、X25519、H2、SNI匹配、证书有效），才会在列表中显示**
-
-
-### 热门网站说明
-
-热门网站（如 apple.com、tesla.com、microsoft.com 等）由于使用人群多，容易被识别和封禁，因此不太推荐作为 Reality 协议的目标域名。
-
-**结果分析：**
-- 所有域名都支持TLS 1.3、X25519、HTTP/2和SNI匹配
-- 证书有效期充足
-- 部分使用了CDN且为热门网站
-- 部分虽然技术指标优秀，但由于CDN和热门网站特性，推荐度有所降低
-
-
-## 🚀 快速开始
-
-### 系统要求
-
-* **Linux VPS** - 主要针对VPS环境使用
-* **Windows、macOS** - 等自行编译
-* **Go 1.25+** - 用于本地编译
-
-### 安装步骤
-
-**方法1：直接下载（推荐）**
-
-从 [Releases](https://github.com/qualvey/RealityChecker/releases) 页面下载对应架构的zip文件：
-
-### 本地构建
-
-Linux/macOS 使用 Bash：
-
-```bash
-./build.sh
-```
-
-Windows PowerShell：
-
-```powershell
-.\build.ps1
-```
-
-构建产物统一输出到 `dist/`，包括 Linux `amd64`/`arm64` 和 Windows `amd64`
-可执行文件及对应 zip 压缩包。构建时可通过 `VERSION`、`COMMIT`、`BUILD_TIME`
-环境变量覆盖版本信息。
-
-
-## 🔍 使用示例
-
-### 单域名检测
-
-```bash
-# 基础检测
-./reality-checker check apple.com
-```
-
-### 批量检测
-
-```bash
-# 批量检测多个域名（空格分隔）
-./reality-checker batch apple.com tesla.com microsoft.com
-```
-
-### 管道流式检测 (Pipe)
-
-```bash
-# 从文件或输出流管道读取检测（支持域名或 CSV 格式）
-cat domains.txt | ./reality-checker pipe
-```
-
-
-### 查看帮助
-
-```bash
-# 显示使用说明
-./reality-checker
-
-# 查看版本信息
-./reality-checker version
-```
-
-## 🔧常见问题
-
-**1. 数据文件下载失败**
-
-如果自动下载失败，请手动下载以下文件到 `data/` 目录：
-
-- [Country.mmdb](https://github.com/Loyalsoldier/geoip/releases/latest/download/Country.mmdb)
-- [gfwlist.conf](https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/gfw.txt)
-- [cdn_keywords.txt](https://raw.githubusercontent.com/V2RaySSR/RealityChecker/main/data/cdn_keywords.txt)
-- [hot_websites.txt](https://raw.githubusercontent.com/V2RaySSR/RealityChecker/main/data/hot_websites.txt)
-
-
-## 🏆 致谢
-
-感谢以下开源项目：
-
-* [Loyalsoldier/geoip](https://github.com/Loyalsoldier/geoip) - GeoIP数据库
-* [Loyalsoldier/clash-rules](https://github.com/Loyalsoldier/clash-rules) - GFW规则
+> 本项目仅用于网络技术研究与学习。请遵守当地法律法规，合理使用网络资源。
 
 ---
 
-**注意**: 本工具仅用于技术研究和学习目的，请遵守当地法律法规，合理使用网络资源。
+## 🌟 Reality 目标选型最佳实践
+
+- **与入口 VPS 同 ASN / 同机房**：流量特征自然，阻断率最低；
+- **不使用公共 CDN**：防止 VPS 变成公网免费反代，避免 CDN 封锁；
+- **非热门大厂网站**：避开 Google、Apple 等流量异常显眼的超大站点；
+- **TLS 握手延迟尽量低**：确保科学出海连接体验极速流畅；
+- **真实业务网站**：排除 Nginx/OpenResty 默认页、演示页或测试页。
+
+---
+
+## ✨ 核心特性
+
+- **两阶段过滤架构 (Two-Stage Filtering)**：
+  - **阶段一（网络扫描）**：只执行一次真实的 TLS 握手与技术底线检验（TLS 1.3、X25519、H2、SNI 匹配、证书未过期等），生成候选资产池；
+  - **阶段二（纯内存过滤器）**：纯内存 0 耗时即时计算，支持白名单后缀、黑名单后缀、延迟阈值、状态码排除、星级门槛等。
+- **本地资产库与 Cache-First 秒级直出**：按 `ASN + 国家` 自动持久化资产库 (`data/reality_targets.json`)，再次遇到同机房 IP 时自动秒级并发复核直出结果（< 1秒）。
+- **全量摸底扫描 (`--check-all`) 与资产导出 (`--export`)**：支持全量网段摸排与标准化 JSON 导出，为构建公共 Reality 资产库提供支撑。
+- **网络环境策略化配置**：支持 `require_no_cn`（默认排除国内，海外回国翻墙可设为 false）与 `check_gfw`（家宽直连模式以实测连通性为准，避免静态误杀）。
+- **Nginx/Web 默认页识别**：精准识别并剔除 Nginx/OpenResty/Debian/CentOS 默认欢迎页与测试页。
+- **灵活规则引擎**：支持白名单后缀 (`include_suffixes`) 与外部规则文件 (`data/exclude_rules.txt`)。
+- **标准输入流式检测**：支持 `cat domains.txt | reality-checker pipe` 管道极速并发检测。
+
+---
+
+## 🚀 推荐工作流程
+
+### 工作流一：根据 VPS IP 自动全流程筛选（最推荐）
+
+输入一个 VPS IP 后，程序会：
+1. 查询该 IP 所属 ASN 及已宣布网段；
+2. 依据入口 IP 的国家（或 `--country` 指定国家）智能过滤网段；
+3. 优先检查本地资产库（**Cache-First**），命中则秒级直出；
+4. 未命中时自动启动原生并发扫描，执行两阶段过滤并按星级输出结果。
+
+```bash
+./reality-checker auto 85.155.184.100 --limit 5
+```
+
+单个 IP 会按就近原则扩展为 IPv4 `/24` 或 IPv6 `/64` 网段用于扫描；如果输入的是 CIDR，则直接扫描该网段：
+
+```bash
+./reality-checker auto 5.45.102.0/24 --limit 10
+```
+
+指定国家过滤（ISO 两位代码）：
+
+```bash
+./reality-checker auto 85.155.184.100 --country US --limit 10
+```
+
+### 工作流二：全量摸底扫描并导出 JSON 数据集
+
+使用 `--check-all` 开启全量摸底模式（不提前刹车），摸清该 ASN 下所有合规资产并存档：
+
+```bash
+./reality-checker auto 85.155.184.100 --check-all --export targets.json
+```
+
+### 工作流三：查询 ASN 网段，再自定义扫描
+
+只想获取某个 ASN 在指定国家的 CIDR 时：
+
+```bash
+./reality-checker asn AS15169 US > as15169-us.txt
+```
+
+然后扫描文件中的网段（每行一个 CIDR 或 IP）：
+
+```bash
+./reality-checker auto --in ./as15169-us.txt --limit 10
+```
+
+### 工作流四：从标准输入流式检测 (Pipe 模式)
+
+`pipe` 可以接收纯域名列表，也可以接收 RealiTLScanner 或其他工具输出的 CSV，适合流水线整合：
+
+```bash
+cat domains.txt | ./reality-checker pipe
+```
+
+Windows PowerShell 示例：
+```powershell
+Get-Content domains.txt | .\reality-checker.exe pipe
+```
+
+---
+
+## 🔍 检测内容与指标
+
+只有通过硬性技术底线的结果才会被纳入资产池并参与星级评定：
+
+- **密码学与协议**：TLS 1.3、X25519 密钥交换和 HTTP/2 支持；
+- **握手延迟**：真实 TLS 密码学握手往返延迟 (RTT)；
+- **证书有效性**：证书剩余有效天数（默认 >= 10天）和 SNI 匹配度；
+- **页面状态与默认页**：HTTP 状态码（支持自定义 `exclude_status` 排除 301/302/404 等）及 Nginx 默认欢迎页识别；
+- **CDN 与热门站点**：智能识别 CDN 厂商及 Alexa/Tranco 热门大站；
+- **地理位置**：目标 IP 的 GeoIP 归属地判定。
+
+典型结果输出如下：
+
+```text
+适合的域名:
++---------------------------------+----------+----------+----------+-----+------+------+----------+
+| 最终域名                        | 基础条件 | 握手时间 | 证书时间 | CDN | 热门 | 推荐 | 页面状态 |
++---------------------------------+----------+----------+----------+-----+------+------+----------+
+| https://mirror-csail.debian.org |     ✓    |   445ms  |   87天   |  无 |   -  | **** |    200   |
+| https://specimens.avrenela.com  |     ✓    |   552ms  |   79天   |  无 |   -  | **** |    200   |
++---------------------------------+----------+----------+----------+-----+------+------+----------+
+```
+
+---
+
+## 📋 命令速查
+
+```text
+reality-checker auto <ip/cidr> [选项]        从 IP/CIDR 自动发现并筛选目标 (支持 Cache-First)
+reality-checker auto --in <文件> [选项]     扫描文件中的 IP/CIDR 列表
+reality-checker asn <ASN> <国家>             查询并按国家过滤 ASN CIDR
+reality-checker pipe                         从 stdin 管道流式读取检测域名或 CSV
+reality-checker check <domain>               检测单个域名
+reality-checker batch <d1> <d2> ...          并发检测多个域名
+reality-checker version                      显示版本、提交和构建信息
+```
+
+### `auto` 常用选项：
+
+```text
+--limit N / -m          指定获取合适目标的数量上限 (默认 5)
+--check-all / -a        开启全量摸底扫描模式 (不提前终止，全量入库)
+--no-cache              跳过本地资产库缓存，强制重新发起网络扫描
+--export FILE           将扫描发现的所有合格资产导出为 JSON 文件
+--country CODE          指定国家过滤 (两位 ISO 代码，如 US, DE)
+--max-handshake MS      设置最大握手延迟 (毫秒, 默认 400)
+--min-cert-days DAYS    证书最低剩余天数 (默认 10)
+--min-stars STARS       最低推荐星级 1-5 (默认 3)
+--no-cdn / --allow-cdn  强制排除 / 允许 CDN 节点
+--no-hot / --allow-hot  强制排除 / 允许热门大站
+--debug                 输出逐 IP 调试日志
+```
+
+---
+
+## ⚙️ 配置文件 (`config.yaml`)
+
+程序启动时会自动读取同目录下的 `config.yaml`（支持挂载 `data/exclude_rules.txt`）：
+
+```yaml
+# 日志配置
+log:
+  level: info
+  file: ""
+
+# REALITY 目标选型过滤策略
+reality_filter:
+  # ==================== 网络与运行环境策略 ====================
+  # 1. 排除国内网站 (true: 默认排除国内站点；若为海外回国翻墙/访问国内流媒体，可设为 false)
+  require_no_cn: true
+
+  # 2. GFW 静态黑名单检测 (false: 本地家宽直连时建议关闭，纯靠真实网络握手连通性自然淘汰，避免静态名单误杀)
+  check_gfw: false
+
+  # 3. 资产数据库与缓存快速通道 (true: 优先复用本地数据库中已验证的同 ASN/国家 优质资产并快速秒级复核)
+  use_cache: true
+  cache_max_days: 7
+
+  # ==================== 阶段二：进阶偏好过滤策略 ====================
+  # 4. 强制非 CDN 过滤 (true: 剔除 Cloudflare/Akamai/Fastly 等 CDN 节点，防止 VPS 变成公网免费反代)
+  require_no_cdn: true
+
+  # 5. 握手时间延迟上限 (毫秒): 高于此延迟的节点抛弃 (默认 400ms)
+  max_handshake_ms: 400
+
+  # 6. 热门大站过滤 (true: 依据 data/hot_websites.txt 匹配剔除 Google/Apple 等超级大站)
+  require_no_hot: true
+
+  # 7. 证书剩余有效天数下限: 默认 10 天
+  min_cert_days: 10
+
+  # 8. 最低推荐星级门槛: (1~5 星)
+  min_stars: 3
+
+  # 9. 默认返回页过滤 (true: 识别并剔除 Nginx/OpenResty 等默认欢迎页、测试页或默认错误页)
+  require_no_default_page: true
+
+  # 10. 外部排除规则文件路径 (默认载入 data/exclude_rules.txt)
+  exclude_rules_file: "data/exclude_rules.txt"
+
+  # 11. 白名单域名后缀（可选，若配置则只保留指定后缀，如只要 .com/.de）
+  # include_suffixes:
+  #   - ".com"
+  #   - ".de"
+  #   - ".org"
+
+  # 12. 排除的 HTTP 页面状态码（被排除的状态码将被标记为不适合）
+  exclude_status:
+    - 400
+    - 401
+    - 403
+    - 404
+    - 407
+    - 408
+    - 429
+    - 500
+    - 501
+    - 502
+    - 503
+    - 504
+
+# 网络检测配置
+network:
+  timeout: 3s
+  retries: 1
+
+# 并发性能
+concurrency:
+  max_concurrent: 10
+  check_timeout: 3s
+```
+
+---
+
+## 🛠️ 快速开始
+
+### 1. 直接下载
+
+从 [Releases](https://github.com/V2RaySSR/RealityChecker/releases) 下载对应平台的免安装压缩包。
+
+### 2. 本地构建
+
+需要 Go 1.25 或更高版本。构建产物自动输出到 `dist/`，包含 Linux `amd64`/`arm64` 和 Windows `amd64`：
+
+```bash
+# Linux / macOS
+./build.sh
+```
+
+```powershell
+# Windows PowerShell
+.\build.ps1
+```
+
+### 3. 数据文件
+
+程序首次运行会自动初始化 `data/` 目录并准备检测所需数据。若离线部署，请确保 `data/` 包含：
+- `Country.mmdb`（MaxMind GeoIP 国家数据库）
+- `gfwlist.conf`（GFWList 规则）
+- `cdn_keywords.txt`（CDN 识别特征库）
+- `hot_websites.txt`（热门大站特征库）
+- `exclude_rules.txt`（排除规则库）
+
+---
+
+## 🤝 致谢
+
+- [Loyalsoldier/geoip](https://github.com/Loyalsoldier/geoip) - GeoIP 数据库
+- [Loyalsoldier/clash-rules](https://github.com/Loyalsoldier/clash-rules) - GFW 规则
+- [XTLS/RealiTLScanner](https://github.com/XTLS/RealiTLScanner) - Xray 官方 TLS 扫描器

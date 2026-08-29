@@ -338,17 +338,50 @@ type TLSConfig struct {
 
 // RealityFilterConfig REALITY 选型策略配置
 type RealityFilterConfig struct {
-	RequireNoCDN         bool     `yaml:"require_no_cdn"`
-	MaxHandshakeMS       int64    `yaml:"max_handshake_ms"`
-	RequireNoHot         bool     `yaml:"require_no_hot"`
-	MinCertDays          int      `yaml:"min_cert_days"`
-	MinStars             int      `yaml:"min_stars"`
-	RequireNoDefaultPage bool     `yaml:"require_no_default_page"`
-	ExcludeRulesFile     string   `yaml:"exclude_rules_file"`
-	ExcludeDomains       []string `yaml:"exclude_domains"`
-	ExcludeSuffixes      []string `yaml:"exclude_suffixes"`
-	ExcludePatterns      []string `yaml:"exclude_patterns"`
-	ExcludeStatus        []int    `yaml:"exclude_status"`
+	// --- 网络与环境开关 ---
+	RequireNoCN          bool     `yaml:"require_no_cn"`          // 是否排除国内网站 (默认 true，翻回国内设为 false)
+	CheckGFW             bool     `yaml:"check_gfw"`              // 是否启用 GFW 静态黑名单 (本地直连建议 false)
+	UseCache             bool     `yaml:"use_cache"`              // 是否启用本地资产库缓存快速通道 (默认 true)
+	CacheMaxDays         int      `yaml:"cache_max_days"`         // 资产缓存有效天数 (默认 7)
+
+	// --- 阶段二/进阶偏好过滤 ---
+	RequireNoCDN         bool     `yaml:"require_no_cdn"`         // 是否强制排除 CDN
+	MaxHandshakeMS       int64    `yaml:"max_handshake_ms"`       // 最大握手延迟上限 (ms)
+	RequireNoHot         bool     `yaml:"require_no_hot"`         // 是否排除超级热门大站
+	MinCertDays          int      `yaml:"min_cert_days"`          // 证书剩余天数下限
+	MinStars             int      `yaml:"min_stars"`              // 最低推荐星级 (1~5)
+	RequireNoDefaultPage bool     `yaml:"require_no_default_page"`// 是否排除 Nginx/Web 默认页
+	ExcludeRulesFile     string   `yaml:"exclude_rules_file"`     // 外部规则文件路径
+	IncludeSuffixes      []string `yaml:"include_suffixes"`       // 白名单后缀 (如 .com, .de)
+	ExcludeSuffixes      []string `yaml:"exclude_suffixes"`       // 黑名单后缀 (如 .xyz, .top)
+	ExcludeDomains       []string `yaml:"exclude_domains"`        // 排除域名
+	ExcludePatterns      []string `yaml:"exclude_patterns"`       // 排除特征模式
+	ExcludeStatus        []int    `yaml:"exclude_status"`         // 排除的 HTTP 状态码
+}
+
+// TargetRecord REALITY 资产数据库记录
+type TargetRecord struct {
+	ASN             string    `json:"asn"`
+	Country         string    `json:"country"`
+	Domain          string    `json:"domain"`
+	IP              string    `json:"ip"`
+	HandshakeMS     int64     `json:"handshake_ms"`
+	CertDays        int       `json:"cert_days"`
+	StatusCode      int       `json:"status_code"`
+	PageTitle       string    `json:"page_title,omitempty"`
+	IsCDN           bool      `json:"is_cdn"`
+	IsHot           bool      `json:"is_hot"`
+	IsDefaultPage   bool      `json:"is_default_page"`
+	DefaultPageType string    `json:"default_page_type,omitempty"`
+	Stars           int       `json:"stars"`
+	LastCheckedAt   time.Time `json:"last_checked_at"`
+}
+
+// CandidatePool 候选资产池
+type CandidatePool struct {
+	CreatedAt time.Time          `json:"created_at"`
+	Source    string             `json:"source"`
+	Targets   []*DetectionResult `json:"targets"`
 }
 
 // LogConfig 日志配置

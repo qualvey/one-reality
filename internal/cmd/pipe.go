@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"RealityChecker/internal/config"
+	"RealityChecker/internal/core"
 	"RealityChecker/internal/types"
 	"RealityChecker/internal/ui"
 )
@@ -33,7 +34,7 @@ func (r *RootCmd) executePipe() {
 	concurrency := 10
 	var wg sync.WaitGroup
 
-	// 启动固定数量的 Worker 协程
+	// 启动 Worker 协程池
 	for i := 0; i < concurrency; i++ {
 		go func() {
 			for domain := range domainChan {
@@ -45,22 +46,25 @@ func (r *RootCmd) executePipe() {
 					mu.Lock()
 					defer mu.Unlock()
 
-					if err == nil && res != nil && res.Suitable && res.Error == nil && res.TLS != nil && res.TLS.SupportsTLS13 {
-						suitableResults = append(suitableResults, res)
-						suitableCount := len(suitableResults)
+					if err == nil && res != nil && res.Suitable && res.Error == nil {
+						passed, _ := core.FilterTarget(res, filter)
+						if passed {
+							suitableResults = append(suitableResults, res)
+							suitableCount := len(suitableResults)
 
-						var handshakeMs int64 = 0
-						if res.TLS != nil {
-							handshakeMs = res.TLS.HandshakeTime.Milliseconds()
-						}
-						var statusCode int = 0
-						if res.Network != nil {
-							statusCode = res.Network.StatusCode
-						}
+							var handshakeMs int64 = 0
+							if res.TLS != nil {
+								handshakeMs = res.TLS.HandshakeTime.Milliseconds()
+							}
+							var statusCode int = 0
+							if res.Network != nil {
+								statusCode = res.Network.StatusCode
+							}
 
-						timestamp := time.Now().Format("15:04:05")
-						fmt.Printf("[%s] ★ [可用 REALITY 目标 #%d] %-35s (握手: %dms, 页面: %d)\n",
-							timestamp, suitableCount, domain, handshakeMs, statusCode)
+							timestamp := time.Now().Format("15:04:05")
+							fmt.Printf("[%s] ★ [可用 REALITY 目标 #%d] %-35s (握手: %dms, 页面: %d)\n",
+								timestamp, suitableCount, domain, handshakeMs, statusCode)
+						}
 					}
 				}()
 			}

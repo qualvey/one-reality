@@ -132,6 +132,12 @@ func mergeConfig(defaultConfig *types.Config, fileConfig *types.Config) {
 	}
 
 	// REALITY 选型策略配置
+	defaultConfig.RealityFilter.RequireNoCN = fileConfig.RealityFilter.RequireNoCN
+	defaultConfig.RealityFilter.CheckGFW = fileConfig.RealityFilter.CheckGFW
+	defaultConfig.RealityFilter.UseCache = fileConfig.RealityFilter.UseCache
+	if fileConfig.RealityFilter.CacheMaxDays > 0 {
+		defaultConfig.RealityFilter.CacheMaxDays = fileConfig.RealityFilter.CacheMaxDays
+	}
 	defaultConfig.RealityFilter.RequireNoCDN = fileConfig.RealityFilter.RequireNoCDN
 	defaultConfig.RealityFilter.RequireNoHot = fileConfig.RealityFilter.RequireNoHot
 	defaultConfig.RealityFilter.RequireNoDefaultPage = fileConfig.RealityFilter.RequireNoDefaultPage
@@ -146,6 +152,9 @@ func mergeConfig(defaultConfig *types.Config, fileConfig *types.Config) {
 	}
 	if fileConfig.RealityFilter.MinStars > 0 {
 		defaultConfig.RealityFilter.MinStars = fileConfig.RealityFilter.MinStars
+	}
+	if len(fileConfig.RealityFilter.IncludeSuffixes) > 0 {
+		defaultConfig.RealityFilter.IncludeSuffixes = mergeUniqueStrings(defaultConfig.RealityFilter.IncludeSuffixes, fileConfig.RealityFilter.IncludeSuffixes)
 	}
 	if len(fileConfig.RealityFilter.ExcludeDomains) > 0 {
 		defaultConfig.RealityFilter.ExcludeDomains = mergeUniqueStrings(defaultConfig.RealityFilter.ExcludeDomains, fileConfig.RealityFilter.ExcludeDomains)
@@ -204,6 +213,10 @@ func getDefaultConfig() *types.Config {
 			Timeout:      30 * time.Second,
 		},
 		RealityFilter: types.RealityFilterConfig{
+			RequireNoCN:          true,
+			CheckGFW:             false,
+			UseCache:             true,
+			CacheMaxDays:         7,
 			RequireNoCDN:         true,
 			MaxHandshakeMS:       800,
 			RequireNoHot:         true,
@@ -211,6 +224,7 @@ func getDefaultConfig() *types.Config {
 			MinStars:             3,
 			RequireNoDefaultPage: true,
 			ExcludeRulesFile:     "data/exclude_rules.txt",
+			IncludeSuffixes:      []string{},
 			ExcludeDomains: []string{
 				"localhost",
 				"server.domain.com",
@@ -309,8 +323,9 @@ func validateAndSetDefaults(config *types.Config) {
 		rulesPath = "data/exclude_rules.txt"
 	}
 	if _, err := os.Stat(rulesPath); err == nil {
-		domains, suffixes, patterns, statusCodes, err := LoadExcludeRulesFromFile(rulesPath)
+		domains, suffixes, patterns, statusCodes, incSuffixes, err := LoadExcludeRulesFromFile(rulesPath)
 		if err == nil {
+			config.RealityFilter.IncludeSuffixes = mergeUniqueStrings(config.RealityFilter.IncludeSuffixes, incSuffixes)
 			config.RealityFilter.ExcludeDomains = mergeUniqueStrings(config.RealityFilter.ExcludeDomains, domains)
 			config.RealityFilter.ExcludeSuffixes = mergeUniqueStrings(config.RealityFilter.ExcludeSuffixes, suffixes)
 			config.RealityFilter.ExcludePatterns = mergeUniqueStrings(config.RealityFilter.ExcludePatterns, patterns)
@@ -320,10 +335,10 @@ func validateAndSetDefaults(config *types.Config) {
 }
 
 // LoadExcludeRulesFromFile 从外部规则文件加载排除规则
-func LoadExcludeRulesFromFile(filePath string) (domains, suffixes, patterns []string, statusCodes []int, err error) {
+func LoadExcludeRulesFromFile(filePath string) (domains, suffixes, patterns []string, statusCodes []int, includeSuffixes []string, err error) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	defer file.Close()
 
@@ -343,6 +358,8 @@ func LoadExcludeRulesFromFile(filePath string) (domains, suffixes, patterns []st
 		}
 
 		switch currentSection {
+		case "include_suffixes:":
+			includeSuffixes = append(includeSuffixes, line)
 		case "exclude_domains:":
 			domains = append(domains, line)
 		case "exclude_suffixes:":
@@ -359,7 +376,7 @@ func LoadExcludeRulesFromFile(filePath string) (domains, suffixes, patterns []st
 		}
 	}
 
-	return domains, suffixes, patterns, statusCodes, scanner.Err()
+	return domains, suffixes, patterns, statusCodes, includeSuffixes, scanner.Err()
 }
 
 // ShouldExcludeDomain 根据 REALITY 策略与排除规则判断是否应该排除指定域名
@@ -384,6 +401,26 @@ func ShouldExcludeDomain(domain string, filter types.RealityFilterConfig) bool {
 	// 排除过短或连续点的无效域名
 	if len(domainLower) < 3 || strings.Contains(domainLower, "..") {
 		return true
+	}
+
+	// 如果配置了白名单后缀 (IncludeSuffixes)，必须命中其中之一
+	if len(filter.IncludeSuffixes) > 0 {
+		matchedInclude := false
+		for _, suffix := range filter.IncludeSuffixes {
+			s := strings.ToLower(strings.TrimSpace(suffix))
+			if s != "" {
+				if !strings.HasPrefix(s, ".") {
+					s = "." + s
+				}
+				if strings.HasSuffix(domainLower, s) {
+					matchedInclude = true
+					break
+				}
+			}
+		}
+		if !matchedInclude {
+			return true
+		}
 	}
 
 	// 1. 排除指定域名（精确或包含）

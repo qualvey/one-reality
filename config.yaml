@@ -8,28 +8,46 @@ log:
 
 # REALITY 目标选型过滤策略 (遵从 Xray 官方最佳实践)
 reality_filter:
-  # 1. 强制非 CDN 过滤 (true: 剔除 Cloudflare/Akamai/Fastly 等 CDN 节点，防止 VPS 变成公网免费反代)
+  # ==================== 网络与运行环境策略 ====================
+  # 1. 排除国内网站 (true: 默认排除国内站点；若为海外回国翻墙/访问国内流媒体，可设为 false)
+  require_no_cn: true
+
+  # 2. GFW 静态黑名单检测 (false: 本地家宽直连时建议关闭，纯靠真实网络握手连通性自然淘汰，避免静态名单误杀)
+  check_gfw: false
+
+  # 3. 资产数据库与缓存快速通道 (true: 优先复用本地数据库中已验证的同 ASN/国家 优质资产并快速秒级复核)
+  use_cache: true
+  cache_max_days: 7
+
+  # ==================== 阶段二：进阶偏好过滤策略 ====================
+  # 4. 强制非 CDN 过滤 (true: 剔除 Cloudflare/Akamai/Fastly 等 CDN 节点，防止 VPS 变成公网免费反代)
   require_no_cdn: true
 
-  # 2. 握手时间延迟上限 (毫秒): 高于此延迟的节点抛弃 (默认 800ms)
+  # 5. 握手时间延迟上限 (毫秒): 高于此延迟的节点抛弃 (默认 800ms)
   max_handshake_ms: 400
 
-  # 3. 热门大站过滤 (true: 依据 data/hot_websites.txt 匹配剔除 Google/Apple 等超级大站)
+  # 6. 热门大站过滤 (true: 依据 data/hot_websites.txt 匹配剔除 Google/Apple 等超级大站)
   require_no_hot: true
 
-  # 4. 证书剩余有效天数下限: 默认 7 天 (剔除 7 天内到期废弃的死链，避开 30 天造成的 ACME 自动续期误杀)
+  # 7. 证书剩余有效天数下限: 默认 7 天 (剔除 7 天内到期废弃的死链，避开 30 天造成的 ACME 自动续期误杀)
   min_cert_days: 10
 
-  # 5. 最低推荐星级门槛: (1~5 星)
+  # 8. 最低推荐星级门槛: (1~5 星)
   min_stars: 3
 
-  # 6. 默认返回页过滤 (true: 识别并剔除 Nginx/OpenResty 等默认欢迎页、测试页或默认错误页)
+  # 9. 默认返回页过滤 (true: 识别并剔除 Nginx/OpenResty 等默认欢迎页、测试页或默认错误页)
   require_no_default_page: true
 
-  # 7. 外部排除规则文件路径 (默认载入 data/exclude_rules.txt)
+  # 10. 外部排除规则文件路径 (默认载入 data/exclude_rules.txt)
   exclude_rules_file: "data/exclude_rules.txt"
 
-  # 8. 排除域名后缀（如未在外部文件中配置，可在此处直接注入）
+  # 11. 白名单域名后缀（可选，若配置则只保留指定后缀，如只要 .com/.de）
+  # include_suffixes:
+  #   - ".com"
+  #   - ".de"
+  #   - ".org"
+
+  # 12. 排除域名后缀（如未在外部文件中配置，可在此处直接注入）
   exclude_suffixes:
     - ".local"
     - ".internal"
@@ -43,7 +61,7 @@ reality_filter:
     - ".localhost"
     - ".onion"
 
-  # 9. 明确排除的域名或证书主机名
+  # 13. 明确排除的域名或证书主机名
   exclude_domains:
     - "localhost"
     - "server.domain.com"
@@ -53,14 +71,13 @@ reality_filter:
     - "FortiGate"
     - "Unspecified"
 
-  # 10. 排除特征关键词与模式
+  # 14. 排除特征关键词与模式
   exclude_patterns:
     - "kubernetes"
     - "ingress controller fake certificate"
     - "fake certificate"
 
-  # 11. 排除的 HTTP 页面状态码（被排除的状态码将被标记为不适合）
-  # 例如若仅希望保留 200，可将 301/302 加入排除列表
+  # 15. 排除的 HTTP 页面状态码（被排除的状态码将被标记为不适合）
   exclude_status:
     - 400
     - 401

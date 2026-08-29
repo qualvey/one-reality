@@ -25,6 +25,11 @@ func NewBlockedStage() *BlockedStage {
 
 // Execute 执行被墙检测
 func (bs *BlockedStage) Execute(ctx *types.PipelineContext) error {
+	// 如果配置关闭了 GFW 静态黑名单检测，直接跳过
+	if ctx.Config != nil && !ctx.Config.RealityFilter.CheckGFW {
+		return nil
+	}
+
 	// 检查是否被墙
 	isBlocked, reason := bs.checkBlocked(ctx.Domain)
 

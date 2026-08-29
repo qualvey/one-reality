@@ -46,6 +46,10 @@ func TestLoadExcludeRulesFromFile(t *testing.T) {
 	rulesFile := filepath.Join(tempDir, "rules.txt")
 
 	content := `# Test rules
+include_suffixes:
+  .com
+  .org
+
 exclude_suffixes:
   .custom
   .testlab
@@ -64,7 +68,7 @@ exclude_status:
 		t.Fatalf("failed to write test rules file: %v", err)
 	}
 
-	domains, suffixes, patterns, statusCodes, err := LoadExcludeRulesFromFile(rulesFile)
+	domains, suffixes, patterns, statusCodes, includeSuffixes, err := LoadExcludeRulesFromFile(rulesFile)
 	if err != nil {
 		t.Fatalf("LoadExcludeRulesFromFile failed: %v", err)
 	}
@@ -80,6 +84,9 @@ exclude_status:
 	}
 	if len(statusCodes) != 2 || statusCodes[0] != 302 || statusCodes[1] != 404 {
 		t.Errorf("unexpected statusCodes: %v", statusCodes)
+	}
+	if len(includeSuffixes) != 2 || includeSuffixes[0] != ".com" || includeSuffixes[1] != ".org" {
+		t.Errorf("unexpected includeSuffixes: %v", includeSuffixes)
 	}
 }
 
