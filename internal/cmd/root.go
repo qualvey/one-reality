@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"RealityChecker/internal/batch"
 	"RealityChecker/internal/config"
@@ -51,10 +52,20 @@ func NewRootCmd() (*RootCmd, error) {
 	// 设置信号处理
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		sigChan := make(chan os.Signal, 2)
+		signal.Notify(sigChan, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
+		fmt.Printf("\n\n[!] 接收到中断信号 (Ctrl+C)，正在安全退出...\n")
 		cancel()
+
+		// 再次收到中断信号或超过 2 秒未退出时立即强制终止
+		select {
+		case <-sigChan:
+			fmt.Printf("\n[!] 强制终止进程。\n")
+			os.Exit(130)
+		case <-time.After(2 * time.Second):
+			os.Exit(130)
+		}
 	}()
 
 	return &RootCmd{

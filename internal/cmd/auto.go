@@ -266,6 +266,17 @@ CIDRLoop:
 	fmt.Println()
 	close(scanResultChan)
 
+	if r.ctx.Err() != nil {
+		ui.PrintTimestampedMessage("扫描已响应用户中断 (Ctrl+C) 并安全退出。")
+		if len(suitableResults) > 0 {
+			suitableResults = core.FilterPool(suitableResults, filter)
+			r.batchManager.SortByRecommendationStars(suitableResults)
+			fmt.Println("\n中断前已发现的适合域名:")
+			fmt.Println(r.batchManager.FormatSuitableTable(suitableResults))
+		}
+		return
+	}
+
 	// 导出候选资产池 (如果指定了 --export)
 	if exportFile != "" {
 		exportPool := &types.CandidatePool{
