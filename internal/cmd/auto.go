@@ -191,8 +191,8 @@ func (r *RootCmd) executeAuto(cidrs []string, maxTargets int, checkAll bool, exp
 		fmt.Printf("  ...以及其余 %d 个网段\n", len(cidrs)-5)
 	}
 
-	// 2. 构造流水线 Channel
-	scanResultChan := make(chan *scanner.ScanResult, 100)
+	// 2. 构造高吞吐非阻塞流水线 (超大缓冲 20000 防止阻塞端口探测流水线)
+	scanResultChan := make(chan *scanner.ScanResult, 20000)
 	domainSet := make(map[string]bool)
 	var mu sync.Mutex
 
@@ -210,7 +210,11 @@ func (r *RootCmd) executeAuto(cidrs []string, maxTargets int, checkAll bool, exp
 		}
 	}
 
-	concurrency := 10
+	// 动态调整域名复核协程池 (根据扫描并发量动态扩容，防止消费积压)
+	concurrency := 30
+	if threads := filter.ScanThreads; threads > 500 {
+		concurrency = 60
+	}
 	var workerWg sync.WaitGroup
 
 	ctx, cancel := context.WithCancel(r.ctx)
@@ -317,8 +321,8 @@ CIDRLoop:
 			logger.AboveBar(bar, "[%d/%d] 正在并发扫描网段: %s ...", idx+1, len(cidrs), cidr)
 		}
 
-		// 单个 CIDR 的扫描输出中间通道
-		subChan := make(chan *scanner.ScanResult, 50)
+		// 单个 CIDR 的扫描输出中间通道 (5000 缓冲，搭配非阻塞溢出保护)
+		subChan := make(chan *scanner.ScanResult, 5000)
 
 		// 异步收纳单个 CIDR 的扫描结果
 		var pipeWg sync.WaitGroup
@@ -341,8 +345,15 @@ CIDRLoop:
 					workerWg.Add(1)
 					select {
 					case scanResultChan <- res:
-					case <-ctx.Done():
-						workerWg.Done()
+					default:
+						// 极致防死锁兜底：若主通道瞬时塞满，开后台协程异步投递，绝对不阻塞上游扫描器
+						go func(sr *scanner.ScanResult) {
+							select {
+							case scanResultChan <- sr:
+							case <-ctx.Done():
+								workerWg.Done()
+							}
+						}(res)
 					}
 				}
 				mu.Unlock()
