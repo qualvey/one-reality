@@ -245,7 +245,7 @@ func (cts *ComprehensiveTLSStage) CanEarlyExit() bool {
 
 // Priority 优先级
 func (cts *ComprehensiveTLSStage) Priority() int {
-	return 4 // 综合TLS检测第四优先级
+	return 7 // 综合TLS检测第七优先级（在基础网络与地理位置检测之后）
 }
 
 // Name 阶段名称
