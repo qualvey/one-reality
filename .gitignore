@@ -13,6 +13,9 @@ Thumbs.db
 *.swp
 *.swo
 *~
+*.db
+*.db-shm
+*.db-wal
 
 # Go相关
 vendor/
