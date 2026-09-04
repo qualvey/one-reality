@@ -364,14 +364,9 @@ func (s *AutoScanner) scanSingleCIDR(
 				taskWg.Add(1)
 				select {
 				case scanResultChan <- res:
-				default:
-					go func(sr *scanner.ScanResult) {
-						select {
-						case scanResultChan <- sr:
-						case <-ctx.Done():
-							taskWg.Done()
-						}
-					}(res)
+				case <-ctx.Done():
+					taskWg.Done()
+					return
 				}
 			}
 		}
