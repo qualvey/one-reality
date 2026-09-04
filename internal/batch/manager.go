@@ -195,10 +195,19 @@ func (bm *Manager) CheckDomainsWithProgress(ctx context.Context, domains []strin
 			// 显示进度
 			fmt.Printf("[%s] 正在检测 [%d/%d]: %s... ", time.Now().Format("15:04:05"), completed, len(domains), progressResult.Domain)
 
+			filter := types.RealityFilterConfig{}
+			if bm.config != nil {
+				filter = bm.config.RealityFilter
+			}
+
 			if progressResult.Error != nil {
 				fmt.Printf("失败 - %v\n", progressResult.Error)
-			} else if progressResult.Result.Suitable {
-				fmt.Printf("适合\n")
+			} else if progressResult.Result.Suitable && progressResult.Result.Error == nil {
+				if passed, reason := core.FilterTarget(progressResult.Result, filter); passed {
+					fmt.Printf("适合\n")
+				} else {
+					fmt.Printf("不适合 - %s\n", reason)
+				}
 			} else {
 				// 获取不适合的原因
 				reason := "未知原因"
@@ -254,6 +263,11 @@ func (bm *Manager) generateBatchReport(results []*types.DetectionResult, startTi
 		TotalDomains: len(results),
 	}
 
+	filter := types.RealityFilterConfig{}
+	if bm.config != nil {
+		filter = bm.config.RealityFilter
+	}
+
 	for _, result := range results {
 		// 区分技术错误和正常的检测结果
 		if result.Error == nil {
@@ -271,8 +285,10 @@ func (bm *Manager) generateBatchReport(results []*types.DetectionResult, startTi
 			}
 		}
 
-		if result.Suitable {
-			stats.SuitableDomains++
+		if result.Suitable && result.Error == nil {
+			if passed, _ := core.FilterTarget(result, filter); passed {
+				stats.SuitableDomains++
+			}
 		}
 
 		if result.Blocked != nil && result.Blocked.IsBlocked {
@@ -318,22 +334,37 @@ func (bm *Manager) formatBatchReport(report *types.BatchReport) string {
 	var unsuitableResults []*types.DetectionResult
 	var excludedResults []*types.DetectionResult // 状态码不自然的域名
 
+	filter := types.RealityFilterConfig{}
+	if bm.config != nil {
+		filter = bm.config.RealityFilter
+	}
+
 	for _, domainResult := range report.Results {
+		// 检查是否因为状态码不自然而被排除
+		if domainResult.StatusCodeCategory == types.StatusCodeCategoryExcluded {
+			excludedResults = append(excludedResults, domainResult)
+			continue
+		}
+
 		if domainResult.Suitable && domainResult.Error == nil {
-			suitableResults = append(suitableResults, domainResult)
-		} else {
-			// 检查是否因为状态码不自然而被排除
-			if domainResult.StatusCodeCategory == types.StatusCodeCategoryExcluded {
-				excludedResults = append(excludedResults, domainResult)
+			passed, reason := core.FilterTarget(domainResult, filter)
+			if passed {
+				suitableResults = append(suitableResults, domainResult)
 			} else {
-				unsuitableResults = append(unsuitableResults, domainResult)
+				unsuitableCopy := *domainResult
+				if reason != "" {
+					unsuitableCopy.Error = fmt.Errorf("%s", reason)
+				}
+				unsuitableResults = append(unsuitableResults, &unsuitableCopy)
 			}
+		} else {
+			unsuitableResults = append(unsuitableResults, domainResult)
 		}
 	}
 
 	// 显示适合的域名表格
 	if len(suitableResults) > 0 {
-		// 按星级排序：1星在最上面，5星在最下面
+		// 按星级与延迟排序：1星在最上面，5星在最下面
 		bm.sortByRecommendationStars(suitableResults)
 
 		result.WriteString("适合的域名:\n\n")
@@ -418,14 +449,9 @@ func formatDuration(d time.Duration) string {
 	}
 }
 
-// sortByRecommendationStars 按推荐星级排序，1星在最上面，5星在最下面
+// sortByRecommendationStars 统一按推荐星级与握手延迟复合排序（1星在前，5星在后）
 func (bm *Manager) sortByRecommendationStars(results []*types.DetectionResult) {
-	// 使用sort.Slice进行排序
-	sort.Slice(results, func(i, j int) bool {
-		starsI := bm.calculateStars(results[i])
-		starsJ := bm.calculateStars(results[j])
-		return starsI < starsJ // 升序排列：1星在前，5星在后
-	})
+	core.SortTargets(results)
 }
 
 // calculateStars 计算域名的推荐星级数量
