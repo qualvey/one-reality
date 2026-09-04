@@ -116,8 +116,9 @@ func (cm *ConnectionManager) GetTLSConnection(ctx context.Context, domain string
 
 	// 创建TLS连接
 	tlsConn := tls.Client(tcpConn, &tls.Config{
-		ServerName: domain,
-		NextProtos: []string{"h2", "http/1.1"}, // h2优先
+		ServerName:       domain,
+		NextProtos:       []string{"h2", "http/1.1"}, // h2优先
+		CurvePreferences: []tls.CurveID{tls.X25519, tls.X25519MLKEM768, tls.CurveP256},
 	})
 
 	// 执行TLS握手
