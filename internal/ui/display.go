@@ -20,18 +20,20 @@ type GitHubRelease struct {
 func PrintUsage() {
 	fmt.Printf("Reality协议目标网站检测器 %s\n\n", version.GetVersion())
 	fmt.Println("用法:")
-	fmt.Println("  reality-checker asn <ASN> <国家>       查询ASN前缀并按国家过滤")
-	fmt.Println("  reality-checker auto <ip/cidr> [--country CC] [--limit N] 自动查ASN并管道扫描检测 (推荐)")
+	fmt.Println("  reality-checker get <ip> [-n 5] [-s 3]  以指定IP极速获取优质伪装目标 (缓存优先+流式现扫)")
+	fmt.Println("  reality-checker serve [--port 8881]     启动Headless REST/SSE服务 (供WebUI/面板调用)")
+	fmt.Println("  reality-checker auto <ip/cidr>          自动查ASN并并发扫描检测入库")
+	fmt.Println("  reality-checker asn <ASN> <国家>        查询ASN前缀并按国家过滤")
 	fmt.Println("  reality-checker pipe                    从标准输入(Stdin)管道流式读取检测")
 	fmt.Println("  reality-checker check <domain>          检测单个域名")
 	fmt.Println("  reality-checker batch <d1> <d2> ...     批量检测多个域名")
 	fmt.Println("")
 	fmt.Println("示例:")
-	fmt.Println("  reality-checker asn AS15169 US > as15169-us.txt")
+	fmt.Println("  reality-checker get 85.155.184.100 -n 5 -s 4")
+	fmt.Println("  reality-checker get 85.155.184.100 --json")
+	fmt.Println("  reality-checker serve --port 8881")
 	fmt.Println("  reality-checker auto 85.155.184.100 --limit 5")
 	fmt.Println("  cat domains.txt | reality-checker pipe")
-	fmt.Println("  reality-checker check apple.com")
-	fmt.Println("  reality-checker batch apple.com google.com microsoft.com")
 }
 
 // PrintTimestampedMessage 打印带时间戳的消息
