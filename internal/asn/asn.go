@@ -13,12 +13,22 @@ import (
 	"github.com/oschwald/geoip2-golang"
 )
 
-const defaultEndpoint = "https://stat.ripe.net/data/announced-prefixes/data.json"
+const (
+	defaultAnnouncedEndpoint = "https://stat.ripe.net/data/announced-prefixes/data.json"
+	defaultOverviewEndpoint  = "https://stat.ripe.net/data/prefix-overview/data.json"
+)
+
+// ASNResolver defines operations for resolving ASN and network prefixes.
+type ASNResolver interface {
+	PrefixesForIP(ctx context.Context, ip string) (int, []string, error)
+	FetchPrefixes(ctx context.Context, resource string) ([]string, error)
+}
 
 // Client retrieves announced prefixes from the RIPE Stat API.
 type Client struct {
-	httpClient *http.Client
-	endpoint   string
+	httpClient       *http.Client
+	endpoint         string
+	overviewEndpoint string
 }
 
 // NewClient creates an ASN client with a bounded request timeout.
@@ -28,8 +38,19 @@ func NewClient(timeout ...time.Duration) *Client {
 		requestTimeout = timeout[0]
 	}
 	return &Client{
-		httpClient: &http.Client{Timeout: requestTimeout},
-		endpoint:   defaultEndpoint,
+		httpClient:       &http.Client{Timeout: requestTimeout},
+		endpoint:         defaultAnnouncedEndpoint,
+		overviewEndpoint: defaultOverviewEndpoint,
+	}
+}
+
+// SetEndpoints configures custom API endpoints (primarily for testing).
+func (c *Client) SetEndpoints(announcedEndpoint, overviewEndpoint string) {
+	if announcedEndpoint != "" {
+		c.endpoint = announcedEndpoint
+	}
+	if overviewEndpoint != "" {
+		c.overviewEndpoint = overviewEndpoint
 	}
 }
 
@@ -40,7 +61,7 @@ func (c *Client) PrefixesForIP(ctx context.Context, ip string) (int, []string, e
 		return 0, nil, fmt.Errorf("解析入口IP失败: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		"https://stat.ripe.net/data/prefix-overview/data.json?resource="+parsed.String(), nil)
+		c.overviewEndpoint+"?resource="+parsed.String(), nil)
 	if err != nil {
 		return 0, nil, fmt.Errorf("创建IP ASN请求失败: %w", err)
 	}
