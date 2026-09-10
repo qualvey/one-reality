@@ -55,6 +55,18 @@ jobs:
 
           RealityChecker 用于发现、检测和筛选适合作为 Reality SNI 的目标网站。
 
+          ### 本次更新
+
+          - 新增 `serve` 和 `get` 子命令，支持 HTTP API 与 CLI 目标发现/查询能力
+          - 新增 HTTP 服务端支持：CORS、SSE 流式输出、批量 REST API
+          - 新增 `ProvisionService`，支持 cache-first 与 streaming target discovery
+          - 重构并统一 batch 与 core 的目标过滤、排序逻辑
+          - 优化扫描管道与并发控制，修复高并发下潜在死锁和性能问题
+          - 改进 TLS/X25519 检测的快速路径，降低冗余握手开销
+          - 增强扫描器 checkpoint / resume 能力，支持中断后继续扫描
+          - 改进网络与存储层能力，包括 SQLite 资产数据库、自动表升级与更稳健的连接管理
+          - 优化 UI 与输出信息，提升扫描过程可见性与诊断体验
+
           ### 核心能力
 
           - **IP 直接查询**：输入 VPS IP，自动查询所属 ASN、获取 RIPEstat 宣布网段，并按国家过滤候选 CIDR。
@@ -86,6 +98,11 @@ jobs:
           ./reality-checker csv result.csv
           cat domains.txt | ./reality-checker pipe
           ```
+
+          ### 质量状态
+
+          - 已通过 `go test ./...`
+          - 已通过 `go build ./...`
 
           请从下方 Assets 下载对应平台的构建产物；完整参数、配置和结果字段说明请参阅
           [README.md](https://github.com/qualvey/one-reality/blob/main/README.md)。
