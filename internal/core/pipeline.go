@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"sync"
 	"time"
 
 	"RealityChecker/internal/detectors"
@@ -69,8 +68,8 @@ func (p *Pipeline) Execute(ctx context.Context, domain string) (*types.Detection
 		EarlyExit:   false,
 	}
 
-	// 并发执行检测阶段，提高检测效率
-	p.executeStagesConcurrently(ctx, pipelineCtx)
+	// 按优先级顺序执行检测阶段
+	p.executeStages(ctx, pipelineCtx)
 
 	// 计算总耗时
 	pipelineCtx.Result.Duration = time.Since(startTime)
@@ -81,104 +80,51 @@ func (p *Pipeline) Execute(ctx context.Context, domain string) (*types.Detection
 	return pipelineCtx.Result, nil
 }
 
-// executeStagesConcurrently 并发执行检测阶段
-func (p *Pipeline) executeStagesConcurrently(ctx context.Context, pipelineCtx *types.PipelineContext) {
-	// 将检测阶段分为两组：阻塞检测和网络检测
-	var blockingStages []types.DetectionStage
-	var networkStages []types.DetectionStage
-
+// executeStages 按优先级顺序严格执行各检测阶段（确定性且无数据竞争）
+func (p *Pipeline) executeStages(ctx context.Context, pipelineCtx *types.PipelineContext) {
 	for _, stage := range p.stages {
-		if stage.CanEarlyExit() {
-			blockingStages = append(blockingStages, stage)
-		} else {
-			networkStages = append(networkStages, stage)
-		}
-	}
-
-	// 先执行阻塞检测（被墙检测、地理位置检测等）
-	for _, stage := range blockingStages {
 		select {
 		case <-ctx.Done():
+			pipelineCtx.Result.Error = ctx.Err()
 			return
 		default:
 		}
 
-		if err := stage.Execute(pipelineCtx); err != nil {
-			pipelineCtx.Result.Error = err
-			if stage.CanEarlyExit() {
-				pipelineCtx.EarlyExit = true
-				return
-			}
-		}
+		// 单阶段执行与 panic 防护
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					pipelineCtx.Result.Error = fmt.Errorf("检测阶段 %s panic: %v", stage.Name(), r)
+				}
+			}()
 
-		// 检查是否需要早期退出
+			if err := stage.Execute(pipelineCtx); err != nil {
+				pipelineCtx.Result.Error = err
+				if stage.CanEarlyExit() {
+					pipelineCtx.EarlyExit = true
+				}
+			}
+		}()
+
+		// 检查是否触发早期退出
 		if p.earlyExit && stage.CanEarlyExit() && pipelineCtx.EarlyExit {
 			pipelineCtx.Result.EarlyExit = true
 			return
 		}
 	}
-
-	// 如果被阻塞，直接返回
-	if pipelineCtx.EarlyExit {
-		return
-	}
-
-	// 并发执行网络检测阶段
-	if len(networkStages) > 0 {
-		p.executeNetworkStagesConcurrently(ctx, pipelineCtx, networkStages)
-	}
 }
 
-// executeNetworkStagesConcurrently 并发执行网络检测阶段
-func (p *Pipeline) executeNetworkStagesConcurrently(ctx context.Context, pipelineCtx *types.PipelineContext, stages []types.DetectionStage) {
-	// 使用信号量控制网络检测的并发数
-	networkConcurrency := 4 // 网络检测使用4个并发
-	semaphore := make(chan struct{}, networkConcurrency)
-
-	var wg sync.WaitGroup
-	for i, stage := range stages {
-		wg.Add(1)
-		go func(index int, s types.DetectionStage) {
-			defer wg.Done()
-
-			// 获取信号量
-			select {
-			case semaphore <- struct{}{}:
-				defer func() {
-					<-semaphore
-				}()
-			case <-ctx.Done():
-				return
-			}
-
-			// 执行检测阶段
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						pipelineCtx.Result.Error = fmt.Errorf("检测阶段 %s panic: %v", s.Name(), r)
-					}
-				}()
-
-				if err := s.Execute(pipelineCtx); err != nil {
-					pipelineCtx.Result.Error = err
-				}
-			}()
-		}(i, stage)
-	}
-
-	wg.Wait()
-}
-
-// evaluateSuitability 评估适合性
+// evaluateSuitability 评估适合性（硬性技术基线）
 func (p *Pipeline) evaluateSuitability(result *types.DetectionResult) {
-	// 检查硬性条件
-	if result.Blocked != nil && result.Blocked.IsBlocked {
+	// 检查 GFW 静态黑名单 (仅当启用了 check_gfw 时拦截)
+	if p.config != nil && p.config.RealityFilter.CheckGFW && result.Blocked != nil && result.Blocked.IsBlocked {
 		result.Suitable = false
 		result.Error = fmt.Errorf("域名被墙")
 		return
 	}
 
-	if result.Location != nil && result.Location.IsDomestic {
+	// 检查国内网站 (仅当启用了 require_no_cn 时拦截，海外回国场景可放行)
+	if p.config != nil && p.config.RealityFilter.RequireNoCN && result.Location != nil && result.Location.IsDomestic {
 		result.Suitable = false
 		result.Error = fmt.Errorf("国内网站")
 		return
@@ -191,17 +137,40 @@ func (p *Pipeline) evaluateSuitability(result *types.DetectionResult) {
 		return
 	}
 
-	// 检查状态码是否安全
+	// 检查状态码是否安全或被排除
 	if result.Network != nil && result.Network.Accessible {
-		statusCodeCategory := types.ClassifyStatusCode(result.Network.StatusCode, true)
-		result.StatusCodeCategory = statusCodeCategory
+		statusCode := result.Network.StatusCode
+		isExcluded := false
 
-		// 如果状态码不安全，标记为不适合
-		if statusCodeCategory == types.StatusCodeCategoryExcluded {
+		if p.config != nil && len(p.config.RealityFilter.ExcludeStatus) > 0 {
+			for _, s := range p.config.RealityFilter.ExcludeStatus {
+				if s == statusCode {
+					isExcluded = true
+					break
+				}
+			}
+		} else {
+			isExcluded = types.IsStatusCodeExcluded(statusCode)
+		}
+
+		if isExcluded {
+			result.StatusCodeCategory = types.StatusCodeCategoryExcluded
 			result.Suitable = false
-			result.Error = fmt.Errorf("状态码不自然: %d", result.Network.StatusCode)
+			result.Error = fmt.Errorf("状态码不自然或已被排除: %d", statusCode)
 			return
 		}
+		result.StatusCodeCategory = types.StatusCodeCategorySafe
+	}
+
+	// 检查是否为 Nginx 或 Web 服务器默认返回页
+	if p.config != nil && p.config.RealityFilter.RequireNoDefaultPage && result.Network != nil && result.Network.IsDefaultPage {
+		result.Suitable = false
+		typeName := result.Network.DefaultPageType
+		if typeName == "" {
+			typeName = "默认"
+		}
+		result.Error = fmt.Errorf("检测到%s默认页 (%s)", typeName, result.Network.DefaultPageReason)
+		return
 	}
 
 	if result.TLS != nil {

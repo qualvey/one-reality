@@ -13,12 +13,22 @@ import (
 	"github.com/oschwald/geoip2-golang"
 )
 
-const defaultEndpoint = "https://stat.ripe.net/data/announced-prefixes/data.json"
+const (
+	defaultAnnouncedEndpoint = "https://stat.ripe.net/data/announced-prefixes/data.json"
+	defaultOverviewEndpoint  = "https://stat.ripe.net/data/prefix-overview/data.json"
+)
+
+// ASNResolver defines operations for resolving ASN and network prefixes.
+type ASNResolver interface {
+	PrefixesForIP(ctx context.Context, ip string) (int, []string, error)
+	FetchPrefixes(ctx context.Context, resource string) ([]string, error)
+}
 
 // Client retrieves announced prefixes from the RIPE Stat API.
 type Client struct {
-	httpClient *http.Client
-	endpoint   string
+	httpClient       *http.Client
+	endpoint         string
+	overviewEndpoint string
 }
 
 // NewClient creates an ASN client with a bounded request timeout.
@@ -28,8 +38,19 @@ func NewClient(timeout ...time.Duration) *Client {
 		requestTimeout = timeout[0]
 	}
 	return &Client{
-		httpClient: &http.Client{Timeout: requestTimeout},
-		endpoint:   defaultEndpoint,
+		httpClient:       &http.Client{Timeout: requestTimeout},
+		endpoint:         defaultAnnouncedEndpoint,
+		overviewEndpoint: defaultOverviewEndpoint,
+	}
+}
+
+// SetEndpoints configures custom API endpoints (primarily for testing).
+func (c *Client) SetEndpoints(announcedEndpoint, overviewEndpoint string) {
+	if announcedEndpoint != "" {
+		c.endpoint = announcedEndpoint
+	}
+	if overviewEndpoint != "" {
+		c.overviewEndpoint = overviewEndpoint
 	}
 }
 
@@ -40,7 +61,7 @@ func (c *Client) PrefixesForIP(ctx context.Context, ip string) (int, []string, e
 		return 0, nil, fmt.Errorf("解析入口IP失败: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		"https://stat.ripe.net/data/prefix-overview/data.json?resource="+parsed.String(), nil)
+		c.overviewEndpoint+"?resource="+parsed.String(), nil)
 	if err != nil {
 		return 0, nil, fmt.Errorf("创建IP ASN请求失败: %w", err)
 	}
@@ -162,3 +183,25 @@ func FilterByCountry(prefixes []string, db *geoip2.Reader, country string) ([]st
 	}
 	return filtered, nil
 }
+
+// FilterIPVersion 根据 IPv4/IPv6 偏好过滤 CIDR 前缀
+func FilterIPVersion(prefixes []string, ipv4Only, ipv6Only bool) []string {
+	if !ipv4Only && !ipv6Only {
+		return prefixes
+	}
+	filtered := make([]string, 0, len(prefixes))
+	for _, raw := range prefixes {
+		_, network, err := net.ParseCIDR(raw)
+		if err != nil {
+			continue
+		}
+		isIPv4 := network.IP.To4() != nil
+		if ipv4Only && isIPv4 {
+			filtered = append(filtered, network.String())
+		} else if ipv6Only && !isIPv4 {
+			filtered = append(filtered, network.String())
+		}
+	}
+	return filtered
+}
+

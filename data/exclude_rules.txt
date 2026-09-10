@@ -1,0 +1,71 @@
+# REALITY 域名与证书排除过滤规则
+# 支持三类排除规则：
+# 1. exclude_domains: 精确或包含指定域名字符串
+# 2. exclude_suffixes: 排除指定的域名后缀（顶级域/私有后缀）
+# 3. exclude_patterns: 排除包含指定关键词/特征的证书或域名
+
+########################################
+# 1) 排除的域名后缀 (私有/内网/测试保留后缀)
+########################################
+exclude_suffixes:
+  .local
+  .internal
+  .lan
+  .home
+  .corp
+  .arpa
+  .test
+  .example
+  .invalid
+  .localhost
+  .onion
+  .intranet
+  .box
+  .priv
+  .xyz
+
+########################################
+# 2) 明确排除的域名或证书主机名
+########################################
+exclude_domains:
+  localhost
+  server.domain.com
+  johnnasmalley.hostname
+  Kubernetes Ingress Controller Fake Certificate
+  CloudFlare Origin Certificate
+  FortiGate
+  Unspecified
+  TRAX
+  default
+
+########################################
+# 3) 排除的特征模式与伪造证书关键字
+########################################
+exclude_patterns:
+  kubernetes
+  ingress controller fake certificate
+  fake certificate
+  synology.com
+  fritz.box
+  openwrt
+  pfsense
+  opnsense
+
+########################################
+# 4) 排除的 HTTP 页面状态码
+########################################
+exclude_status:
+  400
+  401
+  403
+  404
+  407
+  408
+  429
+  500
+  501
+  502
+  503
+  504
+  302
+

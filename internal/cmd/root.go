@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"RealityChecker/internal/batch"
 	"RealityChecker/internal/config"
@@ -51,10 +52,20 @@ func NewRootCmd() (*RootCmd, error) {
 	// 设置信号处理
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		sigChan := make(chan os.Signal, 2)
+		signal.Notify(sigChan, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
+		fmt.Printf("\n\n[!] 接收到中断信号 (Ctrl+C)，正在安全退出...\n")
 		cancel()
+
+		// 再次收到中断信号或超过 2 秒未退出时立即强制终止
+		select {
+		case <-sigChan:
+			fmt.Printf("\n[!] 强制终止进程。\n")
+			os.Exit(130)
+		case <-time.After(2 * time.Second):
+			os.Exit(130)
+		}
 	}()
 
 	return &RootCmd{
@@ -75,6 +86,10 @@ func (r *RootCmd) Execute() {
 	}
 
 	switch os.Args[1] {
+	case "serve":
+		r.executeServe(os.Args[2:])
+	case "get":
+		r.executeGet(os.Args[2:])
 	case "asn":
 		executeASN(os.Args[2:])
 	case "pipe":
@@ -104,15 +119,15 @@ func (r *RootCmd) Execute() {
 		domainsStr := strings.Join(os.Args[2:], " ")
 		r.executeBatch(domainsStr)
 	case "csv":
-		if len(os.Args) < 3 {
-			ui.PrintErrorWithDetails(
-				"错误：缺少CSV文件参数",
-				"用法: reality-checker csv <csv_file>",
-				"示例: reality-checker csv domains.csv",
-			)
-			os.Exit(1)
-		}
-		r.executeCSV(os.Args[2])
+		ui.PrintErrorWithDetails(
+			"提示：'csv' 命令已废弃并整合",
+			"请直接使用更为高效的流式管道命令：",
+			"  cat file.csv | reality-checker pipe  (Linux/macOS)",
+			"  Get-Content file.csv | reality-checker pipe  (Windows PowerShell)",
+			"或者使用全自动内嵌扫描检测命令：",
+			"  reality-checker auto <ip/cidr>",
+		)
+		os.Exit(1)
 	case "version", "-v", "--version":
 		r.showVersion()
 	case "help", "-h", "--help":
@@ -120,7 +135,7 @@ func (r *RootCmd) Execute() {
 	default:
 		ui.PrintErrorWithDetails(
 			fmt.Sprintf("错误：未知命令 '%s'", os.Args[1]),
-			"可用命令: asn, auto, pipe, check, batch, csv, version",
+			"可用命令: get, serve, auto, asn, pipe, check, batch, version",
 		)
 		os.Exit(1)
 	}

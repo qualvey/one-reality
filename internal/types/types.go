@@ -87,6 +87,11 @@ type NetworkResult struct {
 	Headers            map[string]string `json:"headers,omitempty"`             // HTTP响应头
 	CertificateIssuer  string            `json:"certificate_issuer,omitempty"`  // 证书颁发者
 	CertificateSubject string            `json:"certificate_subject,omitempty"` // 证书主题
+	IsDefaultPage      bool              `json:"is_default_page,omitempty"`      // 是否为默认返回页（如nginx默认欢迎页）
+	DefaultPageType    string            `json:"default_page_type,omitempty"`    // 默认页类型（如"nginx", "apache"）
+	DefaultPageReason  string            `json:"default_page_reason,omitempty"`  // 默认页判定原因
+	PageTitle          string            `json:"page_title,omitempty"`           // 页面Title
+	ServerHeader       string            `json:"server_header,omitempty"`        // Web服务器Header
 }
 
 // TLSResult TLS检测结果
@@ -333,11 +338,56 @@ type TLSConfig struct {
 
 // RealityFilterConfig REALITY 选型策略配置
 type RealityFilterConfig struct {
-	RequireNoCDN   bool  `yaml:"require_no_cdn"`
-	MaxHandshakeMS int64 `yaml:"max_handshake_ms"`
-	RequireNoHot   bool  `yaml:"require_no_hot"`
-	MinCertDays    int   `yaml:"min_cert_days"`
-	MinStars       int   `yaml:"min_stars"`
+	// --- 网络与环境开关 ---
+	RequireNoCN          bool     `yaml:"require_no_cn"`          // 是否排除国内网站 (默认 true，翻回国内设为 false)
+	CheckGFW             bool     `yaml:"check_gfw"`              // 是否启用 GFW 静态黑名单 (本地直连建议 false)
+	IPv4Only             bool     `yaml:"ipv4_only"`              // 是否仅拉取与扫描 IPv4 网段 (默认 false)
+	IPv6Only             bool     `yaml:"ipv6_only"`              // 是否仅拉取与扫描 IPv6 网段 (默认 false)
+	UseCache             bool     `yaml:"use_cache"`              // 是否启用本地资产库缓存快速通道 (默认 true)
+	VerifyCache          bool     `yaml:"verify_cache"`           // 是否对本地缓存发起在线网络复核 (默认 false: 直接读取旧参数 0 延迟秒出; true: 在线复核)
+	CacheMaxDays         int      `yaml:"cache_max_days"`         // 资产缓存有效天数 (默认 7)
+	NoResume             bool     `yaml:"no_resume"`              // 是否禁用断点续传 (默认 false: 自动断点续传)
+	ScanThreads          int      `yaml:"scan_threads"`           // 网络扫描并发协程数 (默认 200)
+	ScanTimeout          int      `yaml:"scan_timeout"`           // 单 IP 探测超时秒数 (默认 3)
+
+	// --- 阶段二/进阶偏好过滤 ---
+	RequireNoCDN         bool     `yaml:"require_no_cdn"`         // 是否强制排除 CDN
+	MaxHandshakeMS       int64    `yaml:"max_handshake_ms"`       // 最大握手延迟上限 (ms)
+	RequireNoHot         bool     `yaml:"require_no_hot"`         // 是否排除超级热门大站
+	MinCertDays          int      `yaml:"min_cert_days"`          // 证书剩余天数下限
+	MinStars             int      `yaml:"min_stars"`              // 最低推荐星级 (1~5)
+	RequireNoDefaultPage bool     `yaml:"require_no_default_page"`// 是否排除 Nginx/Web 默认页
+	ExcludeRulesFile     string   `yaml:"exclude_rules_file"`     // 外部规则文件路径
+	IncludeSuffixes      []string `yaml:"include_suffixes"`       // 白名单后缀 (如 .com, .de)
+	ExcludeSuffixes      []string `yaml:"exclude_suffixes"`       // 黑名单后缀 (如 .xyz, .top)
+	ExcludeDomains       []string `yaml:"exclude_domains"`        // 排除域名
+	ExcludePatterns      []string `yaml:"exclude_patterns"`       // 排除特征模式
+	ExcludeStatus        []int    `yaml:"exclude_status"`         // 排除的 HTTP 状态码
+}
+
+// TargetRecord REALITY 资产数据库记录
+type TargetRecord struct {
+	ASN             string    `json:"asn"`
+	Country         string    `json:"country"`
+	Domain          string    `json:"domain"`
+	IP              string    `json:"ip"`
+	HandshakeMS     int64     `json:"handshake_ms"`
+	CertDays        int       `json:"cert_days"`
+	StatusCode      int       `json:"status_code"`
+	PageTitle       string    `json:"page_title,omitempty"`
+	IsCDN           bool      `json:"is_cdn"`
+	IsHot           bool      `json:"is_hot"`
+	IsDefaultPage   bool      `json:"is_default_page"`
+	DefaultPageType string    `json:"default_page_type,omitempty"`
+	Stars           int       `json:"stars"`
+	LastCheckedAt   time.Time `json:"last_checked_at"`
+}
+
+// CandidatePool 候选资产池
+type CandidatePool struct {
+	CreatedAt time.Time          `json:"created_at"`
+	Source    string             `json:"source"`
+	Targets   []*DetectionResult `json:"targets"`
 }
 
 // LogConfig 日志配置

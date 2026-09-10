@@ -10,8 +10,11 @@ if (-not $Version) { $Version = "dev" }
 if (-not $Commit) { $Commit = "unknown" }
 $Ldflags = "-s -w -X RealityChecker/internal/version.Version=$Version -X RealityChecker/internal/version.Commit=$Commit -X RealityChecker/internal/version.BuildTime=$BuildTime"
 
-if (Test-Path $DistDir) { Remove-Item -Recurse -Force $DistDir }
-New-Item -ItemType Directory -Path $DistDir | Out-Null
+if (-not (Test-Path $DistDir)) {
+    New-Item -ItemType Directory -Path $DistDir | Out-Null
+} else {
+    Get-ChildItem -Path $DistDir -Filter "reality-checker*" | Remove-Item -Force -ErrorAction SilentlyContinue
+}
 
 function Build-Target([string]$GoOS, [string]$GoArch, [string]$Extension) {
     $baseName = "reality-checker-$GoOS-$GoArch"

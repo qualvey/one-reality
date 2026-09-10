@@ -1,6 +1,8 @@
 package detectors
 
 import (
+	"context"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -28,20 +30,30 @@ func (rs *RedirectStage) Execute(ctx *types.PipelineContext) error {
 		},
 	}
 
+	reqCtx := ctx.Context
+	if reqCtx == nil {
+		reqCtx = context.Background()
+	}
+
 	// 跟踪重定向
-	result := rs.followRedirects(client, ctx.Domain)
+	result := rs.followRedirects(reqCtx, client, ctx.Domain)
 
 	// 设置网络结果
 	ctx.Result.Network = &types.NetworkResult{
-		Accessible:    result.Accessible,
-		StatusCode:    result.StatusCode,
-		FinalDomain:   result.FinalDomain,
-		RedirectChain: result.RedirectChain,
-		IsRedirected:  result.IsRedirected,
-		RedirectCount: result.RedirectCount,
-		URL:           result.URL,
-		ResponseTime:  time.Since(ctx.StartTime),
-		Headers:       result.Headers, // 保存HTTP响应头
+		Accessible:         result.Accessible,
+		StatusCode:         result.StatusCode,
+		FinalDomain:        result.FinalDomain,
+		RedirectChain:      result.RedirectChain,
+		IsRedirected:       result.IsRedirected,
+		RedirectCount:      result.RedirectCount,
+		URL:                result.URL,
+		ResponseTime:       time.Since(ctx.StartTime),
+		Headers:            result.Headers, // 保存HTTP响应头
+		IsDefaultPage:      result.IsDefaultPage,
+		DefaultPageType:    result.DefaultPageType,
+		DefaultPageReason:  result.DefaultPageReason,
+		PageTitle:          result.PageTitle,
+		ServerHeader:       result.ServerHeader,
 	}
 
 	// 在重定向检测阶段进行HTTP CDN检测
@@ -60,18 +72,23 @@ func (rs *RedirectStage) Execute(ctx *types.PipelineContext) error {
 
 // RedirectResult 重定向结果
 type RedirectResult struct {
-	Accessible    bool
-	StatusCode    int
-	FinalDomain   string
-	RedirectChain []string
-	IsRedirected  bool
-	RedirectCount int
-	URL           string
-	Headers       map[string]string // HTTP响应头
+	Accessible        bool
+	StatusCode        int
+	FinalDomain       string
+	RedirectChain     []string
+	IsRedirected      bool
+	RedirectCount     int
+	URL               string
+	Headers           map[string]string // HTTP响应头
+	IsDefaultPage     bool              // 是否为默认返回页
+	DefaultPageType   string            // 默认页类型 (如 nginx)
+	DefaultPageReason string            // 判定原因
+	PageTitle         string            // HTML Title
+	ServerHeader      string            // Server 响应头
 }
 
 // followRedirects 跟踪重定向
-func (rs *RedirectStage) followRedirects(client *http.Client, domain string) *RedirectResult {
+func (rs *RedirectStage) followRedirects(ctx context.Context, client *http.Client, domain string) *RedirectResult {
 	const (
 		maxRedirects = 5
 		httpsScheme  = "https://"
@@ -90,7 +107,7 @@ func (rs *RedirectStage) followRedirects(client *http.Client, domain string) *Re
 	currentURL := httpsScheme + domain
 
 	for i := 0; i < maxRedirects; i++ {
-		req, err := http.NewRequest("GET", currentURL, nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", currentURL, nil)
 		if err != nil {
 			break
 		}
@@ -161,6 +178,15 @@ func (rs *RedirectStage) followRedirects(client *http.Client, domain string) *Re
 		}
 
 		// 没有重定向或重定向结束
+		// 读取响应体前缀 (最大 8KB) 用于默认页识别
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+		defaultPageRes := DetectNginxDefaultPage(resp.StatusCode, result.Headers, bodyBytes)
+		result.IsDefaultPage = defaultPageRes.IsDefaultPage
+		result.DefaultPageType = defaultPageRes.PageType
+		result.DefaultPageReason = defaultPageRes.Reason
+		result.PageTitle = defaultPageRes.Title
+		result.ServerHeader = defaultPageRes.ServerHeader
+
 		parsedURL, _ := url.Parse(currentURL)
 		result.FinalDomain = parsedURL.Hostname()
 		resp.Body.Close()

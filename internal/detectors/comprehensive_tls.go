@@ -88,10 +88,13 @@ func (cts *ComprehensiveTLSStage) performComprehensiveTLSDetection(ctx *types.Pi
 		return firstResult
 	}
 
-	// 第二次握手：强制X25519握手，检测X25519支持
-	supportsX25519 := cts.checkX25519Support(domain, 3*time.Second)
+	// 性能优化核心：若首轮握手已成功协商为 X25519 或 X25519MLKEM768，直接判定支持，省去第二次完整网络往返
+	if firstResult.TLS.SupportsX25519 {
+		return firstResult
+	}
 
-	// 更新TLS结果中的X25519支持
+	// 仅当服务端未在首轮选择 X25519 时，才发起第二次专门强制 X25519 的探测
+	supportsX25519 := cts.checkX25519Support(domain, 3*time.Second)
 	firstResult.TLS.SupportsX25519 = supportsX25519
 
 	return firstResult
@@ -102,6 +105,8 @@ func (cts *ComprehensiveTLSStage) analyzeTLSState(state tls.ConnectionState, dom
 	// TLS检测
 	supportsTLS13 := state.Version == tls.VersionTLS13
 	supportsHTTP2 := state.NegotiatedProtocol == "h2" && state.NegotiatedProtocolIsMutual
+	// 检查首次握手协商的密钥交换曲线
+	supportsX25519 := state.CurveID == tls.X25519 || state.CurveID == tls.X25519MLKEM768
 
 	// SNI检测
 	supportsSNI := true // 成功建立连接说明支持SNI
@@ -148,7 +153,7 @@ func (cts *ComprehensiveTLSStage) analyzeTLSState(state tls.ConnectionState, dom
 		TLS: &types.TLSResult{
 			ProtocolVersion: fmt.Sprintf("TLS %d.%d", (state.Version>>8)&0xFF, state.Version&0xFF),
 			SupportsTLS13:   supportsTLS13,
-			SupportsX25519:  false, // 将在第二次握手后更新
+			SupportsX25519:  supportsX25519,
 			SupportsHTTP2:   supportsHTTP2,
 			CipherSuite:     tls.CipherSuiteName(state.CipherSuite),
 			HandshakeTime:   handshakeTime,
@@ -240,7 +245,7 @@ func (cts *ComprehensiveTLSStage) CanEarlyExit() bool {
 
 // Priority 优先级
 func (cts *ComprehensiveTLSStage) Priority() int {
-	return 4 // 综合TLS检测第四优先级
+	return 7 // 综合TLS检测第七优先级（在基础网络与地理位置检测之后）
 }
 
 // Name 阶段名称

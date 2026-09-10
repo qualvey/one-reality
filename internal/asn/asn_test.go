@@ -27,3 +27,28 @@ func TestFetchPrefixesNormalizesAndDeduplicates(t *testing.T) {
 		t.Fatalf("prefixes = %#v", got)
 	}
 }
+
+func TestFilterIPVersion(t *testing.T) {
+	prefixes := []string{
+		"1.1.1.0/24",
+		"2001:db8::/32",
+		"8.8.8.0/24",
+		"2606:4700::/32",
+	}
+
+	v4Only := FilterIPVersion(prefixes, true, false)
+	if len(v4Only) != 2 || v4Only[0] != "1.1.1.0/24" || v4Only[1] != "8.8.8.0/24" {
+		t.Fatalf("v4Only = %#v, want 2 IPv4 prefixes", v4Only)
+	}
+
+	v6Only := FilterIPVersion(prefixes, false, true)
+	if len(v6Only) != 2 || v6Only[0] != "2001:db8::/32" || v6Only[1] != "2606:4700::/32" {
+		t.Fatalf("v6Only = %#v, want 2 IPv6 prefixes", v6Only)
+	}
+
+	all := FilterIPVersion(prefixes, false, false)
+	if len(all) != 4 {
+		t.Fatalf("all = %#v, want 4 prefixes", all)
+	}
+}
+

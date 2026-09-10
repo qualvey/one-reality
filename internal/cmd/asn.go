@@ -17,12 +17,16 @@ func executeASN(args []string) {
 	flags.SetOutput(os.Stderr)
 	countryFlag := flags.String("country", "", "国家 ISO 代码或名称")
 	dbPath := flags.String("db", "data/Country.mmdb", "GeoIP 国家数据库路径")
+	ipv4Only := flags.Bool("ipv4-only", false, "仅输出 IPv4 CIDR 网段")
+	flags.BoolVar(ipv4Only, "4", false, "仅输出 IPv4 CIDR 网段 (缩写)")
+	ipv6Only := flags.Bool("ipv6-only", false, "仅输出 IPv6 CIDR 网段")
+	flags.BoolVar(ipv6Only, "6", false, "仅输出 IPv6 CIDR 网段 (缩写)")
 	if err := flags.Parse(args); err != nil {
 		return
 	}
 
 	if flags.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "用法: reality-checker asn [--db Country.mmdb] <ASN> <国家>")
+		fmt.Fprintln(os.Stderr, "用法: reality-checker asn [--db Country.mmdb] [-4] [-6] <ASN> <国家>")
 		return
 	}
 	country := *countryFlag
@@ -51,6 +55,7 @@ func executeASN(args []string) {
 		fmt.Fprintf(os.Stderr, "国家过滤失败: %v\n", err)
 		return
 	}
+	filtered = asnclient.FilterIPVersion(filtered, *ipv4Only, *ipv6Only)
 	for _, prefix := range filtered {
 		fmt.Println(prefix)
 	}
