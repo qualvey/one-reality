@@ -39,7 +39,36 @@ RealityChecker 是一个用于自动发现、深度检测与智能筛选 Xray Re
 
 ---
 
-## 🚀 推荐工作流程
+## 🚀 使用方式
+
+### NOTICE
+
+本项目应该在本地运行而非VPS,且应该直连,走代理会让检测结果不准确。
+初次启动会连接github下载资源。
+建议分流规则:
+``
+github先走代理
+按照进程路径/名称直连
+或者先开代理下载资源，再全部直连
+github-> proxy
+process=reality_checker -> direct
+```
+sing-box示例规则如下
+```josn
+  "route"{
+    "rules"[
+      {
+        "domain_suffix": "github.com",
+        "outbound": "Proxy"
+      },
+      {
+        "process_path_regex": "(?i)(^|[/\\\\])[^/\\\\]*reality[^/\\\\]*$",
+        "action": "bypass",
+        "outbound": "direct"
+      }
+    ]
+  }
+```
 
 ### 工作流一：根据 VPS IP 自动全流程筛选（最推荐）
 
@@ -48,21 +77,10 @@ RealityChecker 是一个用于自动发现、深度检测与智能筛选 Xray Re
 2. 依据入口 IP 的国家（或 `--country` 指定国家）智能过滤网段；
 3. 优先检查本地 SQLite 资产库（**Cache-First**），命中则秒级直出；
 4. 未命中时自动启动原生并发扫描，执行两阶段过滤并按推荐星级输出结果。
+比如
 
 ```bash
 ./reality-checker auto 85.155.184.100 --limit 5
-```
-
-单个 IP 会按就近原则扩展为 IPv4 `/24` 或 IPv6 `/64` 网段用于扫描；如果输入的是 CIDR，则直接扫描该网段：
-
-```bash
-./reality-checker auto 5.45.102.0/24 --limit 10
-```
-
-指定国家过滤（ISO 两位代码，如 `US`、`DE`、`JP`、`HK`）：
-
-```bash
-./reality-checker auto 85.155.184.100 --country US --limit 10
 ```
 
 ### 工作流二：全量摸底扫描并导出 JSON 数据集
@@ -85,19 +103,6 @@ RealityChecker 是一个用于自动发现、深度检测与智能筛选 Xray Re
 
 ```bash
 ./reality-checker auto --in ./as15169-us.txt --limit 10
-```
-
-### 工作流四：从标准输入流式检测 (Pipe 模式)
-
-`pipe` 可以接收纯域名列表，也可以接收 RealiTLScanner 或其他工具输出的 CSV，适合流水线整合：
-
-```bash
-cat domains.txt | ./reality-checker pipe
-```
-
-Windows PowerShell 示例：
-```powershell
-Get-Content domains.txt | .\reality-checker.exe pipe
 ```
 
 ---
@@ -132,7 +137,7 @@ Get-Content domains.txt | .\reality-checker.exe pipe
 
 ```text
 reality-checker auto <ip/cidr> [选项]        从 IP/CIDR 自动发现并筛选目标 (支持 Cache-First)
-reality-checker auto --in <文件> [选项]     扫描文件中的 IP/CIDR 列表
+reality-checker auto --in <文件> [选项]       扫描文件中的 IP/CIDR 列表
 reality-checker asn <ASN> <国家>             查询并按国家过滤 ASN CIDR
 reality-checker pipe                         从 stdin 管道流式读取检测域名或 CSV
 reality-checker check <domain>               检测单个域名
