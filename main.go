@@ -37,8 +37,7 @@ func main() {
 	// 检查并下载必要的数据文件
 	downloader := data.NewDownloader()
 	if err := downloader.EnsureDataFiles(); err != nil {
-		fmt.Printf("数据文件检查失败: %v\n", err)
-		os.Exit(1)
+		fmt.Printf("⚠️ 数据文件目录初始化失败: %v，将继续运行\n", err)
 	}
 
 	// 创建根命令

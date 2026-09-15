@@ -268,7 +268,8 @@ func resolveAutoInput(ctx context.Context, targetInput string, inFile string, co
 
 	reader, err := geoip2.Open("data/Country.mmdb")
 	if err != nil {
-		return nil, "", "", fmt.Errorf("打开 GeoIP 数据库失败: %w", err)
+		ui.PrintTimestampedMessage("⚠️ GeoIP 数据库不可用 (%v)，跳过 ASN/国家过滤，直接扫描入口 IP 所在网段", err)
+		return resolveInputToCIDRs(targetInput, inFile, filter), "", "", nil
 	}
 	defer reader.Close()
 	targetRecord, err := reader.Country(ip)

@@ -1,13 +1,13 @@
 package data
 
 import (
-    "crypto/tls"
+	"RealityChecker/internal/logger"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"time"
-	"RealityChecker/internal/logger"
 )
 
 // DataFile 数据文件配置
@@ -19,8 +19,8 @@ type DataFile struct {
 
 // Downloader 数据文件下载器
 type Downloader struct {
-	timeout time.Duration
-	retries int
+	timeout    time.Duration
+	retries    int
 	retryDelay time.Duration
 }
 
@@ -43,7 +43,7 @@ func printTimestampedMessage(format string, args ...interface{}) {
 // EnsureDataFiles 确保所有数据文件存在且最新
 func (d *Downloader) EnsureDataFiles() error {
 	printTimestampedMessage("检查数据文件...")
-	
+
 	// 定义需要下载的文件
 	files := []DataFile{
 		{
@@ -76,7 +76,7 @@ func (d *Downloader) EnsureDataFiles() error {
 	// 检查并下载每个文件
 	for _, file := range files {
 		if err := d.ensureFile(file); err != nil {
-			return err
+			printTimestampedMessage("⚠️ 数据文件 %s 不可用: %v，将继续运行并在扫描时降级处理", file.Name, err)
 		}
 	}
 
@@ -160,8 +160,8 @@ func (d *Downloader) downloadWithRetry(file DataFile) error {
 
 // downloadFile 下载单个文件
 func (d *Downloader) downloadFile(file DataFile) error {
-    logger.Info("downloading file %s" ,file.URL)
-    // 禁用 HTTP/2，避免透明代理环境下的 h2 握手/流重置问题
+	logger.Info("downloading file %s", file.URL)
+	// 禁用 HTTP/2，避免透明代理环境下的 h2 握手/流重置问题
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			MinVersion: tls.VersionTLS12,
@@ -171,17 +171,17 @@ func (d *Downloader) downloadFile(file DataFile) error {
 	}
 	// 创建HTTP客户端
 	client := &http.Client{
-        Transport: tr,
-		Timeout: d.timeout,
+		Transport: tr,
+		Timeout:   d.timeout,
 	}
 
-    // 构造 Request 并注入常见 User-Agent
+	// 构造 Request 并注入常见 User-Agent
 	req, err := http.NewRequest("GET", file.URL, nil)
 	if err != nil {
 		return err
 	}
-    req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-    resp, err := client.Do(req)
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -222,13 +222,13 @@ func (d *Downloader) downloadFile(file DataFile) error {
 
 // showManualDownloadInstructions 显示手动下载说明
 func (d *Downloader) showManualDownloadInstructions() {
-	fmt.Println("程序终止：缺少必要的数据文件")
+	fmt.Println("数据文件暂不可用，相关检测将使用降级模式")
 	fmt.Println()
-	fmt.Println("请手动下载以下文件到 data/ 目录：")
+	fmt.Println("如需补齐数据，可手动下载以下文件到 data/ 目录：")
 	fmt.Println("1. cdn_keywords.txt: https://raw.githubusercontent.com/V2RaySSR/RealityChecker/main/data/cdn_keywords.txt")
 	fmt.Println("2. hot_websites.txt: https://raw.githubusercontent.com/V2RaySSR/RealityChecker/main/data/hot_websites.txt")
 	fmt.Println("3. gfwlist.conf: https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/gfw.txt")
 	fmt.Println("4. Country.mmdb: https://github.com/Loyalsoldier/geoip/releases/latest/download/Country.mmdb")
 	fmt.Println()
-	fmt.Println("下载完成后重新运行程序即可。")
+	fmt.Println("补齐后下次运行时将自动复用这些文件。")
 }
