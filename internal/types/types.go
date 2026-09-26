@@ -2,7 +2,10 @@ package types
 
 import (
 	"context"
+	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // DetectionResult 检测结果
@@ -426,8 +429,38 @@ type LogConfig struct {
 	File  string `yaml:"file"`
 }
 
+// ProxyConfig 网络代理配置
+type ProxyConfig struct {
+	URL      string `yaml:"url" json:"url"`           // 代理服务器地址 (例如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080)
+	Download bool   `yaml:"download" json:"download"` // 是否用于资源与外部数据下载 (GitHub 规则库、GeoIP 数据库、ASN 远程接口等)
+	Scanner  bool   `yaml:"scanner" json:"scanner"`   // 是否用于目标检测与网络扫描 (默认 false: 保持直连以获取真实延迟与探测结果)
+}
+
+// UnmarshalYAML 自定义反序列化，支持字符串简写 (proxy: "http://...") 与对象模式
+func (p *ProxyConfig) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		p.URL = strings.TrimSpace(value.Value)
+		p.Download = true
+		p.Scanner = false
+		return nil
+	}
+
+	type plain ProxyConfig
+	alias := plain{
+		Download: true,
+		Scanner:  false,
+	}
+	if err := value.Decode(&alias); err != nil {
+		return err
+	}
+	*p = ProxyConfig(alias)
+	p.URL = strings.TrimSpace(p.URL)
+	return nil
+}
+
 // Config 配置结构
 type Config struct {
+	Proxy         ProxyConfig         `yaml:"proxy"`
 	Network       NetworkConfig       `yaml:"network"`
 	TLS           TLSConfig           `yaml:"tls"`
 	Concurrency   ConcurrencyConfig   `yaml:"concurrency"`
@@ -443,6 +476,7 @@ type NetworkConfig struct {
 	Timeout    time.Duration `yaml:"timeout"`
 	Retries    int           `yaml:"retries"`
 	DNSServers []string      `yaml:"dns_servers"`
+	Proxy      string        `yaml:"proxy"` // 兼容 network.proxy 配置
 }
 
 // ConcurrencyConfig 并发配置

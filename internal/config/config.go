@@ -74,6 +74,15 @@ func loadConfigFromFile(config *types.Config, filePath string) error {
 
 // mergeConfig 合并配置
 func mergeConfig(defaultConfig *types.Config, fileConfig *types.Config) {
+	// 代理配置
+	if fileConfig.Proxy.URL != "" {
+		defaultConfig.Proxy = fileConfig.Proxy
+	} else if fileConfig.Network.Proxy != "" {
+		defaultConfig.Proxy.URL = fileConfig.Network.Proxy
+		defaultConfig.Proxy.Download = true
+		defaultConfig.Proxy.Scanner = false
+	}
+
 	// 网络配置
 	if fileConfig.Network.Timeout > 0 {
 		defaultConfig.Network.Timeout = fileConfig.Network.Timeout
@@ -83,6 +92,9 @@ func mergeConfig(defaultConfig *types.Config, fileConfig *types.Config) {
 	}
 	if len(fileConfig.Network.DNSServers) > 0 {
 		defaultConfig.Network.DNSServers = fileConfig.Network.DNSServers
+	}
+	if fileConfig.Network.Proxy != "" {
+		defaultConfig.Network.Proxy = fileConfig.Network.Proxy
 	}
 
 	// TLS配置
@@ -196,6 +208,11 @@ func GetDefaultConfig() *types.Config {
 // getDefaultConfig 获取默认配置
 func getDefaultConfig() *types.Config {
 	return &types.Config{
+		Proxy: types.ProxyConfig{
+			URL:      "",
+			Download: true,
+			Scanner:  false,
+		},
 		Network: types.NetworkConfig{
 			Timeout:    3 * time.Second, // 减少到3秒
 			Retries:    1,
