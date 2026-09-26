@@ -80,7 +80,6 @@ func (s *TargetStore) initSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_targets_asn ON reality_targets (asn);
 	CREATE INDEX IF NOT EXISTS idx_targets_country ON reality_targets (country);
 	CREATE INDEX IF NOT EXISTS idx_targets_asn_country ON reality_targets (asn, country);
-	CREATE INDEX IF NOT EXISTS idx_targets_stars_active ON reality_targets (stars DESC, is_active);
 	CREATE INDEX IF NOT EXISTS idx_targets_last_checked ON reality_targets (last_checked_at);
 	`
 	if _, err := s.db.Exec(schema); err != nil {
@@ -111,6 +110,11 @@ func (s *TargetStore) initSchema() error {
 	if !targetCols["first_seen_at"] {
 		_, _ = s.db.Exec("ALTER TABLE reality_targets ADD COLUMN first_seen_at DATETIME")
 		_, _ = s.db.Exec("UPDATE reality_targets SET first_seen_at = last_checked_at WHERE first_seen_at IS NULL")
+	}
+
+	// 创建依赖新列的索引
+	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_targets_stars_active ON reality_targets (stars DESC, is_active)"); err != nil {
+		return err
 	}
 
 	// 全球 ASN 任务注册表
