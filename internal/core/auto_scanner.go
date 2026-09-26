@@ -396,34 +396,50 @@ func (s *AutoScanner) scanSingleCIDR(
 	go func() {
 		defer pipeWg.Done()
 		for res := range subChan {
-			if res == nil || res.CertDomain == "" {
+			if res == nil {
 				continue
 			}
 
-			// 早期过滤：如果启用了排除国内站点策略，立刻拦截
-			if s.config.Filter.RequireNoCN {
-				dLower := strings.ToLower(res.CertDomain)
-				if strings.HasSuffix(dLower, ".cn") ||
-					strings.Contains(dLower, ".edu.cn") ||
-					strings.Contains(dLower, ".gov.cn") {
+			// 收集该证书挖掘出的全部候选域名（优先使用 CertDomains 完整列表，回退单个 CertDomain）
+			domains := res.CertDomains
+			if len(domains) == 0 && res.CertDomain != "" {
+				domains = []string{res.CertDomain}
+			}
+
+			for _, candidateDomain := range domains {
+				candidateDomain = strings.TrimSpace(candidateDomain)
+				if candidateDomain == "" {
 					continue
 				}
-			}
 
-			s.mu.Lock()
-			alreadySeen := s.domainSet[res.CertDomain]
-			if !alreadySeen {
-				s.domainSet[res.CertDomain] = true
-			}
-			s.mu.Unlock()
+				// 早期过滤：如果启用了排除国内站点策略，立刻拦截
+				if s.config.Filter.RequireNoCN {
+					dLower := strings.ToLower(candidateDomain)
+					if strings.HasSuffix(dLower, ".cn") ||
+						strings.Contains(dLower, ".edu.cn") ||
+						strings.Contains(dLower, ".gov.cn") {
+						continue
+					}
+				}
 
-			if !alreadySeen {
-				taskWg.Add(1)
-				select {
-				case scanResultChan <- res:
-				case <-ctx.Done():
-					taskWg.Done()
-					return
+				s.mu.Lock()
+				alreadySeen := s.domainSet[candidateDomain]
+				if !alreadySeen {
+					s.domainSet[candidateDomain] = true
+				}
+				s.mu.Unlock()
+
+				if !alreadySeen {
+					taskWg.Add(1)
+					// 浅拷贝对象，为当前特定 SAN 域名派生独立评估任务
+					item := *res
+					item.CertDomain = candidateDomain
+					select {
+					case scanResultChan <- &item:
+					case <-ctx.Done():
+						taskWg.Done()
+						return
+					}
 				}
 			}
 		}
