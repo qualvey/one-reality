@@ -2,11 +2,12 @@ package data
 
 import (
 	"RealityChecker/internal/logger"
-	"crypto/tls"
+	"RealityChecker/internal/network"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -19,14 +20,20 @@ type DataFile struct {
 
 // Downloader 数据文件下载器
 type Downloader struct {
+	proxyURL   string
 	timeout    time.Duration
 	retries    int
 	retryDelay time.Duration
 }
 
-// NewDownloader 创建下载器
-func NewDownloader() *Downloader {
+// NewDownloader 创建下载器（可指定代理地址）
+func NewDownloader(proxyURL ...string) *Downloader {
+	p := ""
+	if len(proxyURL) > 0 {
+		p = strings.TrimSpace(proxyURL[0])
+	}
 	return &Downloader{
+		proxyURL:   p,
 		timeout:    30 * time.Second,
 		retries:    3,
 		retryDelay: 2 * time.Second,
@@ -43,6 +50,9 @@ func printTimestampedMessage(format string, args ...interface{}) {
 // EnsureDataFiles 确保所有数据文件存在且最新
 func (d *Downloader) EnsureDataFiles() error {
 	printTimestampedMessage("检查数据文件...")
+	if d.proxyURL != "" {
+		printTimestampedMessage("使用网络代理进行数据文件下载: %s", d.proxyURL)
+	}
 
 	// 定义需要下载的文件
 	files := []DataFile{
@@ -161,14 +171,11 @@ func (d *Downloader) downloadWithRetry(file DataFile) error {
 // downloadFile 下载单个文件
 func (d *Downloader) downloadFile(file DataFile) error {
 	logger.Info("downloading file %s", file.URL)
-	// 禁用 HTTP/2，避免透明代理环境下的 h2 握手/流重置问题
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{
-			MinVersion: tls.VersionTLS12,
-		},
-		ForceAttemptHTTP2: false,
-		TLSNextProto:      make(map[string]func(authority string, c *tls.Conn) http.RoundTripper), // 彻底关闭 HTTP/2
+	tr, err := network.MakeHTTPTransport(d.proxyURL, d.timeout)
+	if err != nil {
+		return fmt.Errorf("配置下载传输失败: %w", err)
 	}
+
 	// 创建HTTP客户端
 	client := &http.Client{
 		Transport: tr,

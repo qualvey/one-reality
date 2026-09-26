@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"RealityChecker/internal/cmd"
+	"RealityChecker/internal/config"
 	"RealityChecker/internal/data"
 	"RealityChecker/internal/ui"
 )
@@ -34,8 +35,14 @@ func main() {
 		ui.PrintBanner()
 	}
 
-	// 检查并下载必要的数据文件
-	downloader := data.NewDownloader()
+	// 检查并下载必要的数据文件 (自动遵循 config.yaml 中的下载代理配置)
+	downloadProxy := ""
+	if cfg, err := config.LoadConfig(""); err == nil && cfg != nil {
+		if cfg.Proxy.Download && cfg.Proxy.URL != "" {
+			downloadProxy = cfg.Proxy.URL
+		}
+	}
+	downloader := data.NewDownloader(downloadProxy)
 	if err := downloader.EnsureDataFiles(); err != nil {
 		fmt.Printf("⚠️ 数据文件目录初始化失败: %v，将继续运行\n", err)
 	}

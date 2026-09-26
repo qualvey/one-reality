@@ -116,11 +116,15 @@ func NewProvisionService(
 	asnClient asn.ASNResolver,
 	cfg *types.Config,
 ) *ProvisionService {
-	if asnClient == nil {
-		asnClient = asn.NewClient(15 * time.Second)
-	}
 	if cfg == nil {
 		cfg, _ = config.LoadConfig("")
+	}
+	if asnClient == nil {
+		proxyURL := ""
+		if cfg != nil && cfg.Proxy.Download && cfg.Proxy.URL != "" {
+			proxyURL = cfg.Proxy.URL
+		}
+		asnClient = asn.NewClientWithProxy(proxyURL, 15*time.Second)
 	}
 	return &ProvisionService{
 		store:       store,

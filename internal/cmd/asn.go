@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	asnclient "RealityChecker/internal/asn"
+	"RealityChecker/internal/config"
 	"RealityChecker/internal/storage"
 
 	"github.com/oschwald/geoip2-golang"
@@ -34,6 +35,12 @@ func executeASN(args []string) {
 		return
 	}
 
+	cfg, _ := config.LoadConfig("")
+	proxyURL := ""
+	if cfg != nil && cfg.Proxy.Download && cfg.Proxy.URL != "" {
+		proxyURL = cfg.Proxy.URL
+	}
+
 	// 1. 注册表管理逻辑
 	if *seedFlag || *syncURL != "" || *statsFlag || *listFlag {
 		store, err := storage.NewTargetStore(*storePath)
@@ -43,7 +50,7 @@ func executeASN(args []string) {
 		}
 		defer store.Close()
 
-		mgr := asnclient.NewRegistryManager(store)
+		mgr := asnclient.NewRegistryManagerWithProxy(store, proxyURL)
 
 		if *seedFlag {
 			n, err := mgr.InitDefaultRegistry()
@@ -120,7 +127,7 @@ func executeASN(args []string) {
 	}
 	defer db.Close()
 
-	prefixes, err := asnclient.NewClient().FetchPrefixes(context.Background(), flags.Arg(0))
+	prefixes, err := asnclient.NewClientWithProxy(proxyURL).FetchPrefixes(context.Background(), flags.Arg(0))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ASN查询失败: %v\n", err)
 		return

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"RealityChecker/internal/network"
 	"RealityChecker/internal/storage"
 	"RealityChecker/internal/types"
 )
@@ -68,15 +69,29 @@ type RegistryManager struct {
 
 // NewRegistryManager 创建 ASN 注册表管理器
 func NewRegistryManager(store *storage.TargetStore, timeout ...time.Duration) *RegistryManager {
+	return NewRegistryManagerWithProxy(store, "", timeout...)
+}
+
+// NewRegistryManagerWithProxy 创建支持代理的 ASN 注册表管理器
+func NewRegistryManagerWithProxy(store *storage.TargetStore, proxyURL string, timeout ...time.Duration) *RegistryManager {
 	reqTimeout := 30 * time.Second
 	if len(timeout) > 0 && timeout[0] > 0 {
 		reqTimeout = timeout[0]
 	}
+	httpClient, _ := network.MakeHTTPClient(proxyURL, reqTimeout)
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: reqTimeout}
+	}
 	return &RegistryManager{
-		store: store,
-		httpClient: &http.Client{
-			Timeout: reqTimeout,
-		},
+		store:      store,
+		httpClient: httpClient,
+	}
+}
+
+// SetProxy 配置 ASN 同步请求代理
+func (m *RegistryManager) SetProxy(proxyURL string) {
+	if client, err := network.MakeHTTPClient(proxyURL, m.httpClient.Timeout); err == nil && client != nil {
+		m.httpClient = client
 	}
 }
 

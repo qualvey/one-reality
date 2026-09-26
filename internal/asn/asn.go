@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"RealityChecker/internal/network"
+
 	"github.com/oschwald/geoip2-golang"
 )
 
@@ -33,14 +35,30 @@ type Client struct {
 
 // NewClient creates an ASN client with a bounded request timeout.
 func NewClient(timeout ...time.Duration) *Client {
+	return NewClientWithProxy("", timeout...)
+}
+
+// NewClientWithProxy creates an ASN client with proxy support.
+func NewClientWithProxy(proxyURL string, timeout ...time.Duration) *Client {
 	requestTimeout := 15 * time.Second
 	if len(timeout) > 0 && timeout[0] > 0 {
 		requestTimeout = timeout[0]
 	}
+	httpClient, _ := network.MakeHTTPClient(proxyURL, requestTimeout)
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: requestTimeout}
+	}
 	return &Client{
-		httpClient:       &http.Client{Timeout: requestTimeout},
+		httpClient:       httpClient,
 		endpoint:         defaultAnnouncedEndpoint,
 		overviewEndpoint: defaultOverviewEndpoint,
+	}
+}
+
+// SetProxy configures the proxy address for RIPE Stat requests.
+func (c *Client) SetProxy(proxyURL string) {
+	if client, err := network.MakeHTTPClient(proxyURL, c.httpClient.Timeout); err == nil && client != nil {
+		c.httpClient = client
 	}
 }
 
