@@ -67,18 +67,22 @@ func (r *RootCmd) executeServe(args []string) {
 
 	// 4. 打印启动信息
 	fmt.Println()
-	fmt.Printf("🌐 RealityChecker Headless / API 服务启动中 [%s]\n", version.GetVersion())
+	fmt.Printf("🌐 RealityChecker API & Web 控制台服务启动中 [%s]\n", version.GetVersion())
 	fmt.Printf("   » 监听地址: http://%s\n", addr)
+	fmt.Printf("   » Web 控制台: http://%s/\n", addr)
 	fmt.Printf("   » 资产数据库: %s\n", *dbFlag)
 	if geoipReader != nil {
 		fmt.Printf("   » GeoIP 数据库: %s\n", *mmdbFlag)
 	}
 	fmt.Println("   » API 端点:")
-	fmt.Printf("     • SSE 流式响应: GET http://%s/api/targets/stream?ip=<IP>&limit=5\n", addr)
-	fmt.Printf("     • JSON 批量响应: GET http://%s/api/targets?ip=<IP>&limit=5\n", addr)
+	fmt.Printf("     • 智能同ASN权重: GET http://%s/api/targets/smart?ip=<IP>&limit=10\n", addr)
+	fmt.Printf("     • 资产全量管理: GET http://%s/api/targets?page=1&page_size=20\n", addr)
+	fmt.Printf("     • 资产概览统计: GET http://%s/api/stats\n", addr)
+	fmt.Printf("     • SSE 流式探测: GET http://%s/api/targets/stream?ip=<IP>&limit=5\n", addr)
 	fmt.Printf("     • 健康检查探测: GET http://%s/api/health\n", addr)
 	fmt.Println()
 	ui.PrintTimestampedMessage("服务就绪，按 Ctrl+C 优雅退出...")
+
 
 	// 5. 启动服务与优雅停机
 	errChan := make(chan error, 1)
