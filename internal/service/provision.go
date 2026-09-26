@@ -52,6 +52,23 @@ type TargetItem struct {
 	CreatedAt       time.Time `json:"created_at"`
 }
 
+// RankedTargetItem 经过智能动态加权评分的目标资产
+type RankedTargetItem struct {
+	TargetItem
+	MatchLevel string `json:"match_level"` // "same_asn" (同ASN极速直连), "same_country" (同国家骨干), "global" (全球优质)
+	Score      int    `json:"score"`       // 动态综合加权总分
+}
+
+// TargetSummaryInfo 目标 IP 所属网络元数据摘要
+type TargetSummaryInfo struct {
+	TargetIP    string `json:"target_ip"`
+	ASN         string `json:"asn"`
+	Country     string `json:"country"`
+	SameASNHits int    `json:"same_asn_hits"`
+	TotalHits   int    `json:"total_hits"`
+}
+
+
 // ProvisionEvent SSE 流式事件载体
 type ProvisionEvent struct {
 	Event string `json:"event"` // "init", "target", "progress", "done", "error"
@@ -403,3 +420,241 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 		},
 	})
 }
+
+// GetSmartTargets 基于用户指定的目标 IP，执行动态加权打分排序
+// 核心规则：目标 IP 所属的 ASN 赋予最高基础分权重 (+1000)，同国家资产获得次高权重 (+250)
+func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionRequest) ([]RankedTargetItem, *TargetSummaryInfo, error) {
+	if s.store == nil {
+		return nil, nil, errors.New("storage store is nil")
+	}
+
+	targetIP := strings.TrimSpace(req.IP)
+	var targetASN string
+	var targetCountry string
+
+	// 1. 若提供了目标 IP，智能解析其 ASN 与国家
+	if targetIP != "" {
+		if parsedIP := net.ParseIP(targetIP); parsedIP != nil {
+			if s.geoipReader != nil {
+				if rec, err := s.geoipReader.Country(parsedIP); err == nil && rec.Country.IsoCode != "" {
+					targetCountry = strings.ToUpper(rec.Country.IsoCode)
+				}
+			}
+			if asnNum, _, err := s.asnClient.PrefixesForIP(ctx, targetIP); err == nil && asnNum > 0 {
+				targetASN = fmt.Sprintf("AS%d", asnNum)
+			}
+		}
+	}
+
+	if req.Country != "" {
+		targetCountry = strings.ToUpper(strings.TrimSpace(req.Country))
+	}
+
+	if req.Limit <= 0 {
+		req.Limit = 10
+	}
+	if req.Limit > 100 {
+		req.Limit = 100
+	}
+
+	// 2. 从持久化资产库拉取所有活跃资产
+	allTargets, err := s.store.GetAllTargets()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	summary := &TargetSummaryInfo{
+		TargetIP: targetIP,
+		ASN:      targetASN,
+		Country:  targetCountry,
+	}
+
+	var ranked []RankedTargetItem
+	targetASNNorm := strings.ToUpper(strings.TrimPrefix(targetASN, "AS"))
+
+	for _, rec := range allTargets {
+		if rec == nil || rec.Domain == "" || !rec.IsActive {
+			continue
+		}
+		if req.MinStars > 0 && rec.Stars < req.MinStars {
+			continue
+		}
+
+		dLower := strings.ToLower(rec.Domain)
+		if req.RequireNoCN && (strings.HasSuffix(dLower, ".cn") || strings.Contains(dLower, ".edu.cn") || strings.Contains(dLower, ".gov.cn")) {
+			continue
+		}
+
+		item := TargetItem{
+			Source:          "cache",
+			Domain:          rec.Domain,
+			IP:              rec.IP,
+			ASN:             rec.ASN,
+			Country:         rec.Country,
+			Stars:           rec.Stars,
+			HandshakeMS:     rec.HandshakeMS,
+			CertDays:        rec.CertDays,
+			StatusCode:      rec.StatusCode,
+			PageTitle:       rec.PageTitle,
+			IsCDN:           rec.IsCDN,
+			IsDefaultPage:   rec.IsDefaultPage,
+			DefaultPageType: rec.DefaultPageType,
+			CreatedAt:       rec.LastCheckedAt,
+		}
+
+		// 3. 动态智能加权打分模型
+		score := 0
+		matchLevel := "global"
+
+		recASNNorm := strings.ToUpper(strings.TrimPrefix(rec.ASN, "AS"))
+		isSameASN := (targetASNNorm != "" && recASNNorm != "" && targetASNNorm == recASNNorm)
+		isSameCountry := (targetCountry != "" && strings.EqualFold(rec.Country, targetCountry))
+
+		if isSameASN {
+			matchLevel = "same_asn"
+			score += 1000 // 🔥 同 ASN 权重提至最高置顶
+			summary.SameASNHits++
+		} else if isSameCountry {
+			matchLevel = "same_country"
+			score += 250 // 🌐 同国家骨干优质权重
+		} else {
+			matchLevel = "global"
+			score += 50 // 🌍 全球优质储备
+		}
+
+		// 星级加成 (5星 +150, 4星 +120, 3星 +90)
+		score += rec.Stars * 30
+
+		// 握手延迟扣分 (延迟越低得分越高，最大扣除 150 分)
+		if rec.HandshakeMS > 0 {
+			penalty := int(rec.HandshakeMS / 3)
+			if penalty > 150 {
+				penalty = 150
+			}
+			score -= penalty
+		}
+
+		// 证书充足度奖励 (>30天 +20分)
+		if rec.CertDays >= 30 {
+			score += 20
+		}
+
+		// 避免非安全状态码
+		if rec.StatusCode < 200 || rec.StatusCode >= 400 {
+			score -= 50
+		}
+
+		ranked = append(ranked, RankedTargetItem{
+			TargetItem: item,
+			MatchLevel: matchLevel,
+			Score:      score,
+		})
+	}
+
+	summary.TotalHits = len(ranked)
+
+	// 4. 严格按照加权得分从高到低排序
+	for i := 0; i < len(ranked); i++ {
+		for j := i + 1; j < len(ranked); j++ {
+			if ranked[j].Score > ranked[i].Score {
+				ranked[i], ranked[j] = ranked[j], ranked[i]
+			}
+		}
+	}
+
+	// 5. 截取 limit 条数
+	if len(ranked) > req.Limit {
+		ranked = ranked[:req.Limit]
+	}
+
+	return ranked, summary, nil
+}
+
+// CheckSingleDomain 在线即时检测单个域名/IP 并持久化至资产库
+func (s *ProvisionService) CheckSingleDomain(ctx context.Context, domain, manualIP string) (*types.TargetRecord, error) {
+	d := strings.TrimSpace(domain)
+	if d == "" {
+		return nil, errors.New("domain cannot be empty")
+	}
+
+	pipeline := core.NewPipeline(nil, s.appConfig)
+	res, err := pipeline.Execute(ctx, d)
+	if err != nil {
+		return nil, fmt.Errorf("pipeline execution failed: %w", err)
+	}
+
+	var ipStr, asnStr, countryStr string
+	if manualIP != "" {
+		ipStr = manualIP
+	} else if res.Network != nil && res.Network.FinalDomain != "" {
+		ipStr = res.Network.FinalDomain
+	}
+
+	if ipStr != "" {
+		if parsed := net.ParseIP(ipStr); parsed != nil {
+			if s.geoipReader != nil {
+				if rec, err := s.geoipReader.Country(parsed); err == nil {
+					countryStr = strings.ToUpper(rec.Country.IsoCode)
+				}
+			}
+			if asnNum, _, err := s.asnClient.PrefixesForIP(ctx, ipStr); err == nil && asnNum > 0 {
+				asnStr = fmt.Sprintf("AS%d", asnNum)
+			}
+		}
+	}
+
+	stars := core.CalculateTargetStars(res)
+	rec := storage.DetectionResultToRecord(res, asnStr, countryStr, ipStr, stars)
+	if rec == nil {
+		return nil, errors.New("failed to convert detection result to record")
+	}
+
+	if s.store != nil {
+		if err := s.store.UpsertTarget(rec); err != nil {
+			return nil, fmt.Errorf("failed to save target to database: %w", err)
+		}
+	}
+
+	return rec, nil
+}
+
+// QueryTargets 资产检索代理
+func (s *ProvisionService) QueryTargets(opts types.TargetQueryOptions) ([]*types.TargetRecord, int, error) {
+	if s.store == nil {
+		return nil, 0, errors.New("store not available")
+	}
+	return s.store.QueryTargets(opts)
+}
+
+// UpdateTargetActive 资产激活状态代理
+func (s *ProvisionService) UpdateTargetActive(domain string, active bool) error {
+	if s.store == nil {
+		return errors.New("store not available")
+	}
+	return s.store.UpdateTargetActive(domain, active)
+}
+
+// DeleteTarget 物理删除资产代理
+func (s *ProvisionService) DeleteTarget(domain string) error {
+	if s.store == nil {
+		return errors.New("store not available")
+	}
+	return s.store.DeleteTarget(domain)
+}
+
+// GetStats 资产概览统计代理
+func (s *ProvisionService) GetStats() (*types.TargetStats, error) {
+	if s.store == nil {
+		return nil, errors.New("store not available")
+	}
+	return s.store.GetStats()
+}
+
+// ListASNs ASN 列表查询代理
+func (s *ProvisionService) ListASNs(status string, minPriority, limit, offset int) ([]*types.ASNRecord, error) {
+	if s.store == nil {
+		return nil, errors.New("store not available")
+	}
+	return s.store.ListASNs(status, minPriority, limit, offset)
+}
+

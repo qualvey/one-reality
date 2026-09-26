@@ -1082,5 +1082,182 @@ func (s *TargetStore) RunWALCheckpoint() error {
 	return err
 }
 
+// QueryTargets 分页与多维度条件检索目标资产
+func (s *TargetStore) QueryTargets(opts types.TargetQueryOptions) ([]*types.TargetRecord, int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	whereClauses := []string{"1=1"}
+	args := []any{}
+
+	if kw := strings.TrimSpace(opts.Keyword); kw != "" {
+		likePattern := "%" + kw + "%"
+		whereClauses = append(whereClauses, "(domain LIKE ? OR ip LIKE ? OR page_title LIKE ?)")
+		args = append(args, likePattern, likePattern, likePattern)
+	}
+
+	if asn := strings.TrimSpace(opts.ASN); asn != "" {
+		asnNorm := strings.ToUpper(asn)
+		withAS := asnNorm
+		if !strings.HasPrefix(withAS, "AS") {
+			withAS = "AS" + withAS
+		}
+		withoutAS := strings.TrimPrefix(asnNorm, "AS")
+		whereClauses = append(whereClauses, "(asn = ? OR asn = ?)")
+		args = append(args, withAS, withoutAS)
+	}
+
+	if country := strings.TrimSpace(opts.Country); country != "" {
+		whereClauses = append(whereClauses, "country = ?")
+		args = append(args, strings.ToUpper(country))
+	}
+
+	if opts.MinStars > 0 {
+		whereClauses = append(whereClauses, "stars >= ?")
+		args = append(args, opts.MinStars)
+	}
+
+	if opts.IsActive != nil {
+		activeInt := 0
+		if *opts.IsActive {
+			activeInt = 1
+		}
+		whereClauses = append(whereClauses, "is_active = ?")
+		args = append(args, activeInt)
+	}
+
+	whereSQL := strings.Join(whereClauses, " AND ")
+
+	// 1. 查询符合条件的总数
+	countQuery := "SELECT COUNT(*) FROM reality_targets WHERE " + whereSQL
+	var total int
+	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	// 2. 排序方式
+	orderSQL := "ORDER BY stars DESC, handshake_ms ASC"
+	switch opts.SortBy {
+	case "handshake_asc":
+		orderSQL = "ORDER BY handshake_ms ASC, stars DESC"
+	case "recent_desc":
+		orderSQL = "ORDER BY last_checked_at DESC"
+	case "stars_desc":
+		orderSQL = "ORDER BY stars DESC, handshake_ms ASC"
+	}
+
+	// 3. 分页
+	limit := opts.PageSize
+	if limit <= 0 {
+		limit = 20
+	}
+	page := opts.Page
+	if page <= 0 {
+		page = 1
+	}
+	offset := (page - 1) * limit
+
+	dataQuery := fmt.Sprintf(`
+		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, status_code,
+		       page_title, is_cdn, is_hot, is_default_page, default_page_type,
+		       stars, is_active, check_fail_count, first_seen_at, last_checked_at
+		FROM reality_targets
+		WHERE %s
+		%s
+		LIMIT ? OFFSET ?
+	`, whereSQL, orderSQL)
+
+	dataArgs := append(append([]any{}, args...), limit, offset)
+	rows, err := s.db.Query(dataQuery, dataArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var results []*types.TargetRecord
+	for rows.Next() {
+		rec, err := scanTargetRecord(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		results = append(results, rec)
+	}
+
+	return results, total, rows.Err()
+}
+
+// UpdateTargetActive 快速切换资产的激活/禁用状态
+func (s *TargetStore) UpdateTargetActive(domain string, active bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	activeInt := 0
+	if active {
+		activeInt = 1
+	}
+
+	_, err := s.db.Exec("UPDATE reality_targets SET is_active = ? WHERE domain = ?", activeInt, strings.ToLower(strings.TrimSpace(domain)))
+	return err
+}
+
+// DeleteTarget 物理删除单条资产
+func (s *TargetStore) DeleteTarget(domain string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec("DELETE FROM reality_targets WHERE domain = ?", strings.ToLower(strings.TrimSpace(domain)))
+	return err
+}
+
+// GetStats 获取资产全景统计指标
+func (s *TargetStore) GetStats() (*types.TargetStats, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	stats := &types.TargetStats{
+		CountryCounts: make(map[string]int),
+		StarCounts:    make(map[int]int),
+	}
+
+	// 总数与活跃数、五星数
+	_ = s.db.QueryRow(`
+		SELECT 
+			COUNT(*),
+			COALESCE(SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN stars >= 5 THEN 1 ELSE 0 END), 0),
+			COALESCE(AVG(CASE WHEN is_active = 1 AND handshake_ms > 0 THEN handshake_ms END), 0)
+		FROM reality_targets
+	`).Scan(&stats.TotalTargets, &stats.ActiveTargets, &stats.FiveStarTargets, &stats.AvgHandshakeMS)
+
+	// 去重 ASN 总数
+	_ = s.db.QueryRow("SELECT COUNT(DISTINCT asn) FROM reality_targets WHERE asn != ''").Scan(&stats.TotalASNs)
+
+	// 国家分布
+	if rows, err := s.db.Query("SELECT country, COUNT(*) FROM reality_targets WHERE country != '' GROUP BY country ORDER BY COUNT(*) DESC LIMIT 20"); err == nil {
+		for rows.Next() {
+			var country string
+			var count int
+			if err := rows.Scan(&country, &count); err == nil {
+				stats.CountryCounts[country] = count
+			}
+		}
+		rows.Close()
+	}
+
+	// 星级分布
+	if rows, err := s.db.Query("SELECT stars, COUNT(*) FROM reality_targets GROUP BY stars"); err == nil {
+		for rows.Next() {
+			var stars, count int
+			if err := rows.Scan(&stars, &count); err == nil {
+				stats.StarCounts[stars] = count
+			}
+		}
+		rows.Close()
+	}
+
+	return stats, nil
+}
+
+
 
 

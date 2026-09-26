@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"RealityChecker/internal/service"
+	"RealityChecker/internal/types"
 )
+
 
 // ServerConfig HTTP 服务配置
 type ServerConfig struct {
@@ -53,8 +57,32 @@ func NewTargetServer(cfg ServerConfig, svc *service.ProvisionService) *TargetSer
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", ts.handleHealth)
+	mux.HandleFunc("/api/stats", ts.handleStats)
+	mux.HandleFunc("/api/targets/smart", ts.handleTargetsSmart)
 	mux.HandleFunc("/api/targets/stream", ts.handleTargetsStream)
-	mux.HandleFunc("/api/targets", ts.handleTargetsJSON)
+	mux.HandleFunc("/api/targets/check", ts.handleTargetsCheck)
+	mux.HandleFunc("/api/targets", ts.handleTargetsManage)
+	mux.HandleFunc("/api/targets/", ts.handleTargetItemAction)
+	mux.HandleFunc("/api/asns", ts.handleASNs)
+
+	// 静态文件支持 (如果存在 web/dist 前端静态产物，直接托管)
+	webDistPath := "web/dist"
+	if fi, err := os.Stat(webDistPath); err == nil && fi.IsDir() {
+		fs := http.FileServer(http.Dir(webDistPath))
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				http.NotFound(w, r)
+				return
+			}
+			// 单页应用 SPA 路由回退
+			filePath := filepath.Join(webDistPath, filepath.Clean(r.URL.Path))
+			if _, err := os.Stat(filePath); os.IsNotExist(err) {
+				http.ServeFile(w, r, filepath.Join(webDistPath, "index.html"))
+				return
+			}
+			fs.ServeHTTP(w, r)
+		})
+	}
 
 	handler := ts.corsMiddleware(mux)
 
@@ -96,7 +124,7 @@ func (s *TargetServer) corsMiddleware(next http.Handler) http.Handler {
 		}
 
 		w.Header().Set("Access-Control-Allow-Origin", allowOrigin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
 		w.Header().Set("Access-Control-Max-Age", "86400")
 
@@ -113,8 +141,218 @@ func (s *TargetServer) corsMiddleware(next http.Handler) http.Handler {
 func (s *TargetServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"status": "ok",
-		"time":   time.Now().Format(time.RFC3339),
+		"code":    200,
+		"status":  "ok",
+		"version": "1.2.0",
+		"time":    time.Now().Format(time.RFC3339),
+	})
+}
+
+// handleStats 资产概览统计数据
+func (s *TargetServer) handleStats(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	stats, err := s.service.GetStats()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 500, "error": err.Error()})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"code": 200,
+		"data": stats,
+	})
+}
+
+// handleTargetsSmart 核心接口：基于目标 IP 动态加权打分推荐 (同 ASN 绝对置顶)
+func (s *TargetServer) handleTargetsSmart(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	req := parseProvisionRequest(r)
+
+	if req.IP == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":  400,
+			"error": "Missing 'ip' query parameter",
+		})
+		return
+	}
+
+	ranked, summary, err := s.service.GetSmartTargets(r.Context(), req)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 500, "error": err.Error()})
+		return
+	}
+
+
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"code": 200,
+		"data": map[string]any{
+			"summary": summary,
+			"targets": ranked,
+		},
+	})
+}
+
+// handleTargetsCheck 在线即时检测单个域名/IP 并持久化入库
+func (s *TargetServer) handleTargetsCheck(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"code": 405, "error": "Method Not Allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload struct {
+		Domain string `json:"domain"`
+		IP     string `json:"ip"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 400, "error": "Invalid request payload: " + err.Error()})
+		return
+	}
+
+	if strings.TrimSpace(payload.Domain) == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 400, "error": "Domain is required"})
+		return
+	}
+
+	rec, err := s.service.CheckSingleDomain(r.Context(), payload.Domain, payload.IP)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 500, "error": err.Error()})
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"code":    200,
+		"message": "Domain detected and saved successfully",
+		"data":    rec,
+	})
+}
+
+// handleTargetsManage 资产库管理接口 (GET 分页检索)
+func (s *TargetServer) handleTargetsManage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method == http.MethodGet {
+		q := r.URL.Query()
+
+		var isActive *bool
+		if val := q.Get("is_active"); val != "" {
+			b := parseBool(val)
+			isActive = &b
+		}
+
+		page, _ := strconv.Atoi(q.Get("page"))
+		if page <= 0 {
+			page = 1
+		}
+		pageSize, _ := strconv.Atoi(q.Get("page_size"))
+		if pageSize <= 0 {
+			pageSize = 20
+		}
+		minStars, _ := strconv.Atoi(q.Get("min_stars"))
+
+		opts := types.TargetQueryOptions{
+			Keyword:  q.Get("keyword"),
+			ASN:      q.Get("asn"),
+			Country:  q.Get("country"),
+			MinStars: minStars,
+			IsActive: isActive,
+			SortBy:   q.Get("sort_by"),
+			Page:     page,
+			PageSize: pageSize,
+		}
+
+		items, total, err := s.service.QueryTargets(opts)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 500, "error": err.Error()})
+			return
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code": 200,
+			"data": map[string]any{
+				"items":     items,
+				"total":     total,
+				"page":      page,
+				"page_size": pageSize,
+			},
+		})
+		return
+	}
+
+	http.Error(w, `{"code": 405, "error": "Method Not Allowed"}`, http.StatusMethodNotAllowed)
+}
+
+// handleTargetItemAction 对单个资产执行状态修改或删除
+func (s *TargetServer) handleTargetItemAction(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	domain := strings.TrimPrefix(r.URL.Path, "/api/targets/")
+	domain = strings.TrimSpace(domain)
+
+	if domain == "" {
+		http.Error(w, `{"code": 400, "error": "Missing domain parameter"}`, http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPatch:
+		var payload struct {
+			IsActive bool `json:"is_active"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 400, "error": err.Error()})
+			return
+		}
+
+		if err := s.service.UpdateTargetActive(domain, payload.IsActive); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 500, "error": err.Error()})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "Updated successfully"})
+
+	case http.MethodDelete:
+		if err := s.service.DeleteTarget(domain); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 500, "error": err.Error()})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "Deleted successfully"})
+
+	default:
+		http.Error(w, `{"code": 405, "error": "Method Not Allowed"}`, http.StatusMethodNotAllowed)
+	}
+}
+
+// handleASNs 查询 ASN 登记表
+func (s *TargetServer) handleASNs(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	q := r.URL.Query()
+
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit <= 0 {
+		limit = 50
+	}
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	minPriority, _ := strconv.Atoi(q.Get("min_priority"))
+	status := q.Get("status")
+
+	list, err := s.service.ListASNs(status, minPriority, limit, offset)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 500, "error": err.Error()})
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"code": 200,
+		"data": list,
 	})
 }
 
@@ -122,7 +360,7 @@ func (s *TargetServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 func parseProvisionRequest(r *http.Request) service.ProvisionRequest {
 	q := r.URL.Query()
 
-	limit := 5
+	limit := 10
 	if val := q.Get("limit"); val != "" {
 		if l, err := strconv.Atoi(val); err == nil && l > 0 {
 			limit = l
@@ -243,3 +481,4 @@ func (s *TargetServer) handleTargetsJSON(w http.ResponseWriter, r *http.Request)
 		},
 	})
 }
+

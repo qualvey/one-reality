@@ -489,3 +489,27 @@ type CacheStats struct {
 	CDNCacheSize    int     `json:"cdn_cache_size"`
 	HitRate         float64 `json:"hit_rate"`
 }
+
+// TargetQueryOptions 资产查询过滤条件
+type TargetQueryOptions struct {
+	Keyword  string `json:"keyword"`
+	ASN      string `json:"asn"`
+	Country  string `json:"country"`
+	MinStars int    `json:"min_stars"`
+	IsActive *bool  `json:"is_active"`
+	SortBy   string `json:"sort_by"` // "stars_desc", "handshake_asc", "recent_desc"
+	Page     int    `json:"page"`
+	PageSize int    `json:"page_size"`
+}
+
+// TargetStats 资产多维汇总统计
+type TargetStats struct {
+	TotalTargets    int            `json:"total_targets"`
+	ActiveTargets   int            `json:"active_targets"`
+	FiveStarTargets int            `json:"five_star_targets"`
+	TotalASNs       int            `json:"total_asns"`
+	AvgHandshakeMS  int64          `json:"avg_handshake_ms"`
+	CountryCounts   map[string]int `json:"country_counts"`
+	StarCounts      map[int]int    `json:"star_counts"`
+}
+

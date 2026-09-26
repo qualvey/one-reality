@@ -101,20 +101,20 @@ func TestServer_CORS(t *testing.T) {
 	}
 }
 
-func TestServer_TargetsJSON(t *testing.T) {
+func TestServer_TargetsSmart(t *testing.T) {
 	ts, store := setupTestServer(t)
 	defer store.Close()
 
-	// 1. 缺失 IP 参数
-	req := httptest.NewRequest(http.MethodGet, "/api/targets", nil)
+	// 1. 缺失 IP 参数应返回 400
+	req := httptest.NewRequest(http.MethodGet, "/api/targets/smart", nil)
 	w := httptest.NewRecorder()
 	ts.httpServer.Handler.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for missing ip, got %d", w.Code)
 	}
 
-	// 2. 正常查询缓存命中
-	req = httptest.NewRequest(http.MethodGet, "/api/targets?ip=1.2.3.4&country=US", nil)
+	// 2. 正常智能推荐 (命中同 ASN，权重置顶)
+	req = httptest.NewRequest(http.MethodGet, "/api/targets/smart?ip=1.2.3.4&country=US", nil)
 	w = httptest.NewRecorder()
 	ts.httpServer.Handler.ServeHTTP(w, req)
 
@@ -125,7 +125,8 @@ func TestServer_TargetsJSON(t *testing.T) {
 	var resp struct {
 		Code int `json:"code"`
 		Data struct {
-			Targets []service.TargetItem `json:"targets"`
+			Summary service.TargetSummaryInfo   `json:"summary"`
+			Targets []service.RankedTargetItem  `json:"targets"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
@@ -134,10 +135,87 @@ func TestServer_TargetsJSON(t *testing.T) {
 	if resp.Code != 200 || len(resp.Data.Targets) == 0 {
 		t.Fatalf("expected at least 1 target, got %v", resp)
 	}
-	if resp.Data.Targets[0].Domain != "target-a.test.com" {
-		t.Errorf("expected domain target-a.test.com, got %s", resp.Data.Targets[0].Domain)
+
+	firstTarget := resp.Data.Targets[0]
+	if firstTarget.Domain != "target-a.test.com" {
+		t.Errorf("expected domain target-a.test.com, got %s", firstTarget.Domain)
+	}
+	if firstTarget.MatchLevel != "same_asn" {
+		t.Errorf("expected match_level same_asn for IP 1.2.3.4, got %s", firstTarget.MatchLevel)
+	}
+	if firstTarget.Score < 1000 {
+		t.Errorf("expected score >= 1000 for same ASN, got %d", firstTarget.Score)
 	}
 }
+
+func TestServer_TargetsManage(t *testing.T) {
+	ts, store := setupTestServer(t)
+	defer store.Close()
+
+	// 1. 查询列表 (无需 IP 参数)
+	req := httptest.NewRequest(http.MethodGet, "/api/targets?page=1&page_size=10", nil)
+	w := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp struct {
+		Code int `json:"code"`
+		Data struct {
+			Items []*types.TargetRecord `json:"items"`
+			Total int                   `json:"total"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse json: %v", err)
+	}
+	if resp.Data.Total != 1 || len(resp.Data.Items) == 0 {
+		t.Fatalf("expected 1 item, got %d", resp.Data.Total)
+	}
+
+	// 2. 更新状态 PATCH
+	patchBody := strings.NewReader(`{"is_active": false}`)
+	patchReq := httptest.NewRequest(http.MethodPatch, "/api/targets/target-a.test.com", patchBody)
+	patchW := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(patchW, patchReq)
+	if patchW.Code != http.StatusOK {
+		t.Fatalf("expected 200 for patch, got %d", patchW.Code)
+	}
+
+	// 3. 删除资产 DELETE
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/targets/target-a.test.com", nil)
+	delW := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(delW, delReq)
+	if delW.Code != http.StatusOK {
+		t.Fatalf("expected 200 for delete, got %d", delW.Code)
+	}
+}
+
+func TestServer_Stats(t *testing.T) {
+	ts, store := setupTestServer(t)
+	defer store.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	w := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp struct {
+		Code int               `json:"code"`
+		Data types.TargetStats `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode stats: %v", err)
+	}
+	if resp.Data.TotalTargets != 1 {
+		t.Errorf("expected 1 target, got %d", resp.Data.TotalTargets)
+	}
+}
+
 
 func TestServer_TargetsStream(t *testing.T) {
 	ts, store := setupTestServer(t)
