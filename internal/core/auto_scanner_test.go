@@ -63,3 +63,48 @@ func TestAutoScanner_InitialResultsLoaded(t *testing.T) {
 		t.Errorf("domainSet missing initial results")
 	}
 }
+
+func TestAutoScanner_CandidateRejectedEvent(t *testing.T) {
+	rejectedReported := false
+	var reportedReason string
+
+	events := AutoScanEvents{
+		OnCandidateRejected: func(ip string, domain string, reason string) {
+			rejectedReported = true
+			reportedReason = reason
+		},
+	}
+
+	filter := types.RealityFilterConfig{
+		ExcludeSuffixes: []string{".top"},
+	}
+
+	scanner := NewAutoScanner(nil, nil, nil, AutoScanConfig{
+		CIDRs:   []string{"127.0.0.1"},
+		Filter:  filter,
+		Verbose: true,
+	}, events)
+
+	// 模拟候选结果进入过滤阶段
+	res := &types.DetectionResult{
+		Domain:   "bad-node.top",
+		Suitable: true,
+	}
+
+	passed, reason := FilterTarget(res, scanner.config.Filter)
+	if passed {
+		t.Fatalf("expected target with .top to be rejected")
+	}
+
+	if scanner.events.OnCandidateRejected != nil {
+		scanner.events.OnCandidateRejected("1.2.3.4", res.Domain, reason)
+	}
+
+	if !rejectedReported {
+		t.Errorf("expected OnCandidateRejected to be called")
+	}
+	if reportedReason == "" {
+		t.Errorf("expected non-empty rejection reason")
+	}
+}
+

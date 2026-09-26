@@ -349,6 +349,7 @@ type RealityFilterConfig struct {
 	NoResume             bool     `yaml:"no_resume"`              // 是否禁用断点续传 (默认 false: 自动断点续传)
 	ScanThreads          int      `yaml:"scan_threads"`           // 网络扫描并发协程数 (默认 200)
 	ScanTimeout          int      `yaml:"scan_timeout"`           // 单 IP 探测超时秒数 (默认 3)
+	Verbose              bool     `yaml:"verbose"`                // 详细输出模式 (输出每一条扫描记录到 stdout)
 
 	// --- 阶段二/进阶偏好过滤 ---
 	RequireNoCDN         bool     `yaml:"require_no_cdn"`         // 是否强制排除 CDN

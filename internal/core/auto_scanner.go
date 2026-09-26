@@ -31,12 +31,17 @@ type AutoScanConfig struct {
 	ASN            string
 	Country        string
 	InitialResults []*types.DetectionResult
+	Verbose        bool
 }
 
 // AutoScanEvents 外部订阅扫描过程的事件回调集合，完全解耦 UI 与进度渲染
 type AutoScanEvents struct {
 	// OnIPScanned 扫描到 IP 时的增量回调 (增量数, 当前网段, 当前扫描IP, 网段索引1-based, 总网段数)
 	OnIPScanned func(delta int, currentCIDR string, currentIP string, currentIdx int, totalCIDRs int)
+	// OnScanRecord 每次单个 IP 探活完成时回调（无论成功或失败）
+	OnScanRecord func(probe *scanner.ProbeResult)
+	// OnCandidateRejected 候选域名未能通过阶段一基线或阶段二过滤时回调
+	OnCandidateRejected func(ip string, domain string, reason string)
 	// OnTargetFound 发现并判定为符合条件的目标时回调
 	OnTargetFound func(res *types.DetectionResult, count int, ip string, handshakeMs int64, statusCode int)
 	// OnLimitHit 达到指定目标数量限制时回调
@@ -284,7 +289,7 @@ func (s *AutoScanner) processCandidate(ctx context.Context, scanRes *scanner.Sca
 		}
 
 		// 阶段二：进阶偏好过滤
-		passed, _ := FilterTarget(res, s.config.Filter)
+		passed, rejectReason := FilterTarget(res, s.config.Filter)
 		if passed {
 			s.mu.Lock()
 			s.suitableResults = append(s.suitableResults, res)
@@ -311,7 +316,19 @@ func (s *AutoScanner) processCandidate(ctx context.Context, scanRes *scanner.Sca
 				}
 				cancel()
 			}
+		} else if s.events.OnCandidateRejected != nil {
+			s.events.OnCandidateRejected(scanRes.IP, d, rejectReason)
 		}
+	} else if s.events.OnCandidateRejected != nil {
+		reason := "未通过硬性技术基线"
+		if res != nil && res.Error != nil {
+			reason = res.Error.Error()
+		} else if err != nil {
+			reason = err.Error()
+		} else if res != nil && res.Summary != nil && len(res.Summary.Recommendations) > 0 {
+			reason = strings.Join(res.Summary.Recommendations, "; ")
+		}
+		s.events.OnCandidateRejected(scanRes.IP, d, reason)
 	}
 }
 
@@ -391,7 +408,7 @@ func (s *AutoScanner) scanSingleCIDR(
 		timeout = 3
 	}
 
-	s.scannerEngine.ScanCIDRStream(
+	s.scannerEngine.ScanCIDRStreamWithProbe(
 		ctx,
 		cidr,
 		startIP,
@@ -422,6 +439,11 @@ func (s *AutoScanner) scanSingleCIDR(
 				s.recordCheckpointSafe(s.taskKey, currentCIDR, ipToSave, false)
 			}
 			lastIPMu.Unlock()
+		},
+		func(probe *scanner.ProbeResult) {
+			if s.events.OnScanRecord != nil {
+				s.events.OnScanRecord(probe)
+			}
 		},
 	)
 

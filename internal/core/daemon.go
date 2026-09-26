@@ -29,6 +29,7 @@ type DaemonConfig struct {
 	SingleASN         int    // 如果 > 0 则仅持续扫描此特定 ASN
 	CountryFilter     string // 可选指定国家过滤 (如 US, HK, JP, DE)
 	Continuous        bool   // 完成一整轮后是否自动重置 pending 开启下一轮 (默认 true)
+	Verbose           bool   // 详细模式 (输出每一条扫描记录到 stdout)
 }
 
 // DefaultDaemonConfig 默认守护进程配置
@@ -49,11 +50,13 @@ func DefaultDaemonConfig() DaemonConfig {
 
 // DaemonEvents 守护调度引擎生命周期事件回调
 type DaemonEvents struct {
-	OnLog         func(msg string)
-	OnASNStart    func(asn *types.ASNRecord, cidrCount int, totalIPs int64)
-	OnASNComplete func(asn *types.ASNRecord, foundTargets int, duration time.Duration)
-	OnTargetFound func(target *types.TargetRecord)
-	OnError       func(err error)
+	OnLog               func(msg string)
+	OnASNStart          func(asn *types.ASNRecord, cidrCount int, totalIPs int64)
+	OnASNComplete       func(asn *types.ASNRecord, foundTargets int, duration time.Duration)
+	OnTargetFound       func(target *types.TargetRecord)
+	OnScanRecord        func(probe *scanner.ProbeResult)
+	OnCandidateRejected func(ip string, domain string, reason string)
+	OnError             func(err error)
 }
 
 // DaemonScheduler 全网 24小时无人值守 ASN 扫描调度中枢
@@ -272,11 +275,22 @@ func (d *DaemonScheduler) processASN(ctx context.Context, rec *types.ASNRecord) 
 		Filter:     filterCfg,
 		ASN:        asnStr,
 		Country:    rec.Country,
+		Verbose:    d.config.Verbose,
 	}
 
 	autoEvents := AutoScanEvents{
 		OnLog: func(msg string) {
 			d.log("[%s] %s", asnStr, msg)
+		},
+		OnScanRecord: func(probe *scanner.ProbeResult) {
+			if d.events.OnScanRecord != nil {
+				d.events.OnScanRecord(probe)
+			}
+		},
+		OnCandidateRejected: func(ip string, domain string, reason string) {
+			if d.events.OnCandidateRejected != nil {
+				d.events.OnCandidateRejected(ip, domain, reason)
+			}
 		},
 		OnTargetFound: func(res *types.DetectionResult, count int, ip string, handshakeMs int64, statusCode int) {
 			stars := CalculateTargetStars(res)
