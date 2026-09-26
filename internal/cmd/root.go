@@ -90,6 +90,8 @@ func (r *RootCmd) Execute() {
 		r.executeServe(os.Args[2:])
 	case "daemon":
 		r.executeDaemon(os.Args[2:])
+	case "patrol":
+		r.executePatrol(os.Args[2:])
 	case "get":
 		r.executeGet(os.Args[2:])
 	case "asn":
@@ -137,7 +139,7 @@ func (r *RootCmd) Execute() {
 	default:
 		ui.PrintErrorWithDetails(
 			fmt.Sprintf("错误：未知命令 '%s'", os.Args[1]),
-			"可用命令: get, serve, daemon, auto, asn, pipe, check, batch, version",
+			"可用命令: get, serve, daemon, patrol, auto, asn, pipe, check, batch, version",
 		)
 		os.Exit(1)
 	}
