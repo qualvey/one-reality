@@ -85,23 +85,36 @@ func (r *RootCmd) Execute() {
 		os.Exit(1)
 	}
 
-	switch os.Args[1] {
+	args := os.Args[1:]
+	globalVerbose := false
+	if len(args) > 1 && (args[0] == "-v" || args[0] == "--verbose") {
+		globalVerbose = true
+		args = args[1:]
+	}
+
+	subCmd := args[0]
+	subArgs := args[1:]
+	if globalVerbose {
+		subArgs = append(subArgs, "-v")
+	}
+
+	switch subCmd {
 	case "serve":
-		r.executeServe(os.Args[2:])
+		r.executeServe(subArgs)
 	case "daemon":
-		r.executeDaemon(os.Args[2:])
+		r.executeDaemon(subArgs)
 	case "patrol":
-		r.executePatrol(os.Args[2:])
+		r.executePatrol(subArgs)
 	case "get":
-		r.executeGet(os.Args[2:])
+		r.executeGet(subArgs)
 	case "asn":
-		executeASN(os.Args[2:])
+		executeASN(subArgs)
 	case "pipe":
 		r.executePipe()
 	case "auto":
-		r.parseAndExecuteAuto(os.Args[2:])
+		r.parseAndExecuteAuto(subArgs)
 	case "check":
-		if len(os.Args) < 3 {
+		if len(subArgs) < 1 {
 			ui.PrintErrorWithDetails(
 				"错误：缺少域名参数",
 				"用法: reality-checker check <domain>",
@@ -109,9 +122,9 @@ func (r *RootCmd) Execute() {
 			)
 			os.Exit(1)
 		}
-		r.executeCheck(os.Args[2])
+		r.executeCheck(subArgs[0])
 	case "batch":
-		if len(os.Args) < 3 {
+		if len(subArgs) < 1 {
 			ui.PrintErrorWithDetails(
 				"错误：缺少域名参数",
 				"用法: reality-checker batch <domain1> <domain2> <domain3> ...",
@@ -119,8 +132,7 @@ func (r *RootCmd) Execute() {
 			)
 			os.Exit(1)
 		}
-		// 将所有参数（除了命令名）合并为空格分隔的字符串
-		domainsStr := strings.Join(os.Args[2:], " ")
+		domainsStr := strings.Join(subArgs, " ")
 		r.executeBatch(domainsStr)
 	case "csv":
 		ui.PrintErrorWithDetails(
@@ -138,7 +150,7 @@ func (r *RootCmd) Execute() {
 		ui.PrintUsage()
 	default:
 		ui.PrintErrorWithDetails(
-			fmt.Sprintf("错误：未知命令 '%s'", os.Args[1]),
+			fmt.Sprintf("错误：未知命令 '%s'", subCmd),
 			"可用命令: get, serve, daemon, patrol, auto, asn, pipe, check, batch, version",
 		)
 		os.Exit(1)

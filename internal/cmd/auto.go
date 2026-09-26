@@ -47,6 +47,7 @@ type AutoScanCLIOptions struct {
 	ASN            string
 	Country        string
 	InitialResults []*types.DetectionResult
+	Verbose        bool
 }
 
 // executeAuto 组装 CLI 终端进度条与事件回调，调用 core.AutoScanner 执行扫描
@@ -79,25 +80,31 @@ func (r *RootCmd) executeAuto(opts AutoScanCLIOptions) {
 	remainingIPCount := core.CalculateRemainingIPs(opts.CIDRs, checkpointsMap)
 	alreadyScannedIPCount := grandTotalIPCount - remainingIPCount
 
-	bar := progressbar.NewOptions64(grandTotalIPCount,
-		progressbar.OptionEnableColorCodes(true),
-		progressbar.OptionShowCount(),
-		progressbar.OptionSetWidth(25),
-		progressbar.OptionSetDescription("[cyan][扫描中...][reset]"),
-		progressbar.OptionUseANSICodes(true),
-		progressbar.OptionSetTheme(progressbar.Theme{
-			Saucer:        "[green]=[reset]",
-			SaucerHead:    "[green]>[reset]",
-			SaucerPadding: " ",
-			BarStart:      "[",
-			BarEnd:        "]",
-		}),
-	)
-	if alreadyScannedIPCount > 0 {
-		_ = bar.Set64(alreadyScannedIPCount)
+	var bar *progressbar.ProgressBar
+	if !opts.Verbose {
+		bar = progressbar.NewOptions64(grandTotalIPCount,
+			progressbar.OptionEnableColorCodes(true),
+			progressbar.OptionShowCount(),
+			progressbar.OptionSetWidth(25),
+			progressbar.OptionSetDescription("[cyan][扫描中...][reset]"),
+			progressbar.OptionUseANSICodes(true),
+			progressbar.OptionSetTheme(progressbar.Theme{
+				Saucer:        "[green]=[reset]",
+				SaucerHead:    "[green]>[reset]",
+				SaucerPadding: " ",
+				BarStart:      "[",
+				BarEnd:        "]",
+			}),
+		)
+		if alreadyScannedIPCount > 0 {
+			_ = bar.Set64(alreadyScannedIPCount)
+		}
 	}
 
 	ui.PrintTimestampedMessage("开启内嵌自动化扫描与检测模式 (Native Engine)...")
+	if opts.Verbose {
+		ui.PrintTimestampedMessage("模式: 详细记录模式 (-v / --verbose)，将实时输出每一条 IP 探测与判定记录到标准输出")
+	}
 	if opts.CheckAll {
 		ui.PrintTimestampedMessage("模式: 全量摸底扫描 (--check-all)，将收集并存档所有合规资产入库")
 	}
@@ -124,27 +131,61 @@ func (r *RootCmd) executeAuto(opts AutoScanCLIOptions) {
 
 	events := core.AutoScanEvents{
 		OnIPScanned: func(delta int, currentCIDR string, currentIP string, currentIdx int, totalCIDRs int) {
-			_ = bar.Add(delta)
-			updateMu.Lock()
-			if time.Since(lastUpdate) > 150*time.Millisecond {
-				lastUpdate = time.Now()
-				bar.Describe(fmt.Sprintf("[cyan][网段 %d/%d: %s | 探测: %s][reset]", currentIdx, totalCIDRs, currentCIDR, currentIP))
+			if bar != nil {
+				_ = bar.Add(delta)
+				updateMu.Lock()
+				if time.Since(lastUpdate) > 150*time.Millisecond {
+					lastUpdate = time.Now()
+					bar.Describe(fmt.Sprintf("[cyan][网段 %d/%d: %s | 探测: %s][reset]", currentIdx, totalCIDRs, currentCIDR, currentIP))
+				}
+				updateMu.Unlock()
 			}
-			updateMu.Unlock()
+		},
+		OnScanRecord: func(probe *scanner.ProbeResult) {
+			if !opts.Verbose || probe == nil {
+				return
+			}
+			if !probe.Success {
+				ui.PrintTimestampedMessage("[-] %-15s:%-4d | 探活失败: %s", probe.IP, probe.Port, probe.FailureReason)
+			} else {
+				ui.PrintTimestampedMessage("[+] %-15s:%-4d | 握手成功: 提取域名 %s (ALPN: %s, 套件: %s)",
+					probe.IP, probe.Port, probe.Result.CertDomain, probe.Result.ALPN, probe.Result.Curve)
+			}
+		},
+		OnCandidateRejected: func(ip string, domain string, reason string) {
+			if !opts.Verbose {
+				return
+			}
+			ui.PrintTimestampedMessage("[~] %-15s      | 域名未入选: %-25s | 原因: %s", ip, domain, reason)
 		},
 		OnTargetFound: func(res *types.DetectionResult, count int, ip string, handshakeMs int64, statusCode int) {
-			timestamp := time.Now().Format("15:04:05")
-			logger.AboveBar(bar, "[%s]  [扫描到第%d个符合条件的目标] %-35s (IP: %s, 握手: %dms, 页面: %d)\n",
-				timestamp, count, res.Domain, ip, handshakeMs, statusCode)
+			if bar != nil {
+				timestamp := time.Now().Format("15:04:05")
+				logger.AboveBar(bar, "[%s]  [扫描到第%d个符合条件的目标] %-35s (IP: %s, 握手: %dms, 页面: %d)\n",
+					timestamp, count, res.Domain, ip, handshakeMs, statusCode)
+			} else {
+				stars := core.CalculateTargetStars(res)
+				starStr := strings.Repeat("★", stars) + strings.Repeat("☆", 5-stars)
+				ui.PrintTimestampedMessage("🎯 [%-15s:%-4d] 命中优质目标 [%d]: %-25s | 握手: %3dms | 状态: %3d | 推荐: %s",
+					ip, 443, count, res.Domain, handshakeMs, statusCode, starStr)
+			}
 		},
 		OnLimitHit: func(maxTargets int) {
 			ui.PrintTimestampedMessage("已达到设定的目标数量限制 (%d 个)，即刻刹车并停止扫描...", maxTargets)
 		},
 		OnCIDRScanStart: func(currentIdx int, totalCIDRs int, cidr string, resumeIP string) {
-			if resumeIP != "" {
-				logger.AboveBar(bar, "[%d/%d] 正在并发扫描网段: %s (从断点 IP: %s 继续)...", currentIdx, totalCIDRs, cidr, resumeIP)
+			if bar != nil {
+				if resumeIP != "" {
+					logger.AboveBar(bar, "[%d/%d] 正在并发扫描网段: %s (从断点 IP: %s 继续)...", currentIdx, totalCIDRs, cidr, resumeIP)
+				} else {
+					logger.AboveBar(bar, "[%d/%d] 正在并发扫描网段: %s ...", currentIdx, totalCIDRs, cidr)
+				}
 			} else {
-				logger.AboveBar(bar, "[%d/%d] 正在并发扫描网段: %s ...", currentIdx, totalCIDRs, cidr)
+				if resumeIP != "" {
+					ui.PrintTimestampedMessage("[%d/%d] 正在并发扫描网段: %s (从断点 IP: %s 继续)...", currentIdx, totalCIDRs, cidr, resumeIP)
+				} else {
+					ui.PrintTimestampedMessage("[%d/%d] 正在并发扫描网段: %s ...", currentIdx, totalCIDRs, cidr)
+				}
 			}
 		},
 		OnLog: func(msg string) {
@@ -164,6 +205,7 @@ func (r *RootCmd) executeAuto(opts AutoScanCLIOptions) {
 			ASN:            opts.ASN,
 			Country:        opts.Country,
 			InitialResults: opts.InitialResults,
+			Verbose:        opts.Verbose,
 		},
 		events,
 	)
@@ -407,6 +449,7 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 			"  --allow-hot          允许热门大站",
 			"  --min-cert-days DAYS 证书最低剩余天数 (默认 7 天)",
 			"  --min-stars STARS    最低推荐星级 1-5 (默认 3)",
+			"  -v / --verbose       详细模式，输出每一条被探测 IP 的扫描与判定记录到 stdout (关闭进度条)",
 			"示例:",
 			"  reality-checker auto 85.155.184.100 --limit 5",
 			"  reality-checker auto 85.155.184.100 --check-all --export all.json",
@@ -423,6 +466,7 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 	var exportFile string
 	checkAll := false
 	noCache := false
+	verbose := false
 	maxTargets := 5
 	filter := r.batchManager.GetConfig().RealityFilter
 
@@ -517,6 +561,9 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 		case "--ipv6-only", "-6":
 			filter.IPv6Only = true
 			filter.IPv4Only = false
+		case "-v", "--verbose":
+			verbose = true
+			filter.Verbose = true
 		case "--debug":
 			logger.Init("debug", "")
 		case "--log-level":
@@ -645,6 +692,7 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 		ASN:            asnStr,
 		Country:        countryStr,
 		InitialResults: cachedVerified,
+		Verbose:        verbose,
 	})
 }
 

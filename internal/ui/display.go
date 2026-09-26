@@ -24,7 +24,7 @@ func PrintUsage() {
 	fmt.Println("  reality-checker serve [--port 8881]     启动Headless REST/SSE服务 (供WebUI/面板调用)")
 	fmt.Println("  reality-checker daemon [--threads 500]  启动24小时全天候全网ASN自动化扫描守护进程")
 	fmt.Println("  reality-checker patrol [--daemon]       对本地库历史资产执行健康巡检复测与生命周期维护")
-	fmt.Println("  reality-checker auto <ip/cidr>          自动查ASN并并发扫描检测入库")
+	fmt.Println("  reality-checker auto <ip/cidr> [-v]     自动查ASN并并发扫描入库 (-v 输出每一条详细扫描记录)")
 	fmt.Println("  reality-checker asn <ASN> <国家>        查询ASN前缀并按国家过滤 (支持 --stats/--seed)")
 	fmt.Println("  reality-checker pipe                    从标准输入(Stdin)管道流式读取检测")
 	fmt.Println("  reality-checker check <domain>          检测单个域名")
