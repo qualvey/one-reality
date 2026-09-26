@@ -161,3 +161,183 @@ func TestTargetStore_Checkpoints(t *testing.T) {
 	}
 }
 
+func TestTargetStore_ASNRegistry(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "asn_registry.db")
+
+	store, err := NewTargetStore(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create TargetStore: %v", err)
+	}
+	defer store.Close()
+
+	// 1. 批量插入 ASN
+	asns := []*types.ASNRecord{
+		{
+			ASN:        13335,
+			Name:       "Cloudflare, Inc.",
+			Country:    "US",
+			TotalIPs:   1000000,
+			Priority:   100,
+			ScanStatus: "pending",
+		},
+		{
+			ASN:        16509,
+			Name:       "Amazon.com, Inc.",
+			Country:    "US",
+			TotalIPs:   5000000,
+			Priority:   90,
+			ScanStatus: "pending",
+		},
+		{
+			ASN:        24940,
+			Name:       "Hetzner Online GmbH",
+			Country:    "DE",
+			TotalIPs:   800000,
+			Priority:   80,
+			ScanStatus: "pending",
+		},
+	}
+
+	if err := store.UpsertASNRecords(asns); err != nil {
+		t.Fatalf("UpsertASNRecords failed: %v", err)
+	}
+
+	count, err := store.CountASNs("")
+	if err != nil || count != 3 {
+		t.Fatalf("expected 3 ASNs, got %d (err: %v)", count, err)
+	}
+
+	// 2. 取出最高优先级的 Pending ASN (应为 AS13335)
+	nextASN, err := store.GetNextPendingASN(50)
+	if err != nil || nextASN == nil {
+		t.Fatalf("GetNextPendingASN failed: %v", err)
+	}
+	if nextASN.ASN != 13335 {
+		t.Errorf("expected next ASN to be 13335, got %d", nextASN.ASN)
+	}
+
+	// 3. 更新为 scanning
+	if err := store.UpdateASNStatus(13335, "scanning", 0); err != nil {
+		t.Fatalf("UpdateASNStatus failed: %v", err)
+	}
+
+	// 4. 再取下一个 pending ASN (应为 AS16509)
+	nextASN2, err := store.GetNextPendingASN(50)
+	if err != nil || nextASN2 == nil {
+		t.Fatalf("GetNextPendingASN failed: %v", err)
+	}
+	if nextASN2.ASN != 16509 {
+		t.Errorf("expected next ASN to be 16509, got %d", nextASN2.ASN)
+	}
+
+	// 5. 将 13335 标记完成，增加命中资产数
+	if err := store.UpdateASNStatus(13335, "completed", 15); err != nil {
+		t.Fatalf("UpdateASNStatus completed failed: %v", err)
+	}
+
+	cf, err := store.GetASN(13335)
+	if err != nil || cf == nil {
+		t.Fatalf("GetASN failed: %v", err)
+	}
+	if cf.ScanStatus != "completed" || cf.SuccessTargetCount != 15 || cf.LastScannedAt.IsZero() {
+		t.Errorf("unexpected cf record: %#v", cf)
+	}
+
+	// 6. 重置 scanning 状态
+	_ = store.UpdateASNStatus(16509, "scanning", 0)
+	if err := store.ResetScanningASNs(); err != nil {
+		t.Fatalf("ResetScanningASNs failed: %v", err)
+	}
+	amz, _ := store.GetASN(16509)
+	if amz.ScanStatus != "pending" {
+		t.Errorf("expected 16509 status to be reset to pending, got %s", amz.ScanStatus)
+	}
+
+	// 7. 列表查询
+	list, err := store.ListASNs("pending", 0, 10, 0)
+	if err != nil || len(list) != 2 {
+		t.Errorf("expected 2 pending ASNs, got %d", len(list))
+	}
+}
+
+func TestTargetStore_PatrolAndLifecycle(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "patrol.db")
+
+	store, err := NewTargetStore(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create TargetStore: %v", err)
+	}
+	defer store.Close()
+
+	rec := &types.TargetRecord{
+		Domain:        "patrol-test.com",
+		ASN:           "AS13335",
+		Country:       "US",
+		IP:            "1.1.1.1",
+		Port:          443,
+		HandshakeMS:   100,
+		CertDays:      90,
+		StatusCode:    200,
+		Stars:         5,
+		IsActive:      true,
+		FirstSeenAt:   time.Now().Add(-24 * time.Hour),
+		LastCheckedAt: time.Now().Add(-25 * time.Hour),
+	}
+	if err := store.UpsertTarget(rec); err != nil {
+		t.Fatalf("UpsertTarget failed: %v", err)
+	}
+
+	// 1. 查询待巡检列表
+	toPatrol, err := store.GetTargetsForPatrol(4, 24*time.Hour, 10)
+	if err != nil || len(toPatrol) != 1 {
+		t.Fatalf("expected 1 target for patrol, got %d (err: %v)", len(toPatrol), err)
+	}
+
+	// 2. 模拟巡检成功
+	err = store.UpdateTargetPatrolResult("patrol-test.com", "1.1.1.1", 80, 89, true, "")
+	if err != nil {
+		t.Fatalf("UpdateTargetPatrolResult success failed: %v", err)
+	}
+
+	list, _ := store.GetAllTargets()
+	if len(list) != 1 || list[0].CheckFailCount != 0 || !list[0].IsActive {
+		t.Errorf("unexpected target state after success: %#v", list[0])
+	}
+	// 加权延迟: (100 + 80) / 2 = 90
+	if list[0].HandshakeMS != 90 {
+		t.Errorf("expected smoothed handshake_ms 90, got %d", list[0].HandshakeMS)
+	}
+
+	// 3. 连续巡检失败 3 次触发下架与降星
+	for i := 1; i <= 3; i++ {
+		_ = store.UpdateTargetPatrolResult("patrol-test.com", "1.1.1.1", 0, 0, false, "connection refused")
+	}
+
+	list, _ = store.GetAllTargets()
+	if list[0].CheckFailCount != 3 {
+		t.Errorf("expected fail count 3, got %d", list[0].CheckFailCount)
+	}
+	if list[0].IsActive {
+		t.Errorf("expected target to be deactivated after 3 failures")
+	}
+	// 5 星降了 3 次变成 2 星
+	if list[0].Stars != 2 {
+		t.Errorf("expected 2 stars, got %d", list[0].Stars)
+	}
+
+	// 4. 清理巡检日志
+	time.Sleep(20 * time.Millisecond)
+	deletedLogs, err := store.CleanExpiredPatrolLogs(0)
+	if err != nil || deletedLogs < 4 {
+		t.Errorf("expected at least 4 deleted logs, got %d (err: %v)", deletedLogs, err)
+	}
+
+	// 5. 执行 WAL Checkpoint
+	if err := store.RunWALCheckpoint(); err != nil {
+		t.Errorf("RunWALCheckpoint failed: %v", err)
+	}
+}
+
+

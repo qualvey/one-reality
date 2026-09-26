@@ -371,6 +371,7 @@ type TargetRecord struct {
 	Country         string    `json:"country"`
 	Domain          string    `json:"domain"`
 	IP              string    `json:"ip"`
+	Port            int       `json:"port"`
 	HandshakeMS     int64     `json:"handshake_ms"`
 	CertDays        int       `json:"cert_days"`
 	StatusCode      int       `json:"status_code"`
@@ -380,8 +381,36 @@ type TargetRecord struct {
 	IsDefaultPage   bool      `json:"is_default_page"`
 	DefaultPageType string    `json:"default_page_type,omitempty"`
 	Stars           int       `json:"stars"`
+	IsActive        bool      `json:"is_active"`
+	CheckFailCount  int       `json:"check_fail_count"`
+	FirstSeenAt     time.Time `json:"first_seen_at"`
 	LastCheckedAt   time.Time `json:"last_checked_at"`
 }
+
+// ASNRecord 自治系统任务与元数据记录
+type ASNRecord struct {
+	ASN                int       `json:"asn"`
+	Name               string    `json:"name"`
+	Country            string    `json:"country"`
+	TotalIPs           int       `json:"total_ips"`
+	Priority           int       `json:"priority"`
+	ScanStatus         string    `json:"scan_status"` // pending, scanning, completed
+	LastScannedAt      time.Time `json:"last_scanned_at,omitempty"`
+	SuccessTargetCount int       `json:"success_target_count"`
+	UpdatedAt          time.Time `json:"updated_at"`
+}
+
+// PatrolLogRecord 存量资产健康巡检日志记录
+type PatrolLogRecord struct {
+	ID          int64     `json:"id"`
+	Domain      string    `json:"domain"`
+	IP          string    `json:"ip"`
+	HandshakeMS int64     `json:"handshake_ms"`
+	IsSuccess   bool      `json:"is_success"`
+	ErrorMsg    string    `json:"error_msg,omitempty"`
+	CheckedAt   time.Time `json:"checked_at"`
+}
+
 
 // CandidatePool 候选资产池
 type CandidatePool struct {
