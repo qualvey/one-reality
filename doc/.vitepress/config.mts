@@ -55,6 +55,11 @@ export default withMermaid(
         copyright: 'Copyright © 2026 RealityChecker Team'
       }
     },
+    vite: {
+      optimizeDeps: {
+        include: ['dayjs', 'mermaid', '@braintree/sanitize-url']
+      }
+    },
     mermaid: {
       theme: 'default'
     }
