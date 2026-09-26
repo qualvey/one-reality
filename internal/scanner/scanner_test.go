@@ -1,8 +1,10 @@
 package scanner
 
 import (
+	"context"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"net"
 	"testing"
 )
 
@@ -68,3 +70,28 @@ func TestExtractCertDomain(t *testing.T) {
 		})
 	}
 }
+
+func TestScanTLSProbe_ClosedPort(t *testing.T) {
+	s := NewScanner()
+	defer s.Close()
+
+	host := Host{
+		IP:   net.ParseIP("127.0.0.1"),
+		Type: HostTypeIP,
+	}
+
+	res, probe := s.ScanTLSProbe(context.Background(), host, 65432, 1, false)
+	if res != nil {
+		t.Errorf("expected nil ScanResult on closed port, got %v", res)
+	}
+	if probe == nil {
+		t.Fatalf("expected non-nil ProbeResult")
+	}
+	if probe.Success {
+		t.Errorf("expected probe.Success to be false")
+	}
+	if probe.FailureReason == "" {
+		t.Errorf("expected non-empty probe.FailureReason")
+	}
+}
+

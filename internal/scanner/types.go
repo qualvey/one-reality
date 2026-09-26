@@ -31,3 +31,14 @@ type ScanResult struct {
 	CertIssuer    string
 	GeoCode       string
 }
+
+// ProbeResult 单次网络与 TLS 探活详细记录
+type ProbeResult struct {
+	IP            string
+	Port          int
+	Success       bool
+	Result        *ScanResult
+	Error         error
+	FailureReason string
+}
+

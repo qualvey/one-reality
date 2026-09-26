@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"net"
 	"os"
 	"strconv"
@@ -118,7 +119,12 @@ func isTransientNetError(err error) bool {
 		strings.Contains(s, "eof")
 }
 
-func (s *Scanner) scanTLSSingle(ctx context.Context, host Host, port int, timeout int) (*ScanResult, bool) {
+func (s *Scanner) scanTLSSingleWithProbe(ctx context.Context, host Host, port int, timeout int) (*ScanResult, bool, *ProbeResult) {
+	probe := &ProbeResult{
+		IP:   host.IP.String(),
+		Port: port,
+	}
+
 	hostPort := net.JoinHostPort(host.IP.String(), strconv.Itoa(port))
 	dialer := &net.Dialer{
 		Timeout: time.Duration(timeout) * time.Second,
@@ -134,12 +140,16 @@ func (s *Scanner) scanTLSSingle(ctx context.Context, host Host, port int, timeou
 			break
 		}
 		if ctx.Err() != nil {
-			return nil, false
+			probe.Error = ctx.Err()
+			probe.FailureReason = "扫描已取消"
+			return nil, false, probe
 		}
 		if isLocalResourceExhaustion(err) {
 			select {
 			case <-ctx.Done():
-				return nil, false
+				probe.Error = ctx.Err()
+				probe.FailureReason = "扫描已取消"
+				return nil, false, probe
 			case <-time.After(time.Duration(40*(attempt+1)) * time.Millisecond):
 				continue
 			}
@@ -148,7 +158,22 @@ func (s *Scanner) scanTLSSingle(ctx context.Context, host Host, port int, timeou
 	}
 
 	if err != nil || conn == nil {
-		return nil, isTransientNetError(err)
+		probe.Error = err
+		if err != nil {
+			errStr := strings.ToLower(err.Error())
+			if strings.Contains(errStr, "timeout") || strings.Contains(errStr, "deadline") {
+				probe.FailureReason = "连接超时"
+			} else if strings.Contains(errStr, "refused") {
+				probe.FailureReason = "端口未开放 (连接被拒绝)"
+			} else if strings.Contains(errStr, "no route") || strings.Contains(errStr, "unreachable") {
+				probe.FailureReason = "网络不可达"
+			} else {
+				probe.FailureReason = "TCP连接失败: " + err.Error()
+			}
+		} else {
+			probe.FailureReason = "TCP连接失败"
+		}
+		return nil, isTransientNetError(err), probe
 	}
 
 	// 核心修复：开启 SetLinger(0) 主动发送 RST 关闭连接，让操作系统内核立即回收端口，根除 TIME_WAIT 端口耗尽
@@ -172,23 +197,28 @@ func (s *Scanner) scanTLSSingle(ctx context.Context, host Host, port int, timeou
 
 	c := tls.Client(conn, tlsCfg)
 	if err := c.HandshakeContext(ctx); err != nil {
-		return nil, isTransientNetError(err)
+		probe.Error = err
+		probe.FailureReason = "TLS握手失败: " + err.Error()
+		return nil, isTransientNetError(err), probe
 	}
 
 	state := c.ConnectionState()
 	if len(state.PeerCertificates) == 0 {
-		return nil, false
+		probe.FailureReason = "服务端未提供有效TLS证书"
+		return nil, false, probe
 	}
 
 	leaf := state.PeerCertificates[0]
 	domain := ExtractCertDomain(leaf)
 	if len(domain) == 0 {
-		return nil, false
+		probe.FailureReason = "证书未包含有效域名 (SAN/CN为空或通配符)"
+		return nil, false, probe
 	}
 
 	alpn := state.NegotiatedProtocol
 	if state.Version != tls.VersionTLS13 || alpn != "h2" {
-		return nil, false
+		probe.FailureReason = fmt.Sprintf("非目标协议 (版本: %s, ALPN: %s)", tls.VersionName(state.Version), alpn)
+		return nil, false, probe
 	}
 
 	issuers := strings.Join(leaf.Issuer.Organization, " | ")
@@ -199,7 +229,7 @@ func (s *Scanner) scanTLSSingle(ctx context.Context, host Host, port int, timeou
 
 	geoCode := s.getGeo(host.IP)
 
-	return &ScanResult{
+	res := &ScanResult{
 		IP:            host.IP.String(),
 		Origin:        host.Origin,
 		TLSVersion:    tls.VersionName(state.Version),
@@ -211,41 +241,64 @@ func (s *Scanner) scanTLSSingle(ctx context.Context, host Host, port int, timeou
 		CertDomain:    domain,
 		CertIssuer:    issuers,
 		GeoCode:       geoCode,
-	}, false
+	}
+
+	probe.Success = true
+	probe.Result = res
+	return res, false, probe
 }
 
-// ScanTLS 检测单主机/IP 是否支持 TLS1.3 + h2 并提取域名
-func (s *Scanner) ScanTLS(ctx context.Context, host Host, port int, timeout int, enableIPv6 bool) *ScanResult {
+func (s *Scanner) scanTLSSingle(ctx context.Context, host Host, port int, timeout int) (*ScanResult, bool) {
+	res, retry, _ := s.scanTLSSingleWithProbe(ctx, host, port, timeout)
+	return res, retry
+}
+
+// ScanTLSProbe 检测单主机/IP 并返回详细探测记录
+func (s *Scanner) ScanTLSProbe(ctx context.Context, host Host, port int, timeout int, enableIPv6 bool) (*ScanResult, *ProbeResult) {
 	select {
 	case <-ctx.Done():
-		return nil
+		return nil, &ProbeResult{IP: host.IP.String(), Port: port, FailureReason: "扫描已取消"}
 	default:
 	}
 
 	if host.IP == nil {
 		ip, err := LookupIP(host.Origin, enableIPv6)
 		if err != nil {
-			return nil
+			return nil, &ProbeResult{IP: host.Origin, Port: port, Error: err, FailureReason: "DNS解析失败: " + err.Error()}
 		}
 		host.IP = ip
 	}
 
-	res, shouldRetry := s.scanTLSSingle(ctx, host, port, timeout)
+	res, shouldRetry, probe := s.scanTLSSingleWithProbe(ctx, host, port, timeout)
 	if res == nil && shouldRetry && ctx.Err() == nil {
 		select {
 		case <-ctx.Done():
-			return nil
+			return nil, probe
 		case <-time.After(30 * time.Millisecond):
 		}
-		res, _ = s.scanTLSSingle(ctx, host, port, timeout)
+		res, _, probe = s.scanTLSSingleWithProbe(ctx, host, port, timeout)
 	}
 
+	return res, probe
+}
+
+// ScanTLS 检测单主机/IP 是否支持 TLS1.3 + h2 并提取域名
+func (s *Scanner) ScanTLS(ctx context.Context, host Host, port int, timeout int, enableIPv6 bool) *ScanResult {
+	res, _ := s.ScanTLSProbe(ctx, host, port, timeout, enableIPv6)
 	return res
 }
 
 // ScanCIDRStream 执行并发扫描并把结果通过 Channel 传出 (支持从 startIP 断点处继续)
 func (s *Scanner) ScanCIDRStream(ctx context.Context, cidrStr string, startIP string, port int, threads int, timeout int, enableIPv6 bool, outChan chan<- *ScanResult,
 	onProgress func(n int, currentIP string),
+) {
+	s.ScanCIDRStreamWithProbe(ctx, cidrStr, startIP, port, threads, timeout, enableIPv6, outChan, onProgress, nil)
+}
+
+// ScanCIDRStreamWithProbe 执行并发扫描，同时向 onProbe 回调发送每个 IP 的探活详情记录
+func (s *Scanner) ScanCIDRStreamWithProbe(ctx context.Context, cidrStr string, startIP string, port int, threads int, timeout int, enableIPv6 bool, outChan chan<- *ScanResult,
+	onProgress func(n int, currentIP string),
+	onProbe func(probe *ProbeResult),
 ) {
 	hostChan := IterateCIDR(ctx, cidrStr, startIP, enableIPv6)
 
@@ -266,10 +319,13 @@ func (s *Scanner) ScanCIDRStream(ctx context.Context, cidrStr string, startIP st
 					logger.Debug("正在尝试 TLS1.3/h2 握手 IP: %s:%d", host.IP.String(), port)
 				}
 
-				res := s.ScanTLS(ctx, host, port, timeout, enableIPv6)
+				res, probe := s.ScanTLSProbe(ctx, host, port, timeout, enableIPv6)
 				// 无论成功还是失败，单 IP 探测结束立刻触发步进并回传当前探测的 IP
 				if onProgress != nil {
 					onProgress(1, host.IP.String())
+				}
+				if onProbe != nil && probe != nil {
+					onProbe(probe)
 				}
 				if res != nil {
 					if logger.IsDebug() {
@@ -289,3 +345,4 @@ func (s *Scanner) ScanCIDRStream(ctx context.Context, cidrStr string, startIP st
 
 	wg.Wait()
 }
+
