@@ -288,11 +288,18 @@ func (s *Scanner) ScanTLS(ctx context.Context, host Host, port int, timeout int,
 	return res
 }
 
+// RateLimiter 扫描流控接口 (可选)
+type RateLimiter interface {
+	Acquire(ctx context.Context) error
+	Release()
+	ReportProbe(duration time.Duration, isTimeout bool, isSuccess bool)
+}
+
 // ScanCIDRStream 执行并发扫描并把结果通过 Channel 传出 (支持从 startIP 断点处继续)
 func (s *Scanner) ScanCIDRStream(ctx context.Context, cidrStr string, startIP string, port int, threads int, timeout int, enableIPv6 bool, outChan chan<- *ScanResult,
 	onProgress func(n int, currentIP string),
 ) {
-	s.ScanCIDRStreamWithProbe(ctx, cidrStr, startIP, port, threads, timeout, enableIPv6, outChan, onProgress, nil)
+	s.ScanCIDRStreamAdaptive(ctx, cidrStr, startIP, port, threads, timeout, enableIPv6, nil, outChan, onProgress, nil)
 }
 
 // ScanCIDRStreamWithProbe 执行并发扫描，同时向 onProbe 回调发送每个 IP 的探活详情记录
@@ -300,7 +307,21 @@ func (s *Scanner) ScanCIDRStreamWithProbe(ctx context.Context, cidrStr string, s
 	onProgress func(n int, currentIP string),
 	onProbe func(probe *ProbeResult),
 ) {
+	s.ScanCIDRStreamAdaptive(ctx, cidrStr, startIP, port, threads, timeout, enableIPv6, nil, outChan, onProgress, onProbe)
+}
+
+// ScanCIDRStreamAdaptive 执行并发扫描，支持自适应 RateLimiter 动态调谐、断点续扫与探活明细回调
+func (s *Scanner) ScanCIDRStreamAdaptive(ctx context.Context, cidrStr string, startIP string, port int, threads int, timeout int, enableIPv6 bool,
+	limiter RateLimiter,
+	outChan chan<- *ScanResult,
+	onProgress func(n int, currentIP string),
+	onProbe func(probe *ProbeResult),
+) {
 	hostChan := IterateCIDR(ctx, cidrStr, startIP, enableIPv6)
+
+	if threads <= 0 {
+		threads = 50
+	}
 
 	var wg sync.WaitGroup
 	for i := 0; i < threads; i++ {
@@ -319,7 +340,29 @@ func (s *Scanner) ScanCIDRStreamWithProbe(ctx context.Context, cidrStr string, s
 					logger.Debug("正在尝试 TLS1.3/h2 握手 IP: %s:%d", host.IP.String(), port)
 				}
 
+				if limiter != nil {
+					if err := limiter.Acquire(ctx); err != nil {
+						return
+					}
+				}
+
+				probeStart := time.Now()
 				res, probe := s.ScanTLSProbe(ctx, host, port, timeout, enableIPv6)
+				probeDuration := time.Since(probeStart)
+
+				if limiter != nil {
+					limiter.Release()
+					isTimeout := false
+					isSuccess := false
+					if probe != nil {
+						isSuccess = probe.Success
+						if !probe.Success && strings.Contains(probe.FailureReason, "超时") {
+							isTimeout = true
+						}
+					}
+					limiter.ReportProbe(probeDuration, isTimeout, isSuccess)
+				}
+
 				// 无论成功还是失败，单 IP 探测结束立刻触发步进并回传当前探测的 IP
 				if onProgress != nil {
 					onProgress(1, host.IP.String())
@@ -345,4 +388,5 @@ func (s *Scanner) ScanCIDRStreamWithProbe(ctx context.Context, cidrStr string, s
 
 	wg.Wait()
 }
+
 

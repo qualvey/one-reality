@@ -6,6 +6,7 @@ import (
 	"crypto/x509/pkix"
 	"net"
 	"testing"
+	"time"
 )
 
 func TestExtractCertDomain(t *testing.T) {
@@ -94,4 +95,59 @@ func TestScanTLSProbe_ClosedPort(t *testing.T) {
 		t.Errorf("expected non-empty probe.FailureReason")
 	}
 }
+
+type mockRateLimiter struct {
+	acquireCount int
+	releaseCount int
+	reportCount  int
+}
+
+func (m *mockRateLimiter) Acquire(ctx context.Context) error {
+	m.acquireCount++
+	return nil
+}
+
+func (m *mockRateLimiter) Release() {
+	m.releaseCount++
+}
+
+func (m *mockRateLimiter) ReportProbe(duration time.Duration, isTimeout bool, isSuccess bool) {
+	m.reportCount++
+}
+
+func TestScanCIDRStreamAdaptive_LimiterIntegration(t *testing.T) {
+	s := NewScanner()
+	defer s.Close()
+
+	limiter := &mockRateLimiter{}
+	outChan := make(chan *ScanResult, 10)
+
+	// 扫描单个 IP 127.0.0.1
+	s.ScanCIDRStreamAdaptive(
+		context.Background(),
+		"127.0.0.1/32",
+		"",
+		65432,
+		1,
+		1,
+		false,
+		limiter,
+		outChan,
+		nil,
+		nil,
+	)
+
+	close(outChan)
+
+	if limiter.acquireCount != 1 {
+		t.Errorf("expected 1 Acquire call, got %d", limiter.acquireCount)
+	}
+	if limiter.releaseCount != 1 {
+		t.Errorf("expected 1 Release call, got %d", limiter.releaseCount)
+	}
+	if limiter.reportCount != 1 {
+		t.Errorf("expected 1 ReportProbe call, got %d", limiter.reportCount)
+	}
+}
+
 
