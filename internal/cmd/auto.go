@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"RealityChecker/internal/adaptive"
 	"RealityChecker/internal/asn"
 	"RealityChecker/internal/config"
 	"RealityChecker/internal/core"
@@ -157,6 +158,13 @@ func (r *RootCmd) executeAuto(opts AutoScanCLIOptions) {
 				return
 			}
 			ui.PrintTimestampedMessage("[~] %-15s      | 域名未入选: %-25s | 原因: %s", ip, domain, reason)
+		},
+		OnAdaptiveAdjust: func(stats adaptive.LimiterStats) {
+			if bar != nil {
+				logger.AboveBar(bar, "⚡ [算力与网络自适应] %s", stats.LastActionReason)
+			} else {
+				ui.PrintTimestampedMessage("⚡ [算力与网络自适应] %s", stats.LastActionReason)
+			}
 		},
 		OnTargetFound: func(res *types.DetectionResult, count int, ip string, handshakeMs int64, statusCode int) {
 			if bar != nil {

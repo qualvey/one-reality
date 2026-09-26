@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"RealityChecker/internal/adaptive"
 	"RealityChecker/internal/scanner"
 	"RealityChecker/internal/storage"
 	"RealityChecker/internal/types"
@@ -42,6 +43,8 @@ type AutoScanEvents struct {
 	OnScanRecord func(probe *scanner.ProbeResult)
 	// OnCandidateRejected 候选域名未能通过阶段一基线或阶段二过滤时回调
 	OnCandidateRejected func(ip string, domain string, reason string)
+	// OnAdaptiveAdjust 自适应限流中枢做出并发收敛或爬升决策时通知
+	OnAdaptiveAdjust func(stats adaptive.LimiterStats)
 	// OnTargetFound 发现并判定为符合条件的目标时回调
 	OnTargetFound func(res *types.DetectionResult, count int, ip string, handshakeMs int64, statusCode int)
 	// OnLimitHit 达到指定目标数量限制时回调
@@ -79,6 +82,9 @@ type AutoScanner struct {
 	rawCandidatePool []*types.DetectionResult
 	suitableResults  []*types.DetectionResult
 
+	limiter adaptive.RateLimiter
+	profile adaptive.HardwareProfile
+
 	dbWriteMu sync.Mutex
 }
 
@@ -98,6 +104,15 @@ func NewAutoScanner(
 	cidrsCopy := make([]string, len(cfg.CIDRs))
 	copy(cidrsCopy, cfg.CIDRs)
 
+	profile := adaptive.DetectHardwareProfile()
+	if cfg.Filter.ScanThreads > 0 {
+		profile.InitialConcurrency = cfg.Filter.ScanThreads
+		if profile.InitialConcurrency > profile.MaxConcurrency {
+			profile.MaxConcurrency = profile.InitialConcurrency
+		}
+	}
+	limiter := adaptive.NewAdaptiveLimiter(profile, nil)
+
 	s := &AutoScanner{
 		engine:           engine,
 		store:            store,
@@ -109,6 +124,8 @@ func NewAutoScanner(
 		domainSet:        make(map[string]bool),
 		rawCandidatePool: make([]*types.DetectionResult, 0),
 		suitableResults:  make([]*types.DetectionResult, 0),
+		limiter:          limiter,
+		profile:          profile,
 	}
 
 	// 预加载传入的历史有效初始目标
@@ -179,6 +196,29 @@ func (s *AutoScanner) Run(parentCtx context.Context) (*AutoScanResult, error) {
 	// 2. 构造流水线并发通道与任务追踪
 	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
+
+	if s.limiter != nil {
+		defer s.limiter.Stop()
+		if s.events.OnAdaptiveAdjust != nil {
+			go func() {
+				ticker := time.NewTicker(2 * time.Second)
+				defer ticker.Stop()
+				var lastReason string
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						stats := s.limiter.Stats()
+						if stats.LastAction != adaptive.ActionHold && stats.LastActionReason != lastReason {
+							lastReason = stats.LastActionReason
+							s.events.OnAdaptiveAdjust(stats)
+						}
+					}
+				}
+			}()
+		}
+	}
 
 	scanResultChan := make(chan *scanner.ScanResult, 20000)
 	var taskWg sync.WaitGroup
@@ -401,14 +441,14 @@ func (s *AutoScanner) scanSingleCIDR(
 
 	threads := s.config.Filter.ScanThreads
 	if threads <= 0 {
-		threads = 200
+		threads = s.profile.MaxConcurrency
 	}
 	timeout := s.config.Filter.ScanTimeout
 	if timeout <= 0 {
 		timeout = 3
 	}
 
-	s.scannerEngine.ScanCIDRStreamWithProbe(
+	s.scannerEngine.ScanCIDRStreamAdaptive(
 		ctx,
 		cidr,
 		startIP,
@@ -416,6 +456,7 @@ func (s *AutoScanner) scanSingleCIDR(
 		threads,
 		timeout,
 		false,
+		s.limiter,
 		subChan,
 		func(n int, ip string) {
 			if s.events.OnIPScanned != nil {

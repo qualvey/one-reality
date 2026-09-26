@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"time"
 
+	"RealityChecker/internal/adaptive"
 	asnclient "RealityChecker/internal/asn"
 	"RealityChecker/internal/scanner"
 	"RealityChecker/internal/storage"
@@ -56,6 +57,7 @@ type DaemonEvents struct {
 	OnTargetFound       func(target *types.TargetRecord)
 	OnScanRecord        func(probe *scanner.ProbeResult)
 	OnCandidateRejected func(ip string, domain string, reason string)
+	OnAdaptiveAdjust    func(stats adaptive.LimiterStats)
 	OnError             func(err error)
 }
 
@@ -290,6 +292,11 @@ func (d *DaemonScheduler) processASN(ctx context.Context, rec *types.ASNRecord) 
 		OnCandidateRejected: func(ip string, domain string, reason string) {
 			if d.events.OnCandidateRejected != nil {
 				d.events.OnCandidateRejected(ip, domain, reason)
+			}
+		},
+		OnAdaptiveAdjust: func(stats adaptive.LimiterStats) {
+			if d.events.OnAdaptiveAdjust != nil {
+				d.events.OnAdaptiveAdjust(stats)
 			}
 		},
 		OnTargetFound: func(res *types.DetectionResult, count int, ip string, handshakeMs int64, statusCode int) {

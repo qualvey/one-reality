@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"RealityChecker/internal/adaptive"
 	"RealityChecker/internal/core"
 	"RealityChecker/internal/scanner"
 	"RealityChecker/internal/storage"
@@ -111,6 +112,9 @@ func (r *RootCmd) executeDaemon(args []string) {
 				return
 			}
 			ui.PrintTimestampedMessage("[~] %-15s      | 域名未入选: %-25s | 原因: %s", ip, domain, reason)
+		},
+		OnAdaptiveAdjust: func(stats adaptive.LimiterStats) {
+			ui.PrintTimestampedMessage("⚡ [自适应调谐] %s", stats.LastActionReason)
 		},
 		OnTargetFound: func(target *types.TargetRecord) {
 			ui.PrintTimestampedMessage("⭐ 发现优质 REALITY 目标: %-25s (IP: %-15s, 握手: %dms, 评级: %d星)",
