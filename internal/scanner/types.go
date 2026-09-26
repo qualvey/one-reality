@@ -28,6 +28,7 @@ type ScanResult struct {
 	CertSignature string
 	CertPublicKey string
 	CertDomain    string
+	CertDomains   []string
 	CertIssuer    string
 	GeoCode       string
 }

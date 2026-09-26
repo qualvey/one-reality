@@ -53,45 +53,62 @@ func (s *Scanner) getGeo(ip net.IP) string {
 	return country.Country.IsoCode
 }
 
-// ExtractCertDomain 从证书中智能提取最适合的真实域名（优先 SAN/DNSNames，回退 CommonName，自动清洗通配符）
-func ExtractCertDomain(leaf *x509.Certificate) string {
+// ExtractCertDomains 从证书中提取所有合法、去重后的公网真实域名列表（优先 SAN 具体域名，随后规范化通配符，回退 CommonName）
+func ExtractCertDomains(leaf *x509.Certificate) []string {
 	if leaf == nil {
-		return ""
+		return nil
 	}
 
-	// 1. 优先在 DNSNames (SAN) 中寻找具体非通配符域名
-	for _, name := range leaf.DNSNames {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
+	seen := make(map[string]bool)
+	var specificDomains []string
+	var wildcardDomains []string
+
+	// 第一阶段：提取所有具体、非通配符的合法公网域名
+	collectSpecific := func(raw string) {
+		raw = strings.TrimSpace(strings.ToLower(raw))
+		if raw == "" || strings.HasPrefix(raw, "*.") || strings.Contains(raw, "*") {
+			return
 		}
-		if !strings.HasPrefix(name, "*.") && !strings.Contains(name, "*") {
-			return strings.ToLower(name)
+		if IsValidPublicDomain(raw) && !seen[raw] {
+			seen[raw] = true
+			specificDomains = append(specificDomains, raw)
 		}
 	}
 
-	// 2. 如果 DNSNames 只有通配符域名（例如 *.example.com），去除 "*." 规范化为主域名
 	for _, name := range leaf.DNSNames {
-		name = strings.TrimSpace(name)
-		if strings.HasPrefix(name, "*.") && len(name) > 2 {
-			cleaned := strings.TrimPrefix(name, "*.")
-			if cleaned != "" && !strings.Contains(cleaned, "*") {
-				return strings.ToLower(cleaned)
+		collectSpecific(name)
+	}
+	collectSpecific(leaf.Subject.CommonName)
+
+	// 第二阶段：提取通配符域名并规范化为主域名
+	collectWildcard := func(raw string) {
+		raw = strings.TrimSpace(strings.ToLower(raw))
+		if !strings.HasPrefix(raw, "*.") || len(raw) <= 2 {
+			return
+		}
+		cleaned := strings.TrimPrefix(raw, "*.")
+		if cleaned != "" && !strings.Contains(cleaned, "*") && IsValidPublicDomain(cleaned) {
+			if !seen[cleaned] {
+				seen[cleaned] = true
+				wildcardDomains = append(wildcardDomains, cleaned)
 			}
 		}
 	}
 
-	// 3. DNSNames 为空或无有效记录时，回退检查 CommonName
-	cn := strings.TrimSpace(leaf.Subject.CommonName)
-	if cn != "" {
-		if strings.HasPrefix(cn, "*.") && len(cn) > 2 {
-			cn = strings.TrimPrefix(cn, "*.")
-		}
-		if cn != "" && !strings.Contains(cn, "*") {
-			return strings.ToLower(cn)
-		}
+	for _, name := range leaf.DNSNames {
+		collectWildcard(name)
 	}
+	collectWildcard(leaf.Subject.CommonName)
 
+	return append(specificDomains, wildcardDomains...)
+}
+
+// ExtractCertDomain 从证书中智能提取最适合的首选真实公网域名
+func ExtractCertDomain(leaf *x509.Certificate) string {
+	domains := ExtractCertDomains(leaf)
+	if len(domains) > 0 {
+		return domains[0]
+	}
 	return ""
 }
 
@@ -276,16 +293,13 @@ func (s *Scanner) scanTLSSingleWithProbe(ctx context.Context, host Host, port in
 	}
 
 	leaf := state.PeerCertificates[0]
-	domain := ExtractCertDomain(leaf)
-	if len(domain) == 0 {
-		probe.FailureReason = "证书未包含有效域名 (SAN/CN为空或通配符)"
+	domains := ExtractCertDomains(leaf)
+	if len(domains) == 0 {
+		probe.FailureReason = "证书未包含有效公网域名 (SAN/CN为空、非法或内网域名)"
 		return nil, false, probe
 	}
 
-	if !IsValidPublicDomain(domain) {
-		probe.FailureReason = "域名非公网有效 FQDN: " + domain
-		return nil, false, probe
-	}
+	primaryDomain := domains[0]
 
 	if err := VerifyPublicCACert(leaf, state.PeerCertificates[1:]); err != nil {
 		probe.FailureReason = "证书有效性校验失败: " + err.Error()
@@ -315,7 +329,8 @@ func (s *Scanner) scanTLSSingleWithProbe(ctx context.Context, host Host, port in
 		CertLength:    strconv.Itoa(length) + "(certs count: " + strconv.Itoa(len(state.PeerCertificates)) + ")",
 		CertSignature: leaf.SignatureAlgorithm.String(),
 		CertPublicKey: leaf.PublicKeyAlgorithm.String(),
-		CertDomain:    domain,
+		CertDomain:    primaryDomain,
+		CertDomains:   domains,
 		CertIssuer:    issuers,
 		GeoCode:       geoCode,
 	}

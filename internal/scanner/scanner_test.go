@@ -72,6 +72,66 @@ func TestExtractCertDomain(t *testing.T) {
 	}
 }
 
+func TestExtractCertDomains(t *testing.T) {
+	tests := []struct {
+		name     string
+		leaf     *x509.Certificate
+		expected []string
+	}{
+		{
+			name:     "Nil leaf",
+			leaf:     nil,
+			expected: nil,
+		},
+		{
+			name: "Multiple valid SANs",
+			leaf: &x509.Certificate{
+				Subject:  pkix.Name{CommonName: ""},
+				DNSNames: []string{"api.example.com", "cdn.example.com", "web.example.com"},
+			},
+			expected: []string{"api.example.com", "cdn.example.com", "web.example.com"},
+		},
+		{
+			name: "Mix of specific domain and wildcard with deduplication",
+			leaf: &x509.Certificate{
+				Subject:  pkix.Name{CommonName: "*.example.com"},
+				DNSNames: []string{"*.example.com", "login.example.com", "example.com"},
+			},
+			expected: []string{"login.example.com", "example.com"},
+		},
+		{
+			name: "Filter out invalid or local domains from SAN",
+			leaf: &x509.Certificate{
+				Subject:  pkix.Name{CommonName: "localhost"},
+				DNSNames: []string{"localhost", "cluster.local", "valid.example.com", "127.0.0.1"},
+			},
+			expected: []string{"valid.example.com"},
+		},
+		{
+			name: "Only wildcard SAN normalized to apex",
+			leaf: &x509.Certificate{
+				Subject:  pkix.Name{CommonName: ""},
+				DNSNames: []string{"*.service.net"},
+			},
+			expected: []string{"service.net"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ExtractCertDomains(tc.leaf)
+			if len(got) != len(tc.expected) {
+				t.Fatalf("expected len %d, got %d (%v)", len(tc.expected), len(got), got)
+			}
+			for i := range got {
+				if got[i] != tc.expected[i] {
+					t.Errorf("index %d: expected %q, got %q", i, tc.expected[i], got[i])
+				}
+			}
+		})
+	}
+}
+
 func TestScanTLSProbe_ClosedPort(t *testing.T) {
 	s := NewScanner()
 	defer s.Close()
