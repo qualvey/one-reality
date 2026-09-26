@@ -101,6 +101,16 @@ reality_filter:
     - 503
     - 504
 
+# 网络代理配置 (支持 http://, https://, socks5:// 协议)
+# 留空为直连，也可直接简写为字符串形式，例如 proxy: "http://127.0.0.1:7890"
+proxy:
+  # 代理服务器地址，例如: "http://127.0.0.1:7890" 或 "socks5://127.0.0.1:1080"
+  url: ""
+  # 是否用于资源与外部数据下载 (GitHub 规则库、GeoIP 数据库、ASN 远程接口等)
+  download: true
+  # 是否用于目标检测与网络扫描 (注意: 扫描走代理可能影响握手延迟及真实连通性测试，建议保持 false 直连)
+  scanner: false
+
 # 网络检测配置
 network:
   timeout: 3s

@@ -43,20 +43,20 @@ RealityChecker 是一个用于自动发现、深度检测与智能筛选 Xray Re
 
 ### NOTICE
 
-本项目应该在本地运行而非VPS,且应该直连,走代理会让检测结果不准确。
-初次启动会连接github下载资源。
-建议分流规则:
-``
-github先走代理
-按照进程路径/名称直连
-或者先开代理下载资源，再全部直连
-github-> proxy
-process=reality_checker -> direct
+本项目建议在本地运行而非 VPS。为了保证测速与握手延迟的真实性，扫描器默认直连。
+由于初次启动会自动连接 GitHub 下载必要的规则库与 GeoIP 数据库，您可直接在 `config.yaml` 中配置代理：
+
+```yaml
+proxy:
+  url: "http://127.0.0.1:7890"  # 支持 http://, https://, socks5://
+  download: true                # GitHub 资源下载与外部 API 查询走代理
+  scanner: false                # 目标扫描探测保持直连（测速更准）
 ```
-sing-box示例规则如下
-```josn
-  "route"{
-    "rules"[
+
+若您在客户端（如 sing-box / clash）统一分流，亦可配置规则如下：
+```json
+  "route": {
+    "rules": [
       {
         "domain_suffix": "github.com",
         "outbound": "Proxy"
