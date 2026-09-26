@@ -22,3 +22,11 @@ vendor/
 *.test
 *.prof
 dist/
+
+# Node & VitePress
+node_modules/
+.vitepress/dist/
+.vitepress/cache/
+doc/.vitepress/dist/
+doc/.vitepress/cache/
+

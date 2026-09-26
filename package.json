@@ -1,0 +1,16 @@
+{
+  "name": "reality-checker-docs",
+  "version": "1.0.0",
+  "description": "RealityChecker 官方与架构开发文档",
+  "private": true,
+  "scripts": {
+    "docs:dev": "vitepress dev doc",
+    "docs:build": "vitepress build doc",
+    "docs:preview": "vitepress preview doc"
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.4",
+    "vue": "^3.5.43"
+  }
+}
+
