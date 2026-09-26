@@ -54,7 +54,7 @@ func TestAdaptiveLimiter_SystemThrottle(t *testing.T) {
 	profile := CalculateProfile(4, "arm64", 2000) // 4核 ARM 2GB, Init=60, TargetLoad=4*0.75=3.0
 	mockSys := &mockSystemMonitor{
 		metrics: SystemMetrics{
-			Load1:      6.5, // 严重超载 (大于 3.0)
+			Load1:      6.5, // 严重超载 (大于 criticalLoad 4.05)
 			Available:  true,
 			SampleTime: time.Now(),
 		},
@@ -72,9 +72,9 @@ func TestAdaptiveLimiter_SystemThrottle(t *testing.T) {
 	limiter.performAdjustment()
 
 	newLimit := limiter.CurrentConcurrency()
-	// 期望乘法急刹车 60 * 0.65 = 39
+	// 期望快速避险温和削减 20%: 60 * 0.8 = 48
 	if newLimit >= initLimit {
-		t.Errorf("expected concurrency to shrink under high load, got %d (was %d)", newLimit, initLimit)
+		t.Errorf("expected concurrency to shrink under critical load, got %d (was %d)", newLimit, initLimit)
 	}
 
 	stats := limiter.Stats()
@@ -83,11 +83,41 @@ func TestAdaptiveLimiter_SystemThrottle(t *testing.T) {
 	}
 }
 
+func TestAdaptiveLimiter_DeadbandHold(t *testing.T) {
+	// 4核 ARM 2GB, TargetLoad=3.0, deadband=[2.25, 3.15]
+	profile := CalculateProfile(4, "arm64", 2000)
+	mockSys := &mockSystemMonitor{
+		metrics: SystemMetrics{
+			Load1:      2.8, // 处于死区内部
+			CPUPercent: 60.0,
+			Available:  true,
+			SampleTime: time.Now(),
+		},
+	}
+
+	limiter := NewAdaptiveLimiter(profile, mockSys)
+	defer limiter.Stop()
+
+	initLimit := limiter.CurrentConcurrency()
+
+	// 执行调谐
+	limiter.performAdjustment()
+
+	if limiter.CurrentConcurrency() != initLimit {
+		t.Errorf("expected concurrency to hold within deadband, got %d (was %d)", limiter.CurrentConcurrency(), initLimit)
+	}
+
+	stats := limiter.Stats()
+	if stats.LastAction != ActionHold {
+		t.Errorf("expected action %s, got %s", ActionHold, stats.LastAction)
+	}
+}
+
 func TestAdaptiveLimiter_NetworkThrottleAndRampUp(t *testing.T) {
 	profile := CalculateProfile(4, "amd64", 8000) // 4核 x86, Init=120, Min=20, Max=240
 	mockSys := &mockSystemMonitor{
 		metrics: SystemMetrics{
-			Load1:      1.0, // 系统完全健康
+			Load1:      1.0, // 系统完全健康 (欠载 < deadbandMin 2.25)
 			CPUPercent: 30.0,
 			Available:  true,
 			SampleTime: time.Now(),
@@ -97,8 +127,8 @@ func TestAdaptiveLimiter_NetworkThrottleAndRampUp(t *testing.T) {
 	limiter := NewAdaptiveLimiter(profile, mockSys)
 	defer limiter.Stop()
 
-	// 1. 模拟网络延迟膨胀 (10 个 100ms 成功，10 个 500ms 成功，Bloat > 2.2)
-	limiter.netTracker.Record(100*time.Millisecond, false, true)
+	// 1. 模拟网络延迟膨胀 (1 个 40ms, 15 个 400ms，Bloat > 3.0 且 Avg > 300ms)
+	limiter.netTracker.Record(40*time.Millisecond, false, true)
 	for i := 0; i < 15; i++ {
 		limiter.netTracker.Record(400*time.Millisecond, false, true)
 	}
@@ -109,7 +139,11 @@ func TestAdaptiveLimiter_NetworkThrottleAndRampUp(t *testing.T) {
 		t.Errorf("expected action %s on network bloat, got %s", ActionNetworkThrottle, stats.LastAction)
 	}
 
-	// 2. 清空并模拟网络与系统极度健康状态 (均快、超时率 0%)
+	// 2. 清除冷却期，模拟网络与系统极度健康状态 (均快、超时率 0%)
+	limiter.mu.Lock()
+	limiter.cooldownUntil = time.Time{}
+	limiter.mu.Unlock()
+
 	limiter.netTracker.Reset()
 	for i := 0; i < 20; i++ {
 		limiter.netTracker.Record(80*time.Millisecond, false, true)
@@ -119,7 +153,7 @@ func TestAdaptiveLimiter_NetworkThrottleAndRampUp(t *testing.T) {
 	limiter.performAdjustment()
 	stats = limiter.Stats()
 	if stats.LastAction != ActionRampUp {
-		t.Errorf("expected action %s on healthy network, got %s", ActionRampUp, stats.LastAction)
+		t.Errorf("expected action %s on healthy network, got %s (reason: %s)", ActionRampUp, stats.LastAction, stats.LastActionReason)
 	}
 	if limiter.CurrentConcurrency() <= curr {
 		t.Errorf("expected concurrency to increase from %d, got %d", curr, limiter.CurrentConcurrency())

@@ -141,6 +141,13 @@ type AdaptiveLimiter struct {
 	lastActionReason string
 	stopChan         chan struct{}
 	stopOnce         sync.Once
+
+	// 平滑控制状态
+	smoothedLoad1    float64
+	smoothedCPU      float64
+	hasSmoothedInit  bool
+	cooldownUntil    time.Time
+	cooldownDuration time.Duration // 调节后的观察静息期 (默认 5 秒)
 }
 
 // NewAdaptiveLimiter 创建自适应流控控制器
@@ -160,6 +167,7 @@ func NewAdaptiveLimiter(profile HardwareProfile, sysMon SystemMonitor) *Adaptive
 		lastAction:       ActionHold,
 		lastActionReason: "初始硬件基准预估就绪",
 		stopChan:         make(chan struct{}),
+		cooldownDuration: 5 * time.Second,
 	}
 
 	go l.adjustLoop()
@@ -226,7 +234,7 @@ func (l *AdaptiveLimiter) adjustLoop() {
 	}
 }
 
-// performAdjustment 执行单轮双轨仲裁决策
+// performAdjustment 执行单轮双轨仲裁决策（采用 EWMA 滤波、死区维持与渐进微调）
 func (l *AdaptiveLimiter) performAdjustment() {
 	sys := l.sysMon.Sample()
 	netSnap := l.netTracker.Snapshot()
@@ -235,71 +243,143 @@ func (l *AdaptiveLimiter) performAdjustment() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	// 1. 最高优先级：系统级安全红线守门 (Guardrail)
-	targetLoadMax := float64(l.profile.NumCPU) * l.profile.TargetLoadRatio
-	isLoadOverloaded := sys.Available && sys.Load1 > 0 && sys.Load1 > targetLoadMax
-	isCPUOverloaded := sys.Available && sys.CPUPercent > 0 && sys.CPUPercent > l.profile.TargetCPUPercent
+	// 0. 更新 EWMA 指数平滑指标，滤除瞬时毛刺
+	if sys.Available {
+		if !l.hasSmoothedInit {
+			l.smoothedLoad1 = sys.Load1
+			l.smoothedCPU = sys.CPUPercent
+			l.hasSmoothedInit = true
+		} else {
+			l.smoothedLoad1 = l.smoothedLoad1*0.65 + sys.Load1*0.35
+			l.smoothedCPU = l.smoothedCPU*0.65 + sys.CPUPercent*0.35
+		}
+	}
 
-	if isLoadOverloaded || isCPUOverloaded {
-		// 触发系统级惩罚性急刹车 (乘法削减 35%)
-		newLimit := int(float64(current) * 0.65)
+	// 1. 冷却期检查：前一次调谐动作生效需要系统反应时间，在冷却期内保持观察不反复折腾
+	now := time.Now()
+	if now.Before(l.cooldownUntil) {
+		l.lastAction = ActionHold
+		l.lastActionReason = fmt.Sprintf("处于调整后平息冷却期，保持并发稳定: %d (平滑Load=%.2f, 平滑CPU=%.1f%%)",
+			current, l.smoothedLoad1, l.smoothedCPU)
+		return
+	}
+
+	targetLoad := float64(l.profile.NumCPU) * l.profile.TargetLoadRatio
+	deadbandMin := targetLoad * 0.75 // 死区下限 (例如 4核 为 2.25)
+	deadbandMax := targetLoad * 1.05 // 死区上限 (例如 4核 为 3.15)
+	criticalLoad := targetLoad * 1.35 // 严重超载红线 (例如 4核 为 4.05)
+
+	// 2. 第一优先级：极端严重过载紧急制动
+	isCriticalLoad := sys.Available && l.smoothedLoad1 > criticalLoad
+	isCriticalCPU := sys.Available && l.smoothedCPU > 88.0
+
+	if isCriticalLoad || isCriticalCPU {
+		// 快速避险：温和削减 20%
+		newLimit := int(float64(current) * 0.80)
 		if newLimit < l.profile.MinConcurrency {
 			newLimit = l.profile.MinConcurrency
 		}
 		l.sem.SetLimit(newLimit)
+		l.cooldownUntil = now.Add(6 * time.Second)
 		l.lastAction = ActionSystemThrottle
-		if isLoadOverloaded {
-			l.lastActionReason = fmt.Sprintf("系统负载过高 (Load1=%.2f > 目标%.2f)，自适应紧急收缩并发: %d -> %d",
-				sys.Load1, targetLoadMax, current, newLimit)
-		} else {
-			l.lastActionReason = fmt.Sprintf("CPU利用率过高 (CPU=%.1f%% > 目标%.1f%%)，自适应紧急收缩并发: %d -> %d",
-				sys.CPUPercent, l.profile.TargetCPUPercent, current, newLimit)
-		}
 		l.netTracker.Reset()
+		if isCriticalLoad {
+			l.lastActionReason = fmt.Sprintf("系统负载严重超标 (平滑Load=%.2f > 极限%.2f)，自适应快速避险: %d -> %d",
+				l.smoothedLoad1, criticalLoad, current, newLimit)
+		} else {
+			l.lastActionReason = fmt.Sprintf("CPU利用率严重超标 (平滑CPU=%.1f%% > 88%%)，自适应快速避险: %d -> %d",
+				l.smoothedCPU, current, newLimit)
+		}
 		return
 	}
 
-	// 2. 次高优先级：网络延迟膨胀与拥塞调谐 (需累积至少 10 个样本)
-	if netSnap.TotalSamples >= 10 {
-		isBloated := netSnap.BloatRatio > 2.2
-		isHighTimeout := netSnap.TimeoutRate > 0.15
+	// 3. 第二优先级：轻度超出死区上限（采用微步梯度递减，杜绝断崖式暴跌）
+	isSoftOverLoad := sys.Available && l.smoothedLoad1 > deadbandMax
+	isSoftOverCPU := sys.Available && l.smoothedCPU > l.profile.TargetCPUPercent
+
+	if isSoftOverLoad || isSoftOverCPU {
+		step := int(float64(current) * 0.08)
+		if step < 2 {
+			step = 2
+		}
+		newLimit := current - step
+		if newLimit < l.profile.MinConcurrency {
+			newLimit = l.profile.MinConcurrency
+		}
+		l.sem.SetLimit(newLimit)
+		l.cooldownUntil = now.Add(5 * time.Second)
+		l.lastAction = ActionSystemThrottle
+		if isSoftOverLoad {
+			l.lastActionReason = fmt.Sprintf("系统负载轻微偏离死区 (平滑Load=%.2f > 上限%.2f)，自适应微调收敛: %d -> %d",
+				l.smoothedLoad1, deadbandMax, current, newLimit)
+		} else {
+			l.lastActionReason = fmt.Sprintf("CPU利用率略高 (平滑CPU=%.1f%% > 目标%.1f%%)，自适应微调收敛: %d -> %d",
+				l.smoothedCPU, l.profile.TargetCPUPercent, current, newLimit)
+		}
+		return
+	}
+
+	// 4. 第三优先级：网络延迟膨胀与超时调谐 (结合绝对延迟与超时率，防异构目标物理RTT差异误判)
+	if netSnap.TotalSamples >= 15 {
+		// 真实网络拥塞条件：
+		// a) 膨胀比严重且平均延迟显著恶化 (>300ms)
+		// b) 膨胀比偏高且出现丢包超时 (>3%)
+		// c) 超时率偏高 (>12%)
+		isBloated := (netSnap.BloatRatio > 3.0 && netSnap.AvgRTT > 300*time.Millisecond) ||
+			(netSnap.BloatRatio > 2.2 && netSnap.TimeoutRate > 0.03)
+		isHighTimeout := netSnap.TimeoutRate > 0.12
 
 		if isBloated || isHighTimeout {
-			// 网络或调度积压，温和收缩 (乘法削减 15%)
-			newLimit := int(float64(current) * 0.85)
+			step := int(float64(current) * 0.08)
+			if step < 2 {
+				step = 2
+			}
+			newLimit := current - step
 			if newLimit < l.profile.MinConcurrency {
 				newLimit = l.profile.MinConcurrency
 			}
 			l.sem.SetLimit(newLimit)
+			l.cooldownUntil = now.Add(4 * time.Second)
 			l.lastAction = ActionNetworkThrottle
 			if isBloated {
-				l.lastActionReason = fmt.Sprintf("探测延迟发生膨胀 (膨胀比=%.2f > 2.2)，自适应收敛并发: %d -> %d",
-					netSnap.BloatRatio, current, newLimit)
+				l.lastActionReason = fmt.Sprintf("探测网络发生延迟膨胀 (膨胀比=%.2f, 平均RTT=%v, 超时率=%.1f%%)，自适应微调收敛: %d -> %d",
+					netSnap.BloatRatio, netSnap.AvgRTT.Round(time.Millisecond), netSnap.TimeoutRate*100, current, newLimit)
 			} else {
-				l.lastActionReason = fmt.Sprintf("探测超时率过高 (超时率=%.1f%% > 15%%)，自适应收敛并发: %d -> %d",
+				l.lastActionReason = fmt.Sprintf("探测超时率过高 (超时率=%.1f%% > 12%%)，自适应微调收敛: %d -> %d",
 					netSnap.TimeoutRate*100, current, newLimit)
 			}
 			return
 		}
+	}
 
-		// 3. 网络与系统均健康：加法探索性爬升 (Additive Increase)
-		if netSnap.TimeoutRate < 0.05 && netSnap.BloatRatio < 1.3 && current < l.profile.MaxConcurrency {
-			step := 3
-			if l.profile.NumCPU >= 8 {
-				step = 8
-			}
-			newLimit := current + step
-			if newLimit > l.profile.MaxConcurrency {
-				newLimit = l.profile.MaxConcurrency
-			}
-			l.sem.SetLimit(newLimit)
-			l.lastAction = ActionRampUp
-			l.lastActionReason = fmt.Sprintf("网络与系统状态优良，自适应爬坡提升吞吐: %d -> %d", current, newLimit)
-			return
+	// 5. 第四优先级：处于黄金死区内部（锁定平衡点，定速巡航，绝对不折腾）
+	isInDeadband := sys.Available && l.smoothedLoad1 >= deadbandMin && l.smoothedLoad1 <= deadbandMax
+	if isInDeadband {
+		l.lastAction = ActionHold
+		l.lastActionReason = fmt.Sprintf("处于系统健康死区内，锁定平衡点: %d (平滑Load=%.2f在[%.2f, %.2f], CPU=%.1f%%)",
+			current, l.smoothedLoad1, deadbandMin, deadbandMax, l.smoothedCPU)
+		return
+	}
+
+	// 6. 第五优先级：明显欠载时的加法探索性平稳爬升
+	isUnderloaded := (!sys.Available || (l.smoothedLoad1 < deadbandMin && l.smoothedCPU < 40.0))
+	if isUnderloaded && netSnap.TimeoutRate < 0.03 && current < l.profile.MaxConcurrency {
+		step := 3
+		if l.profile.NumCPU >= 8 {
+			step = 6
 		}
+		newLimit := current + step
+		if newLimit > l.profile.MaxConcurrency {
+			newLimit = l.profile.MaxConcurrency
+		}
+		l.sem.SetLimit(newLimit)
+		l.cooldownUntil = now.Add(4 * time.Second)
+		l.lastAction = ActionRampUp
+		l.lastActionReason = fmt.Sprintf("系统负载充裕且网络通畅，自适应渐进爬坡: %d -> %d", current, newLimit)
+		return
 	}
 
 	l.lastAction = ActionHold
-	l.lastActionReason = fmt.Sprintf("状态稳定保持当前并发: %d (Load=%.2f, RTT=%v)",
-		current, sys.Load1, netSnap.AvgRTT.Round(time.Millisecond))
+	l.lastActionReason = fmt.Sprintf("状态稳定保持当前并发: %d (平滑Load=%.2f, RTT=%v)",
+		current, l.smoothedLoad1, netSnap.AvgRTT.Round(time.Millisecond))
 }

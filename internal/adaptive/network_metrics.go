@@ -95,8 +95,12 @@ func (t *NetworkTracker) Snapshot() NetworkSnapshot {
 
 	if successCount > 0 {
 		avgRTT = sumRTT / time.Duration(successCount)
-		if minRTT > 0 {
-			bloatRatio = float64(avgRTT) / float64(minRTT)
+		baseRTT := minRTT
+		if baseRTT < 40*time.Millisecond {
+			baseRTT = 40 * time.Millisecond // 稳健基准保底，防止个别离群极速握手拉爆膨胀比
+		}
+		if baseRTT > 0 {
+			bloatRatio = float64(avgRTT) / float64(baseRTT)
 		}
 	}
 
