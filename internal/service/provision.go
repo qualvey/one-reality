@@ -310,7 +310,11 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 		})
 	}
 
-	scannerEngine := scanner.NewScanner()
+	scanProxy := ""
+	if s.appConfig != nil && s.appConfig.Proxy.Scanner && s.appConfig.Proxy.URL != "" {
+		scanProxy = s.appConfig.Proxy.URL
+	}
+	scannerEngine := scanner.NewScanner(scanProxy)
 	defer scannerEngine.Close()
 
 	scanCtx, cancelScan := context.WithCancel(ctx)

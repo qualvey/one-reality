@@ -13,12 +13,14 @@ import (
 	"RealityChecker/internal/config"
 	"RealityChecker/internal/core"
 	"RealityChecker/internal/logger"
+	"RealityChecker/internal/types"
 	"RealityChecker/internal/ui"
 	"RealityChecker/internal/version"
 )
 
 // RootCmd 根命令结构
 type RootCmd struct {
+	config       *types.Config
 	engine       *core.Engine
 	batchManager *batch.Manager
 	ctx          context.Context
@@ -69,6 +71,7 @@ func NewRootCmd() (*RootCmd, error) {
 	}()
 
 	return &RootCmd{
+		config:       cfg,
 		engine:       engine,
 		batchManager: batchManager,
 		ctx:          ctx,

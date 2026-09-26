@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"RealityChecker/internal/network"
 	"RealityChecker/internal/types"
 )
 
@@ -28,6 +29,11 @@ func (rs *RedirectStage) Execute(ctx *types.PipelineContext) error {
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
+	}
+	if ctx != nil && ctx.Config != nil && ctx.Config.Proxy.Scanner && ctx.Config.Proxy.URL != "" {
+		if tr, err := network.MakeHTTPTransport(ctx.Config.Proxy.URL, 3*time.Second); err == nil && tr != nil {
+			client.Transport = tr
+		}
 	}
 
 	reqCtx := ctx.Context

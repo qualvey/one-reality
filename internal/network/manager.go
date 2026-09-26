@@ -13,10 +13,11 @@ import (
 // ConnectionManager 高性能网络连接管理器
 // 统一管理底层 TCP/TLS 拨号，支持 Context 快速取消、SetLinger(0) 立即释放端口防 TIME_WAIT，以及并发统计
 type ConnectionManager struct {
-	config *types.Config
-	dialer *net.Dialer
-	mu     sync.RWMutex
-	stats  types.ConnectionStats
+	config      *types.Config
+	dialer      *net.Dialer
+	dialContext func(ctx context.Context, network, addr string) (net.Conn, error)
+	mu          sync.RWMutex
+	stats       types.ConnectionStats
 }
 
 // NewConnectionManager 创建连接管理器
@@ -26,11 +27,21 @@ func NewConnectionManager(config *types.Config) *ConnectionManager {
 		timeout = config.Network.Timeout
 	}
 
+	dialer := &net.Dialer{
+		Timeout: timeout,
+	}
+
+	dialContext := dialer.DialContext
+	if config != nil && config.Proxy.Scanner && config.Proxy.URL != "" {
+		if dc, err := MakeDialContext(config.Proxy.URL, timeout); err == nil && dc != nil {
+			dialContext = dc
+		}
+	}
+
 	return &ConnectionManager{
-		config: config,
-		dialer: &net.Dialer{
-			Timeout: timeout,
-		},
+		config:      config,
+		dialer:      dialer,
+		dialContext: dialContext,
 		stats: types.ConnectionStats{
 			ActiveConnections: 0,
 			TotalConnections:  0,
@@ -55,7 +66,7 @@ func (cm *ConnectionManager) Stop() error {
 // GetHTTPConnection 获取 context 感知的 HTTP 连接
 func (cm *ConnectionManager) GetHTTPConnection(ctx context.Context, domain string) (net.Conn, error) {
 	hostPort := net.JoinHostPort(domain, "80")
-	conn, err := cm.dialer.DialContext(ctx, "tcp", hostPort)
+	conn, err := cm.dialContext(ctx, "tcp", hostPort)
 	if err != nil {
 		cm.mu.Lock()
 		cm.stats.FailedConnections++
@@ -73,7 +84,7 @@ func (cm *ConnectionManager) GetHTTPConnection(ctx context.Context, domain strin
 // GetTLSConnection 获取支持 Context 握手与优先 X25519 曲线的 TLS 连接
 func (cm *ConnectionManager) GetTLSConnection(ctx context.Context, domain string) (*tls.Conn, error) {
 	hostPort := net.JoinHostPort(domain, "443")
-	tcpConn, err := cm.dialer.DialContext(ctx, "tcp", hostPort)
+	tcpConn, err := cm.dialContext(ctx, "tcp", hostPort)
 	if err != nil {
 		cm.mu.Lock()
 		cm.stats.FailedConnections++
@@ -110,7 +121,7 @@ func (cm *ConnectionManager) GetTLSConnection(ctx context.Context, domain string
 // GetX25519TLSConnection 获取强制仅 X25519 的 TLS 连接（用于复核探测）
 func (cm *ConnectionManager) GetX25519TLSConnection(ctx context.Context, domain string) (*tls.Conn, error) {
 	hostPort := net.JoinHostPort(domain, "443")
-	tcpConn, err := cm.dialer.DialContext(ctx, "tcp", hostPort)
+	tcpConn, err := cm.dialContext(ctx, "tcp", hostPort)
 	if err != nil {
 		cm.mu.Lock()
 		cm.stats.FailedConnections++

@@ -6,6 +6,7 @@ import (
 	"net"
 	"time"
 
+	"RealityChecker/internal/network"
 	"RealityChecker/internal/types"
 )
 
@@ -27,7 +28,7 @@ func (irs *IPResolverStage) Execute(ctx *types.PipelineContext) error {
 	}
 
 	// 快速连通性测试
-	if !irs.quickConnectivityTest(ip) {
+	if !irs.quickConnectivityTest(ctx, ip) {
 		return fmt.Errorf("网络不可达")
 	}
 
@@ -41,12 +42,24 @@ func (irs *IPResolverStage) Execute(ctx *types.PipelineContext) error {
 }
 
 // quickConnectivityTest 快速连通性测试
-func (irs *IPResolverStage) quickConnectivityTest(ip string) bool {
+func (irs *IPResolverStage) quickConnectivityTest(ctx *types.PipelineContext, ip string) bool {
+	dialFunc := func(c context.Context, target string) (net.Conn, error) {
+		if ctx != nil && ctx.Config != nil && ctx.Config.Proxy.Scanner && ctx.Config.Proxy.URL != "" {
+			if dc, err := network.MakeDialContext(ctx.Config.Proxy.URL, 2*time.Second); err == nil && dc != nil {
+				return dc(c, "tcp", target)
+			}
+		}
+		return net.DialTimeout("tcp", target, 2*time.Second)
+	}
+
+	bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
 	// 测试HTTPS端口443的连通性
-	conn, err := net.DialTimeout("tcp", ip+":443", 2*time.Second)
+	conn, err := dialFunc(bgCtx, ip+":443")
 	if err != nil {
 		// 如果HTTPS不可达，尝试HTTP端口80
-		conn, err = net.DialTimeout("tcp", ip+":80", 2*time.Second)
+		conn, err = dialFunc(bgCtx, ip+":80")
 		if err != nil {
 			return false
 		}

@@ -66,7 +66,11 @@ func (r *RootCmd) executeDaemon(args []string) {
 	}
 
 	// 3. 构建扫描网络核心
-	scannerEngine := scanner.NewScanner()
+	scanProxy := ""
+	if r.config != nil && r.config.Proxy.Scanner && r.config.Proxy.URL != "" {
+		scanProxy = r.config.Proxy.URL
+	}
+	scannerEngine := scanner.NewScanner(scanProxy)
 
 	// 4. 构建配置与事件回调
 	cfg := core.DaemonConfig{

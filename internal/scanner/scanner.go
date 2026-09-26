@@ -14,16 +14,22 @@ import (
 	"time"
 
 	"RealityChecker/internal/logger"
+	"RealityChecker/internal/network"
 
 	"github.com/oschwald/geoip2-golang"
 )
 
 type Scanner struct {
-	geoReader *geoip2.Reader
+	geoReader   *geoip2.Reader
+	proxyURL    string
+	dialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
-func NewScanner() *Scanner {
+func NewScanner(proxyURL ...string) *Scanner {
 	s := &Scanner{}
+	if len(proxyURL) > 0 && strings.TrimSpace(proxyURL[0]) != "" {
+		s.SetProxy(proxyURL[0])
+	}
 	paths := []string{"data/Country.mmdb", "Country.mmdb"}
 	for _, p := range paths {
 		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
@@ -34,6 +40,17 @@ func NewScanner() *Scanner {
 		}
 	}
 	return s
+}
+
+func (s *Scanner) SetProxy(proxyURL string) {
+	s.proxyURL = strings.TrimSpace(proxyURL)
+	if s.proxyURL != "" {
+		if dc, err := network.MakeDialContext(s.proxyURL, 3*time.Second); err == nil {
+			s.dialContext = dc
+		}
+	} else {
+		s.dialContext = nil
+	}
 }
 
 func (s *Scanner) Close() {
@@ -219,7 +236,11 @@ func (s *Scanner) scanTLSSingleWithProbe(ctx context.Context, host Host, port in
 
 	// 应对本地套接字/端口耗尽做最多 3 次退避重试
 	for attempt := 0; attempt < 3; attempt++ {
-		conn, err = dialer.DialContext(ctx, "tcp", hostPort)
+		if s.dialContext != nil {
+			conn, err = s.dialContext(ctx, "tcp", hostPort)
+		} else {
+			conn, err = dialer.DialContext(ctx, "tcp", hostPort)
+		}
 		if err == nil {
 			break
 		}

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"RealityChecker/internal/network"
 	"RealityChecker/internal/storage"
 	"RealityChecker/internal/types"
 )
@@ -17,6 +18,7 @@ import (
 type PatrolConfig struct {
 	Concurrency       int           `json:"concurrency"`
 	Timeout           time.Duration `json:"timeout"`
+	ProxyURL          string        `json:"proxy_url,omitempty"` // 巡检使用的代理地址
 	HighStarAge       time.Duration `json:"high_star_age"`       // 4~5星高价值资产巡检周期 (默认 24h)
 	NormalStarAge     time.Duration `json:"normal_star_age"`     // 2~3星普通资产巡检周期 (默认 72h)
 	LogRetention      time.Duration `json:"log_retention"`       // 巡检日志保留时间 (默认 7 天)
@@ -55,10 +57,11 @@ type PatrolEvents struct {
 
 // PatrolWatchdog 存量 REALITY 资产健康巡检与生命周期守护服务
 type PatrolWatchdog struct {
-	store  *storage.TargetStore
-	config PatrolConfig
-	events PatrolEvents
-	dialer *net.Dialer
+	store    *storage.TargetStore
+	config   PatrolConfig
+	events   PatrolEvents
+	dialer   *net.Dialer
+	dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // NewPatrolWatchdog 创建存量资产健康守护服务
@@ -79,13 +82,23 @@ func NewPatrolWatchdog(store *storage.TargetStore, cfg PatrolConfig, events Patr
 		cfg.BatchSize = 100
 	}
 
+	dialer := &net.Dialer{
+		Timeout: cfg.Timeout,
+	}
+
+	dialFunc := dialer.DialContext
+	if cfg.ProxyURL != "" {
+		if dc, err := network.MakeDialContext(cfg.ProxyURL, cfg.Timeout); err == nil && dc != nil {
+			dialFunc = dc
+		}
+	}
+
 	return &PatrolWatchdog{
-		store:  store,
-		config: cfg,
-		events: events,
-		dialer: &net.Dialer{
-			Timeout: cfg.Timeout,
-		},
+		store:    store,
+		config:   cfg,
+		events:   events,
+		dialer:   dialer,
+		dialFunc: dialFunc,
 	}
 }
 
@@ -112,7 +125,7 @@ func (w *PatrolWatchdog) CheckTarget(ctx context.Context, target *types.TargetRe
 	address := net.JoinHostPort(host, strconv.Itoa(port))
 
 	// 1. 建立 TCP 连接
-	tcpConn, err := w.dialer.DialContext(ctx, "tcp", address)
+	tcpConn, err := w.dialFunc(ctx, "tcp", address)
 	if err != nil {
 		_ = w.store.UpdateTargetPatrolResult(target.Domain, target.IP, 0, 0, false, err.Error())
 		return false, 0, 0, err

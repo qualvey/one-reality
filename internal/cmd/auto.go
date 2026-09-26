@@ -58,7 +58,13 @@ func (r *RootCmd) executeAuto(opts AutoScanCLIOptions) {
 		return
 	}
 
-	scannerEngine := scanner.NewScanner()
+	scanProxy := ""
+	if r.config != nil && r.config.Proxy.Scanner && r.config.Proxy.URL != "" {
+		scanProxy = r.config.Proxy.URL
+		ui.PrintTimestampedMessage("⚠️ 提示: 网络扫描已启用代理通道 [%s] (测速与握手延迟将包含代理链路耗时)", scanProxy)
+	}
+
+	scannerEngine := scanner.NewScanner(scanProxy)
 	defer scannerEngine.Close()
 
 	targetStore, err := storage.NewTargetStore("data/reality_targets.db")
