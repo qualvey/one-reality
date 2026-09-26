@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -92,6 +93,72 @@ func ExtractCertDomain(leaf *x509.Certificate) string {
 	}
 
 	return ""
+}
+
+// IsValidPublicDomain 检查提取出的域名是否为合法的公网 FQDN（过滤 localhost、纯 IP、单段主机名、内网/保留后缀）
+func IsValidPublicDomain(domain string) bool {
+	domain = strings.TrimSpace(strings.ToLower(domain))
+	if domain == "" || domain == "localhost" {
+		return false
+	}
+	// 排除纯 IP 地址
+	if net.ParseIP(domain) != nil {
+		return false
+	}
+	// 必须包含至少一个点，且点不能在首尾，也不能包含连续点
+	if !strings.Contains(domain, ".") || strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") || strings.Contains(domain, "..") {
+		return false
+	}
+	// 排除包含非法字符或空字符
+	if strings.ContainsAny(domain, " \t\r\n*:/\\#@!") {
+		return false
+	}
+	// 排除常见本地和保留后缀
+	invalidSuffixes := []string{
+		".local", ".lan", ".internal", ".home", ".corp",
+		".arpa", ".test", ".example", ".invalid", ".localhost",
+	}
+	for _, suffix := range invalidSuffixes {
+		if strings.HasSuffix(domain, suffix) {
+			return false
+		}
+	}
+	return true
+}
+
+// VerifyPublicCACert 验证证书是否由受信任的公网根 CA 颁发且在有效期内（排除自签名证书、私有证书与过期证书）
+func VerifyPublicCACert(leaf *x509.Certificate, intermediates []*x509.Certificate) error {
+	if leaf == nil {
+		return errors.New("证书为空")
+	}
+
+	// 检查有效期
+	now := time.Now()
+	if now.Before(leaf.NotBefore) {
+		return fmt.Errorf("证书尚未生效 (生效时间: %s)", leaf.NotBefore.Format("2006-01-02"))
+	}
+	if now.After(leaf.NotAfter) {
+		return fmt.Errorf("证书已过期 (过期时间: %s)", leaf.NotAfter.Format("2006-01-02"))
+	}
+
+	// 排除自签名证书 (当 Issuer 等同于 Subject 时判定为自签)
+	if leaf.Issuer.String() == leaf.Subject.String() {
+		return errors.New("自签名证书 (Self-signed)")
+	}
+
+	opts := x509.VerifyOptions{
+		Intermediates: x509.NewCertPool(),
+		CurrentTime:   now,
+	}
+	for _, cert := range intermediates {
+		opts.Intermediates.AddCert(cert)
+	}
+
+	if _, err := leaf.Verify(opts); err != nil {
+		return fmt.Errorf("非受信任的公共CA签发: %w", err)
+	}
+
+	return nil
 }
 
 // isLocalResourceExhaustion 判定是否为本地套接字/缓冲区耗尽错误
@@ -212,6 +279,16 @@ func (s *Scanner) scanTLSSingleWithProbe(ctx context.Context, host Host, port in
 	domain := ExtractCertDomain(leaf)
 	if len(domain) == 0 {
 		probe.FailureReason = "证书未包含有效域名 (SAN/CN为空或通配符)"
+		return nil, false, probe
+	}
+
+	if !IsValidPublicDomain(domain) {
+		probe.FailureReason = "域名非公网有效 FQDN: " + domain
+		return nil, false, probe
+	}
+
+	if err := VerifyPublicCACert(leaf, state.PeerCertificates[1:]); err != nil {
+		probe.FailureReason = "证书有效性校验失败: " + err.Error()
 		return nil, false, probe
 	}
 
