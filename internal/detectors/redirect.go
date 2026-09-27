@@ -217,43 +217,7 @@ func (rs *RedirectStage) Name() string {
 	return "redirect"
 }
 
-// performHTTPCDNDetection 执行HTTP CDN检测
+// performHTTPCDNDetection 执行 HTTP/CNAME CDN 检测
 func (rs *RedirectStage) performHTTPCDNDetection(ctx *types.PipelineContext, domain string, networkResult *types.NetworkResult) *types.CDNResult {
-	// 创建CDN检测阶段
-	cdnStage := NewCDNStage()
-
-	// 只执行HTTP相关的CDN检测方法
-	isCDN, provider, confidence, evidence := rs.performHTTPCDNChecks(cdnStage, networkResult)
-
-	if isCDN {
-		return &types.CDNResult{
-			IsCDN:       isCDN,
-			CDNProvider: provider,
-			Confidence:  confidence,
-			Evidence:    evidence,
-		}
-	}
-
-	return nil
-}
-
-// performHTTPCDNChecks 执行HTTP CDN检测检查
-func (rs *RedirectStage) performHTTPCDNChecks(cdnStage *CDNStage, networkResult *types.NetworkResult) (bool, string, string, string) {
-	// 高置信度检测（优先级最高）
-	// HTTP强响应头检测
-	if provider, evidence := cdnStage.checkHTTPStrongHeader(networkResult); provider != "" {
-		return true, provider, "高", evidence
-	}
-
-	// HTTP头值CDN域名检测
-	if provider, evidence := cdnStage.checkHTTPValueCdnDomains(networkResult); provider != "" {
-		return true, provider, "高", evidence
-	}
-
-	// 中等置信度检测（只有在没有高置信度时才执行）
-	// HTTP中等响应头检测
-	if provider, evidence := cdnStage.checkHTTPMediumHeader(networkResult); provider != "" {
-		return true, provider, "中", evidence
-	}
-	return false, "", "", ""
+	return GetCDNDetector().Detect(domain, networkResult)
 }

@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
-	"strings"
 	"time"
 
 	"RealityChecker/internal/types"
@@ -278,28 +277,11 @@ func (cts *ComprehensiveTLSStage) checkCriticalRequirements(result *Comprehensiv
 	return true
 }
 
-// performCDNDetection 执行证书CDN检测
+// performCDNDetection 执行证书CDN检测 (精准避免 Google/Amazon 误杀)
 func (cts *ComprehensiveTLSStage) performCDNDetection(ctx *types.PipelineContext, domain string) *types.CDNResult {
-	// 只执行证书相关的CDN检测（低置信度）
-	// 使用已有的证书信息，避免重复TLS连接
 	if ctx.Result.Certificate != nil {
-		// 检查证书签发者
-		issuer := ctx.Result.Certificate.Issuer
-		issuerLower := strings.ToLower(issuer)
-
-		// 检查是否包含CDN特征
-		cdnKeywords := []string{"cloudflare", "amazon", "google", "akamai"}
-		for _, keyword := range cdnKeywords {
-			if strings.Contains(issuerLower, keyword) {
-				return &types.CDNResult{
-					IsCDN:       true,
-					CDNProvider: "CDN",
-					Confidence:  "低",
-					Evidence:    fmt.Sprintf("证书签发者提示: %s", issuer),
-				}
-			}
-		}
+		return GetCDNDetector().CheckCertificateIssuerString(ctx.Result.Certificate.Issuer, domain)
 	}
-
 	return nil
 }
+
