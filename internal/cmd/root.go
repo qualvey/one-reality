@@ -116,6 +116,8 @@ func (r *RootCmd) Execute() {
 		r.executePipe()
 	case "auto":
 		r.parseAndExecuteAuto(subArgs)
+	case "migrate":
+		r.executeMigrate(subArgs)
 	case "check":
 		if len(subArgs) < 1 {
 			ui.PrintErrorWithDetails(
@@ -154,7 +156,7 @@ func (r *RootCmd) Execute() {
 	default:
 		ui.PrintErrorWithDetails(
 			fmt.Sprintf("错误：未知命令 '%s'", subCmd),
-			"可用命令: get, serve, daemon, patrol, auto, asn, pipe, check, batch, version",
+			"可用命令: get, serve, daemon, patrol, auto, asn, migrate, pipe, check, batch, version",
 		)
 		os.Exit(1)
 	}
