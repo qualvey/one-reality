@@ -6,6 +6,33 @@ log:
   level: info
   file: ""
 
+# 数据库存储引擎配置
+database:
+  # 可选驱动类型: "sqlite" (默认，单机轻量零依赖) 或 "postgres" (推荐高并发与分布式扫描)
+  driver: "sqlite"
+
+  # SQLite 专用配置 (当 driver 为 sqlite 时生效)
+  sqlite:
+    path: "data/reality_targets.db"
+    busy_timeout: 5000
+    journal_mode: "WAL"
+    synchronous: "NORMAL"
+
+  # PostgreSQL 专用配置 (当 driver 为 postgres 时生效)
+  postgres:
+    # 优先使用 DSN 连接串 (若非空则直接采用):
+    # dsn: "postgres://user:password@localhost:5432/reality_checker?sslmode=disable"
+    host: "127.0.0.1"
+    port: 5432
+    user: "postgres"
+    password: ""
+    dbname: "reality_checker"
+    sslmode: "disable"               # disable / require / verify-ca / verify-full
+    max_conns: 50                    # 最大并发连接池大小
+    min_conns: 5                     # 最小空闲连接数
+    max_conn_lifetime: "1h"          # 连接最长复用时间
+    max_conn_idle_time: "30m"        # 空闲连接超时释放
+
 # REALITY 目标选型过滤策略 (遵从 Xray 官方最佳实践)
 reality_filter:
   # ==================== 网络与运行环境策略 ====================

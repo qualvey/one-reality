@@ -198,6 +198,56 @@ func mergeConfig(defaultConfig *types.Config, fileConfig *types.Config) {
 	if fileConfig.Log.File != "" {
 		defaultConfig.Log.File = fileConfig.Log.File
 	}
+
+	// 数据库配置
+	if fileConfig.Database.Driver != "" {
+		defaultConfig.Database.Driver = fileConfig.Database.Driver
+	}
+	if fileConfig.Database.SQLite.Path != "" {
+		defaultConfig.Database.SQLite.Path = fileConfig.Database.SQLite.Path
+	}
+	if fileConfig.Database.SQLite.BusyTimeout > 0 {
+		defaultConfig.Database.SQLite.BusyTimeout = fileConfig.Database.SQLite.BusyTimeout
+	}
+	if fileConfig.Database.SQLite.JournalMode != "" {
+		defaultConfig.Database.SQLite.JournalMode = fileConfig.Database.SQLite.JournalMode
+	}
+	if fileConfig.Database.SQLite.Synchronous != "" {
+		defaultConfig.Database.SQLite.Synchronous = fileConfig.Database.SQLite.Synchronous
+	}
+	if fileConfig.Database.Postgres.DSN != "" {
+		defaultConfig.Database.Postgres.DSN = fileConfig.Database.Postgres.DSN
+	}
+	if fileConfig.Database.Postgres.Host != "" {
+		defaultConfig.Database.Postgres.Host = fileConfig.Database.Postgres.Host
+	}
+	if fileConfig.Database.Postgres.Port > 0 {
+		defaultConfig.Database.Postgres.Port = fileConfig.Database.Postgres.Port
+	}
+	if fileConfig.Database.Postgres.User != "" {
+		defaultConfig.Database.Postgres.User = fileConfig.Database.Postgres.User
+	}
+	if fileConfig.Database.Postgres.Password != "" {
+		defaultConfig.Database.Postgres.Password = fileConfig.Database.Postgres.Password
+	}
+	if fileConfig.Database.Postgres.DBName != "" {
+		defaultConfig.Database.Postgres.DBName = fileConfig.Database.Postgres.DBName
+	}
+	if fileConfig.Database.Postgres.SSLMode != "" {
+		defaultConfig.Database.Postgres.SSLMode = fileConfig.Database.Postgres.SSLMode
+	}
+	if fileConfig.Database.Postgres.MaxConns > 0 {
+		defaultConfig.Database.Postgres.MaxConns = fileConfig.Database.Postgres.MaxConns
+	}
+	if fileConfig.Database.Postgres.MinConns > 0 {
+		defaultConfig.Database.Postgres.MinConns = fileConfig.Database.Postgres.MinConns
+	}
+	if fileConfig.Database.Postgres.MaxConnLifetime > 0 {
+		defaultConfig.Database.Postgres.MaxConnLifetime = fileConfig.Database.Postgres.MaxConnLifetime
+	}
+	if fileConfig.Database.Postgres.MaxConnIdleTime > 0 {
+		defaultConfig.Database.Postgres.MaxConnIdleTime = fileConfig.Database.Postgres.MaxConnIdleTime
+	}
 }
 
 // GetDefaultConfig 获取全局标准默认配置
@@ -295,11 +345,67 @@ func getDefaultConfig() *types.Config {
 			Level: "info",
 			File:  "",
 		},
+		Database: types.DatabaseConfig{
+			Driver: "sqlite",
+			SQLite: types.SQLiteConfig{
+				Path:        "data/reality_targets.db",
+				BusyTimeout: 5000,
+				JournalMode: "WAL",
+				Synchronous: "NORMAL",
+			},
+			Postgres: types.PostgresConfig{
+				Host:            "127.0.0.1",
+				Port:            5432,
+				User:            "postgres",
+				Password:        "",
+				DBName:          "reality_checker",
+				SSLMode:         "disable",
+				MaxConns:        50,
+				MinConns:        5,
+				MaxConnLifetime: time.Hour,
+				MaxConnIdleTime: 30 * time.Minute,
+			},
+		},
 	}
 }
 
 // validateAndSetDefaults 验证配置并设置默认值
 func validateAndSetDefaults(config *types.Config) {
+	// 数据库配置校验与缺省补充
+	if config.Database.Driver == "" {
+		config.Database.Driver = "sqlite"
+	}
+	config.Database.Driver = strings.ToLower(strings.TrimSpace(config.Database.Driver))
+	if config.Database.SQLite.Path == "" {
+		config.Database.SQLite.Path = "data/reality_targets.db"
+	}
+	if config.Database.SQLite.BusyTimeout <= 0 {
+		config.Database.SQLite.BusyTimeout = 5000
+	}
+	if config.Database.SQLite.JournalMode == "" {
+		config.Database.SQLite.JournalMode = "WAL"
+	}
+	if config.Database.SQLite.Synchronous == "" {
+		config.Database.SQLite.Synchronous = "NORMAL"
+	}
+	if config.Database.Postgres.Port <= 0 {
+		config.Database.Postgres.Port = 5432
+	}
+	if config.Database.Postgres.SSLMode == "" {
+		config.Database.Postgres.SSLMode = "disable"
+	}
+	if config.Database.Postgres.MaxConns <= 0 {
+		config.Database.Postgres.MaxConns = 50
+	}
+	if config.Database.Postgres.MinConns <= 0 {
+		config.Database.Postgres.MinConns = 5
+	}
+	if config.Database.Postgres.MaxConnLifetime <= 0 {
+		config.Database.Postgres.MaxConnLifetime = time.Hour
+	}
+	if config.Database.Postgres.MaxConnIdleTime <= 0 {
+		config.Database.Postgres.MaxConnIdleTime = 30 * time.Minute
+	}
 	// 网络配置验证
 	if config.Network.Timeout <= 0 {
 		config.Network.Timeout = 30 * time.Second

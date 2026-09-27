@@ -470,6 +470,37 @@ type Config struct {
 	RealityFilter RealityFilterConfig `yaml:"reality_filter"`
 	Log           LogConfig           `yaml:"log"`
 	Server        ServerConfig        `yaml:"server"`
+	Database      DatabaseConfig      `yaml:"database"`
+}
+
+// DatabaseConfig 数据库存储引擎配置
+type DatabaseConfig struct {
+	Driver   string         `yaml:"driver"` // "sqlite" (默认) 或 "postgres"
+	SQLite   SQLiteConfig   `yaml:"sqlite"`
+	Postgres PostgresConfig `yaml:"postgres"`
+}
+
+// SQLiteConfig SQLite 专用配置
+type SQLiteConfig struct {
+	Path        string `yaml:"path"`
+	BusyTimeout int    `yaml:"busy_timeout"`
+	JournalMode string `yaml:"journal_mode"`
+	Synchronous string `yaml:"synchronous"`
+}
+
+// PostgresConfig PostgreSQL 专用配置
+type PostgresConfig struct {
+	DSN             string        `yaml:"dsn"`
+	Host            string        `yaml:"host"`
+	Port            int           `yaml:"port"`
+	User            string        `yaml:"user"`
+	Password        string        `yaml:"password"`
+	DBName          string        `yaml:"dbname"`
+	SSLMode         string        `yaml:"sslmode"`
+	MaxConns        int           `yaml:"max_conns"`
+	MinConns        int           `yaml:"min_conns"`
+	MaxConnLifetime time.Duration `yaml:"max_conn_lifetime"`
+	MaxConnIdleTime time.Duration `yaml:"max_conn_idle_time"`
 }
 
 // ServerConfig HTTP 服务配置

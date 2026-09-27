@@ -177,3 +177,64 @@ network:
 	}
 }
 
+func TestDatabaseConfig_LoadAndMerge(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// 1. 默认配置测试
+	defaultCfg := GetDefaultConfig()
+	if defaultCfg.Database.Driver != "sqlite" {
+		t.Errorf("expected default driver sqlite, got %s", defaultCfg.Database.Driver)
+	}
+	if defaultCfg.Database.SQLite.Path != "data/reality_targets.db" {
+		t.Errorf("expected default sqlite path data/reality_targets.db, got %s", defaultCfg.Database.SQLite.Path)
+	}
+
+	// 2. 从 YAML 文件加载 postgres 配置测试
+	yamlContent := `
+database:
+  driver: "postgres"
+  postgres:
+    host: "10.0.0.5"
+    port: 5433
+    user: "reality_user"
+    password: "secret_password"
+    dbname: "reality_prod"
+    sslmode: "require"
+    max_conns: 100
+`
+	configFile := filepath.Join(tempDir, "config_db.yaml")
+	if err := os.WriteFile(configFile, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write config_db.yaml: %v", err)
+	}
+
+	cfg, err := LoadConfig(configFile)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.Database.Driver != "postgres" {
+		t.Errorf("expected driver postgres, got %s", cfg.Database.Driver)
+	}
+	if cfg.Database.Postgres.Host != "10.0.0.5" {
+		t.Errorf("expected host 10.0.0.5, got %s", cfg.Database.Postgres.Host)
+	}
+	if cfg.Database.Postgres.Port != 5433 {
+		t.Errorf("expected port 5433, got %d", cfg.Database.Postgres.Port)
+	}
+	if cfg.Database.Postgres.User != "reality_user" {
+		t.Errorf("expected user reality_user, got %s", cfg.Database.Postgres.User)
+	}
+	if cfg.Database.Postgres.Password != "secret_password" {
+		t.Errorf("expected password secret_password, got %s", cfg.Database.Postgres.Password)
+	}
+	if cfg.Database.Postgres.DBName != "reality_prod" {
+		t.Errorf("expected dbname reality_prod, got %s", cfg.Database.Postgres.DBName)
+	}
+	if cfg.Database.Postgres.SSLMode != "require" {
+		t.Errorf("expected sslmode require, got %s", cfg.Database.Postgres.SSLMode)
+	}
+	if cfg.Database.Postgres.MaxConns != 100 {
+		t.Errorf("expected max_conns 100, got %d", cfg.Database.Postgres.MaxConns)
+	}
+}
+
+
