@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { RankedTargetItem, TargetSummaryInfo, TargetItem } from '../types';
 import { ConfigModal } from './ConfigModal';
 import {
@@ -9,6 +9,10 @@ import {
   Copy,
   Check,
   Zap,
+  ShieldCheck,
+  Key,
+  Square,
+  Play,
 } from 'lucide-react';
 
 export const SmartFinder = () => {
@@ -16,9 +20,13 @@ export const SmartFinder = () => {
   const [limit] = useState(12);
   const [minStars, setMinStars] = useState(3);
   const [requireNoCN, setRequireNoCN] = useState(true);
-  const [useStream, setUseStream] = useState(false);
+
+  // 鉴权 Token
+  const [apiToken, setApiToken] = useState(() => localStorage.getItem('rc_api_token') || '');
+  const [showTokenSettings, setShowTokenSettings] = useState(false);
 
   const [loading, setLoading] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
   const [error, setError] = useState('');
   const [summary, setSummary] = useState<TargetSummaryInfo | null>(null);
   const [targets, setTargets] = useState<RankedTargetItem[]>([]);
@@ -26,6 +34,26 @@ export const SmartFinder = () => {
 
   const [selectedTarget, setSelectedTarget] = useState<TargetItem | null>(null);
   const [copiedDomain, setCopiedDomain] = useState<string | null>(null);
+
+  // 维护活动的 EventSource 实例便于主动取消
+  const esRef = useRef<EventSource | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (esRef.current) {
+        esRef.current.close();
+      }
+    };
+  }, []);
+
+  const handleTokenChange = (val: string) => {
+    setApiToken(val);
+    if (val.trim()) {
+      localStorage.setItem('rc_api_token', val.trim());
+    } else {
+      localStorage.removeItem('rc_api_token');
+    }
+  };
 
   // 快捷测试 IP
   const sampleIPs = [
@@ -35,6 +63,18 @@ export const SmartFinder = () => {
     { label: '香港 GCP (AS396982)', ip: '34.92.12.80' },
   ];
 
+  // 终止流式扫描
+  const stopScan = () => {
+    if (esRef.current) {
+      esRef.current.close();
+      esRef.current = null;
+    }
+    setIsScanning(false);
+    setLoading(false);
+    setStreamProgress('扫描已由用户手动停止，断点进度已安全保存。');
+  };
+
+  // 核心查询逻辑：优先查库返回；提前获得 ASN、国家与断点信息
   const handleSearch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const cleanIP = ip.trim();
@@ -43,79 +83,31 @@ export const SmartFinder = () => {
       return;
     }
 
+    if (esRef.current) {
+      esRef.current.close();
+      esRef.current = null;
+    }
+    setIsScanning(false);
     setLoading(true);
     setError('');
     setTargets([]);
     setStreamProgress('');
 
-    if (useStream) {
-      // SSE 流式响应
-      const url = `/api/targets/stream?ip=${encodeURIComponent(cleanIP)}&limit=${limit}&min_stars=${minStars}&require_no_cn=${requireNoCN ? 1 : 0}`;
-      const es = new EventSource(url);
-
-      es.addEventListener('init', (evt: any) => {
-        try {
-          const data = JSON.parse(evt.data);
-          setSummary({
-            target_ip: data.ip,
-            asn: data.asn,
-            country: data.country,
-            same_asn_hits: data.cached_hits,
-            total_hits: data.need,
-          });
-          setStreamProgress(`已匹配到所属 ASN: ${data.asn} (${data.country})，扫描 ${data.cidr_count} 个网段...`);
-        } catch (_) {}
-      });
-
-      es.addEventListener('progress', (evt: any) => {
-        try {
-          const data = JSON.parse(evt.data);
-          setStreamProgress(`探测中: ${data.current_cidr} (已探 ${data.scanned_ips} 个 IP)`);
-        } catch (_) {}
-      });
-
-      es.addEventListener('target', (evt: any) => {
-        try {
-          const item: TargetItem = JSON.parse(evt.data);
-          setTargets((prev) => {
-            const exists = prev.some((p) => p.domain === item.domain);
-            if (exists) return prev;
-            const isSameASN = summary?.asn && item.asn && item.asn.toUpperCase() === summary.asn.toUpperCase();
-            const ranked: RankedTargetItem = {
-              ...item,
-              match_level: isSameASN ? 'same_asn' : 'same_country',
-              score: isSameASN ? 1000 + item.stars * 30 : 250 + item.stars * 30,
-            };
-            return [...prev, ranked];
-          });
-        } catch (_) {}
-      });
-
-      es.addEventListener('done', () => {
-        setLoading(false);
-        setStreamProgress('');
-        es.close();
-      });
-
-      es.addEventListener('error', () => {
-        setLoading(false);
-        setStreamProgress('');
-        es.close();
-        if (targets.length === 0) {
-          setError('流式探测中断或无匹配目标');
-        }
-      });
-      return;
-    }
-
-    // 默认走智能动态加权排序端点
     try {
-      const url = `/api/targets/smart?ip=${encodeURIComponent(cleanIP)}&limit=${limit}&min_stars=${minStars}&require_no_cn=${requireNoCN ? 1 : 0}`;
-      const res = await fetch(url);
+      const tokenParam = apiToken.trim() ? `&token=${encodeURIComponent(apiToken.trim())}` : '';
+      const url = `/api/targets/smart?ip=${encodeURIComponent(cleanIP)}&limit=${limit}&min_stars=${minStars}&require_no_cn=${requireNoCN ? 1 : 0}${tokenParam}`;
+      
+      const headers: Record<string, string> = {};
+      if (apiToken.trim()) {
+        headers['Authorization'] = `Bearer ${apiToken.trim()}`;
+      }
+
+      const res = await fetch(url, { headers });
       const data = await res.json();
       if (!res.ok || data.code !== 200) {
-        throw new Error(data.error || '请求推荐目标失败');
+        throw new Error(data.error || '请求匹配失败');
       }
+
       setSummary(data.data.summary);
       setTargets(data.data.targets || []);
     } catch (err: any) {
@@ -123,6 +115,103 @@ export const SmartFinder = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // 触发流式扫描：提前把任务与元数据推到前端，并在后台以单 IP 粒度断点续传扫描
+  const startScanStream = (scanAll: boolean = true) => {
+    const cleanIP = ip.trim();
+    if (!cleanIP) {
+      setError('请输入节点服务器 IP');
+      return;
+    }
+
+    if (esRef.current) {
+      esRef.current.close();
+    }
+
+    setLoading(true);
+    setIsScanning(true);
+    setError('');
+    setStreamProgress('正在连接流式扫描引擎，首帧提前同步 ASN 与拓扑信息...');
+
+    const tokenParam = apiToken.trim() ? `&token=${encodeURIComponent(apiToken.trim())}` : '';
+    const scanAllParam = scanAll ? '&scan_all=1' : '';
+    const url = `/api/targets/stream?ip=${encodeURIComponent(cleanIP)}&limit=${limit}&min_stars=${minStars}&require_no_cn=${requireNoCN ? 1 : 0}${scanAllParam}${tokenParam}`;
+
+    const es = new EventSource(url);
+    esRef.current = es;
+
+    es.addEventListener('init', (evt: any) => {
+      try {
+        const data = JSON.parse(evt.data);
+        setSummary((prev) => ({
+          target_ip: data.ip,
+          asn: data.asn,
+          country: data.country,
+          cidr_count: data.cidr_count,
+          total_ips: data.total_ips,
+          has_checkpoint: data.has_checkpoint,
+          last_checkpoint_ip: data.last_checkpoint_ip,
+          same_asn_hits: data.cached_hits,
+          total_hits: prev?.total_hits || data.cached_hits,
+        }));
+
+        let msg = `⚡ 提前就绪：${data.asn} (${data.country})，涵盖 ${data.cidr_count} 个网段 (约 ${data.total_ips?.toLocaleString() || 0} 个 IP)`;
+        if (data.has_checkpoint && data.last_checkpoint_ip) {
+          msg += `，发现断点，正从 ${data.last_checkpoint_ip} 自动精准续传...`;
+        } else {
+          msg += `，开始首轮并发探测...`;
+        }
+        setStreamProgress(msg);
+      } catch (_) {}
+    });
+
+    es.addEventListener('progress', (evt: any) => {
+      try {
+        const data = JSON.parse(evt.data);
+        setStreamProgress(`🔍 并发探测中: ${data.current_cidr} (已扫描 ${data.scanned_ips} 个 IP，当前探测 ${data.current_ip})`);
+      } catch (_) {}
+    });
+
+    es.addEventListener('target', (evt: any) => {
+      try {
+        const item: TargetItem = JSON.parse(evt.data);
+        setTargets((prev) => {
+          const exists = prev.some((p) => p.domain === item.domain);
+          if (exists) return prev;
+          const isSameASN = summary?.asn && item.asn && item.asn.toUpperCase() === summary.asn.toUpperCase();
+          const ranked: RankedTargetItem = {
+            ...item,
+            match_level: isSameASN ? 'same_asn' : 'same_country',
+            score: isSameASN ? 1000 + item.stars * 30 : 250 + item.stars * 30,
+          };
+          return [...prev, ranked];
+        });
+      } catch (_) {}
+    });
+
+    es.addEventListener('done', (evt: any) => {
+      setIsScanning(false);
+      setLoading(false);
+      try {
+        const doneData = JSON.parse(evt.data);
+        setStreamProgress(`✅ 扫描完成！本次共获得 ${doneData.total_found || 0} 个优质目标。`);
+      } catch (_) {
+        setStreamProgress('✅ 扫描完成。');
+      }
+      es.close();
+      esRef.current = null;
+    });
+
+    es.addEventListener('error', () => {
+      setIsScanning(false);
+      setLoading(false);
+      es.close();
+      esRef.current = null;
+      if (targets.length === 0) {
+        setError('流式探测中断或鉴权失败，请检查 Token 与网络状态');
+      }
+    });
   };
 
   const copyDomain = (domain: string) => {
@@ -143,14 +232,60 @@ export const SmartFinder = () => {
               REALITY 伪装匹配
             </h1>
             <p className="hero-subtitle">
-              输入你的落地服务器或 VPS IP，系统自动识别其所属 ASN 自治域与机房。
-              <b style={{ color: '#fb923c' }}> 同 ASN 目标自动加权 1000 分置顶推荐</b>，实现拓扑同网段、毫秒级直连的天衣无缝伪装。
+              输入你的落地服务器或 VPS IP，系统自动提前解析其所属 ASN 与网段。
+              <b style={{ color: '#fb923c' }}> 本地库有即秒级返回；若无则支持一键马上扫描，精准 IP 级断点续传。</b>
             </p>
+          </div>
+
+          {/* 鉴权设置快速入口 */}
+          <div>
+            <button
+              type="button"
+              className={`btn ${apiToken ? 'btn-secondary' : 'btn-ghost'}`}
+              style={{ padding: '8px 14px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+              onClick={() => setShowTokenSettings(!showTokenSettings)}
+              title="配置 API 访问鉴权 Token"
+            >
+              {apiToken ? <ShieldCheck size={16} style={{ color: 'var(--accent-emerald)' }} /> : <Key size={16} />}
+              <span>{apiToken ? 'Token 已配置' : '设置 Token'}</span>
+            </button>
           </div>
         </div>
 
+        {/* Token 设置可折叠面板 */}
+        {showTokenSettings && (
+          <div className="glass-panel" style={{ padding: '16px 20px', marginTop: '14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)', background: 'rgba(15, 23, 42, 0.65)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.88rem', fontWeight: 600 }}>
+                <Key size={15} style={{ color: 'var(--accent-cyan)' }} />
+                <span>API 鉴权密钥 (Authorization Token)</span>
+              </div>
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-sub)' }}>若后端开启了鉴权，查询与流式探测需携带此 Token</span>
+            </div>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <input
+                type="password"
+                placeholder="输入服务端的 API Token (如未开启则可留空)"
+                value={apiToken}
+                onChange={(e) => handleTokenChange(e.target.value)}
+                style={{ flex: 1, padding: '8px 12px', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: 'var(--text-main)', fontSize: '0.85rem' }}
+              />
+              {apiToken && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ padding: '8px 14px', fontSize: '0.82rem' }}
+                  onClick={() => handleTokenChange('')}
+                >
+                  清除
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* 搜索控制区 */}
-        <div className="search-box-card glass-panel">
+        <div className="search-box-card glass-panel" style={{ marginTop: '18px' }}>
           <form onSubmit={handleSearch} className="search-form">
             <div className="input-group">
               <Globe size={18} style={{ color: 'var(--accent-cyan)' }} />
@@ -176,9 +311,9 @@ export const SmartFinder = () => {
                 <option value={1}>全星级不限</option>
               </select>
 
-              <button type="submit" className="btn btn-primary" disabled={loading}>
+              <button type="submit" className="btn btn-primary" disabled={loading || isScanning}>
                 {loading ? <Radio size={16} className="animate-spin" /> : <Sparkles size={16} />}
-                {loading ? '正在计算拓扑权重...' : '智能匹配伪装'}
+                {loading ? '正在查询...' : '查询资产库'}
               </button>
             </div>
           </form>
@@ -212,23 +347,27 @@ export const SmartFinder = () => {
                 />
                 排除 .cn / 境内域名
               </label>
-
-              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: 'var(--text-muted)', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={useStream}
-                  onChange={(e) => setUseStream(e.target.checked)}
-                />
-                启用实时流式探测 (SSE)
-              </label>
             </div>
           </div>
 
           {/* 实时探测进度指示 */}
           {streamProgress && (
-            <div style={{ marginTop: '14px', padding: '10px 14px', background: 'rgba(56, 189, 248, 0.1)', border: '1px solid rgba(56, 189, 248, 0.25)', borderRadius: 'var(--radius-sm)', fontSize: '0.82rem', color: 'var(--accent-cyan)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Radio size={14} className="animate-pulse" />
-              <span>{streamProgress}</span>
+            <div style={{ marginTop: '14px', padding: '10px 14px', background: isScanning ? 'rgba(56, 189, 248, 0.12)' : 'rgba(16, 185, 129, 0.12)', border: isScanning ? '1px solid rgba(56, 189, 248, 0.3)' : '1px solid rgba(16, 185, 129, 0.3)', borderRadius: 'var(--radius-sm)', fontSize: '0.82rem', color: isScanning ? 'var(--accent-cyan)' : 'var(--accent-emerald)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Radio size={14} className={isScanning ? 'animate-pulse' : ''} />
+                <span>{streamProgress}</span>
+              </div>
+              {isScanning && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ padding: '4px 10px', fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--accent-rose)', borderColor: 'rgba(244,63,94,0.4)' }}
+                  onClick={stopScan}
+                >
+                  <Square size={12} />
+                  停止扫描
+                </button>
+              )}
             </div>
           )}
 
@@ -239,7 +378,7 @@ export const SmartFinder = () => {
           )}
         </div>
 
-        {/* 目标 IP 归属地与 ASN 拓扑元数据横幅 */}
+        {/* 提前呈现的 IP 归属地与 ASN 拓扑元数据横幅 */}
         {summary && (
           <div className="ip-summary-banner">
             <div className="summary-meta-group">
@@ -254,23 +393,114 @@ export const SmartFinder = () => {
                 </span>
               </div>
               <div className="summary-meta-item">
-                <span className="summary-meta-label">地区:</span>
+                <span className="summary-meta-label">国家/地区:</span>
                 <span className="summary-meta-value">{summary.country || 'GLOBAL'}</span>
               </div>
+              {summary.cidr_count !== undefined && summary.cidr_count > 0 && (
+                <div className="summary-meta-item">
+                  <span className="summary-meta-label">网段规模:</span>
+                  <span className="summary-meta-value" style={{ color: 'var(--accent-cyan)' }}>
+                    {summary.cidr_count} 段 ({summary.total_ips?.toLocaleString() || 0} IPs)
+                  </span>
+                </div>
+              )}
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <span className="badge badge-same-asn" style={{ padding: '6px 12px', fontSize: '0.82rem' }}>
                 <Flame size={14} />
-                同 ASN 命中: {summary.same_asn_hits} 个
+                同 ASN 库内命中: {summary.same_asn_hits} 个
               </span>
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-sub)' }}>
-                总计候选推荐: {targets.length} 个
-              </span>
+
+              {/* 若已有结果，亦可在此快速触发增量流式扫描 */}
+              {!isScanning ? (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ padding: '6px 12px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+                  onClick={() => startScanStream(true)}
+                  disabled={loading}
+                >
+                  <Play size={13} style={{ color: 'var(--accent-cyan)' }} />
+                  {summary.has_checkpoint ? '继续断点扫描' : '启动 ASN 扫描'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ padding: '6px 12px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--accent-rose)', borderColor: 'rgba(244,63,94,0.4)' }}
+                  onClick={stopScan}
+                >
+                  <Square size={13} />
+                  停止扫描
+                </button>
+              )}
             </div>
           </div>
         )}
       </section>
+
+      {/* 核心业务：当数据库无资产时，展示醒目的【马上扫描】开关面板 */}
+      {summary && targets.length === 0 && !loading && !isScanning && (
+        <div
+          className="glass-panel"
+          style={{
+            marginTop: '24px',
+            padding: '36px 28px',
+            borderRadius: 'var(--radius-lg)',
+            border: '1px solid rgba(56, 189, 248, 0.35)',
+            background: 'linear-gradient(180deg, rgba(15, 23, 42, 0.8) 0%, rgba(30, 41, 59, 0.6) 100%)',
+            textAlign: 'center',
+            position: 'relative',
+            overflow: 'hidden',
+          }}
+        >
+          <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '56px', height: '56px', borderRadius: '50%', background: 'rgba(249, 115, 22, 0.15)', border: '1px solid rgba(249, 115, 22, 0.4)', marginBottom: '16px' }}>
+            <Zap size={28} style={{ color: '#fb923c' }} />
+          </div>
+
+          <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-main)', marginBottom: '8px' }}>
+            该 ASN ({summary.asn} · {summary.country}) 本地库暂无收录资产
+          </h3>
+          <p style={{ color: 'var(--text-sub)', fontSize: '0.9rem', maxWidth: '640px', margin: '0 auto 20px auto', lineHeight: 1.6 }}>
+            已为您提前锁定该节点归属网络，共计识别出{' '}
+            <strong style={{ color: 'var(--accent-cyan)' }}>{summary.cidr_count || 0} 个网段</strong>，
+            涵盖约 <strong style={{ color: 'var(--accent-cyan)' }}>{summary.total_ips?.toLocaleString() || 0} 个 IP 地址</strong>。
+            {summary.has_checkpoint ? (
+              <span style={{ display: 'block', color: 'var(--accent-emerald)', marginTop: '6px' }}>
+                🔄 发现历史断点记录，上次已扫描至 <b>{summary.last_checkpoint_ip}</b>，开启后将从该 IP 精确续传！
+              </span>
+            ) : (
+              <span style={{ display: 'block', marginTop: '6px' }}>
+                打开下方开关即刻启动并发流水线，边扫边流式返回入库。
+              </span>
+            )}
+          </p>
+
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '16px' }}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{
+                padding: '12px 28px',
+                fontSize: '1rem',
+                fontWeight: 600,
+                background: 'linear-gradient(135deg, #0ea5e9, #6366f1)',
+                boxShadow: '0 0 25px rgba(99, 102, 241, 0.4)',
+                border: 'none',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '10px',
+                cursor: 'pointer',
+              }}
+              onClick={() => startScanStream(true)}
+            >
+              <Zap size={18} />
+              马上扫描该 ASN (流式探测)
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 结果卡片网格 */}
       <div className="targets-grid" style={{ marginTop: '24px' }}>
@@ -371,6 +601,9 @@ export const SmartFinder = () => {
                   {target.is_default_page && (
                     <span className="badge badge-warning">{target.default_page_type || 'Nginx'} 默认页</span>
                   )}
+                  {target.source === 'scan' && (
+                    <span className="badge" style={{ background: 'rgba(56, 189, 248, 0.2)', color: 'var(--accent-cyan)' }}>现场即时新扫</span>
+                  )}
                 </div>
               </div>
 
@@ -398,7 +631,7 @@ export const SmartFinder = () => {
         })}
       </div>
 
-      {targets.length === 0 && !loading && (
+      {!summary && targets.length === 0 && !loading && (
         <div
           className="glass-panel"
           style={{
@@ -409,9 +642,9 @@ export const SmartFinder = () => {
           }}
         >
           <Sparkles size={40} style={{ color: 'var(--accent-cyan)', margin: '0 auto 16px auto', opacity: 0.6 }} />
-          <h3>暂无推荐资产</h3>
+          <h3>输入落地服务器 IP 开始匹配</h3>
           <p style={{ fontSize: '0.88rem', marginTop: '6px' }}>
-            请输入你的服务器 IP，或在上方切换更宽松的星级过滤条件重新匹配。
+            系统将提前识别其所属 ASN 自治域与拓扑规模，精准查找同 ASN 优质 REALITY 伪装目标。
           </p>
         </div>
       )}

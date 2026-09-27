@@ -1,6 +1,7 @@
 export type MatchLevel = 'same_asn' | 'same_country' | 'global';
 
 export interface TargetItem {
+  source?: string;
   domain: string;
   ip: string;
   asn: string;
@@ -25,6 +26,11 @@ export interface TargetSummaryInfo {
   target_ip: string;
   asn: string;
   country: string;
+  cidr_count?: number;
+  total_ips?: number;
+  has_checkpoint?: boolean;
+  last_checkpoint_ip?: string;
+  completed_cidr_count?: number;
   same_asn_hits: number;
   total_hits: number;
 }
