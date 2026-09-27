@@ -18,7 +18,14 @@ func (r *RootCmd) executeMigrate(args []string) {
 	flags.SetOutput(os.Stderr)
 
 	fromFlag := flags.String("from", "data/reality_targets.db", "源数据库路径或连接串 (默认: data/reality_targets.db)")
+	flags.StringVar(fromFlag, "from-sqlite", "data/reality_targets.db", "源 SQLite 数据库路径 (别名)")
+
 	toFlag := flags.String("to", "", "目标数据库路径或连接串 (留空则读取 config.yaml 中的 database.postgres)")
+	flags.StringVar(toFlag, "to-postgres", "", "目标 PostgreSQL 连接串 (别名)")
+
+	targetDriverFlag := flags.String("target-driver", "", "目标驱动类型 (postgres / sqlite，留空自动推导)")
+	flags.StringVar(targetDriverFlag, "driver", "", "目标驱动类型 (别名)")
+
 	batchSize := flags.Int("batch", 500, "批量流式写入步长")
 
 	if err := flags.Parse(args); err != nil {
@@ -50,9 +57,11 @@ func (r *RootCmd) executeMigrate(args []string) {
 
 	// 2. 初始化目标存储
 	var dstCfg *types.DatabaseConfig
+	targetDriver := strings.ToLower(strings.TrimSpace(*targetDriverFlag))
+
 	if *toFlag != "" {
 		dstDriver := "postgres"
-		if !strings.HasPrefix(*toFlag, "postgres://") && !strings.HasPrefix(*toFlag, "postgresql://") {
+		if targetDriver == "sqlite" || (!strings.HasPrefix(*toFlag, "postgres://") && !strings.HasPrefix(*toFlag, "postgresql://") && targetDriver != "postgres") {
 			dstDriver = "sqlite"
 		}
 		dstCfg = &types.DatabaseConfig{
@@ -64,13 +73,33 @@ func (r *RootCmd) executeMigrate(args []string) {
 			dstCfg.SQLite.Path = *toFlag
 		}
 	} else {
-		if r.config != nil && r.config.Database.Driver == "postgres" {
-			dstCfg = &r.config.Database
-		} else if r.config != nil && r.config.Database.Postgres.Host != "" {
-			dstCfg = &types.DatabaseConfig{
-				Driver:   "postgres",
-				Postgres: r.config.Database.Postgres,
+		if targetDriver == "postgres" || (r.config != nil && r.config.Database.Driver == "postgres") {
+			if r.config != nil && (r.config.Database.Postgres.Host != "" || r.config.Database.Postgres.DSN != "") {
+				dstCfg = &types.DatabaseConfig{
+					Driver:   "postgres",
+					Postgres: r.config.Database.Postgres,
+				}
+			} else {
+				dstCfg = &types.DatabaseConfig{
+					Driver: "postgres",
+					Postgres: types.PostgresConfig{
+						Host:     "127.0.0.1",
+						Port:     5432,
+						User:     "postgres",
+						DBName:   "reality_checker",
+						SSLMode:  "disable",
+						MaxConns: 50,
+						MinConns: 5,
+					},
+				}
 			}
+		} else if targetDriver == "sqlite" {
+			dstCfg = &types.DatabaseConfig{
+				Driver: "sqlite",
+				SQLite: types.SQLiteConfig{Path: "data/reality_targets.db"},
+			}
+		} else if r.config != nil && r.config.Database.Driver != "" {
+			dstCfg = &r.config.Database
 		} else {
 			ui.PrintError("未指定目标数据库！请通过 --to 指定 PostgreSQL DSN 或在 config.yaml 中配置 database.postgres")
 			return
