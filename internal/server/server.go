@@ -1,9 +1,11 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"RealityChecker/internal/logger"
 	"RealityChecker/internal/service"
 	"RealityChecker/internal/types"
 )
@@ -86,7 +89,7 @@ func NewTargetServer(cfg ServerConfig, svc *service.ProvisionService) *TargetSer
 		})
 	}
 
-	handler := ts.corsMiddleware(ts.authMiddleware(mux))
+	handler := ts.corsMiddleware(ts.loggingMiddleware(ts.authMiddleware(mux)))
 
 	ts.httpServer = &http.Server{
 		Addr:         cfg.Addr,
@@ -100,15 +103,113 @@ func NewTargetServer(cfg ServerConfig, svc *service.ProvisionService) *TargetSer
 
 // Start 启动 HTTP 服务（阻塞运行直到 context 取消或异常）
 func (s *TargetServer) Start() error {
+	logger.Info("🌐 HTTP 服务启动，监听于 http://%s", s.cfg.Addr)
 	return s.httpServer.ListenAndServe()
 }
 
 // Shutdown 优雅关闭 HTTP 服务
 func (s *TargetServer) Shutdown(ctx context.Context) error {
+	logger.Info("正在优雅停止 HTTP 服务...")
 	if s.httpServer != nil {
-		return s.httpServer.Shutdown(ctx)
+		err := s.httpServer.Shutdown(ctx)
+		if err == nil {
+			logger.Info("HTTP 服务已安全关闭。")
+		}
+		return err
 	}
 	return nil
+}
+
+// statusLoggingResponseWriter 捕获 HTTP 响应状态码及字节大小并透传 Flush/Hijack
+type statusLoggingResponseWriter struct {
+	http.ResponseWriter
+	statusCode   int
+	bytesWritten int64
+}
+
+func (w *statusLoggingResponseWriter) WriteHeader(code int) {
+	w.statusCode = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *statusLoggingResponseWriter) Write(b []byte) (int, error) {
+	if w.statusCode == 0 {
+		w.statusCode = http.StatusOK
+	}
+	n, err := w.ResponseWriter.Write(b)
+	w.bytesWritten += int64(n)
+	return n, err
+}
+
+func (w *statusLoggingResponseWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *statusLoggingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hijacker, ok := w.ResponseWriter.(http.Hijacker); ok {
+		return hijacker.Hijack()
+	}
+	return nil, nil, http.ErrNotSupported
+}
+
+// getClientIP 提取请求的真实客户端 IP
+func getClientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		ips := strings.Split(xff, ",")
+		if len(ips) > 0 && strings.TrimSpace(ips[0]) != "" {
+			return strings.TrimSpace(ips[0])
+		}
+	}
+	if xrip := r.Header.Get("X-Real-IP"); xrip != "" {
+		return strings.TrimSpace(xrip)
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+// loggingMiddleware 全局请求审计与性能耗时日志中间件
+func (s *TargetServer) loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rw := &statusLoggingResponseWriter{
+			ResponseWriter: w,
+			statusCode:     http.StatusOK,
+		}
+
+		next.ServeHTTP(rw, r)
+
+		duration := time.Since(start)
+		clientIP := getClientIP(r)
+
+		// 静态前端资源请求 (如 .js, .css, .ico 等) 仅在 debug 级别记录，防止前端刷新导致日志刷屏
+		isStatic := !strings.HasPrefix(r.URL.Path, "/api/") &&
+			(strings.HasSuffix(r.URL.Path, ".js") ||
+				strings.HasSuffix(r.URL.Path, ".css") ||
+				strings.HasSuffix(r.URL.Path, ".ico") ||
+				strings.HasSuffix(r.URL.Path, ".svg") ||
+				strings.HasSuffix(r.URL.Path, ".woff2") ||
+				strings.HasSuffix(r.URL.Path, ".png") ||
+				strings.HasSuffix(r.URL.Path, ".jpg"))
+
+		if isStatic {
+			logger.Debug("[HTTP] %s %s - %d (%v) | %s", r.Method, r.RequestURI, rw.statusCode, duration, clientIP)
+			return
+		}
+
+		// API 接口与业务路由的标准审计日志输出
+		if rw.statusCode >= 500 {
+			logger.Error("[HTTP] %s %s - %d %s (%v) | 客户端: %s", r.Method, r.RequestURI, rw.statusCode, http.StatusText(rw.statusCode), duration, clientIP)
+		} else if rw.statusCode >= 400 {
+			logger.Warn("[HTTP] %s %s - %d %s (%v) | 客户端: %s", r.Method, r.RequestURI, rw.statusCode, http.StatusText(rw.statusCode), duration, clientIP)
+		} else {
+			logger.Info("[HTTP] %s %s - %d %s (%v) | 客户端: %s", r.Method, r.RequestURI, rw.statusCode, http.StatusText(rw.statusCode), duration, clientIP)
+		}
+	})
 }
 
 // corsMiddleware 跨域处理中间件
@@ -174,6 +275,7 @@ func (s *TargetServer) authMiddleware(next http.Handler) http.Handler {
 		}
 
 		if token != s.cfg.APIToken {
+			logger.Warn("⚠️ 接口鉴权拦截: 未提供有效 API Token (客户端: %s, URI: %s)", getClientIP(r), r.RequestURI)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -234,6 +336,8 @@ func (s *TargetServer) handleTargetsSmart(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	logger.Info("🎯 [API] 智能匹配: 客户端 %s 查询 IP: %s (匹配 %d 个推荐节点, 所属ASN: %s)",
+		getClientIP(r), req.IP, len(ranked), summary.ASN)
 
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"code": 200,
@@ -270,10 +374,14 @@ func (s *TargetServer) handleTargetsCheck(w http.ResponseWriter, r *http.Request
 
 	rec, err := s.service.CheckSingleDomain(r.Context(), payload.Domain, payload.IP)
 	if err != nil {
+		logger.Warn("❌ [API] 在线复核失败: 域名=%s, IP=%s, 错误: %v (客户端: %s)", payload.Domain, payload.IP, err, getClientIP(r))
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": 500, "error": err.Error()})
 		return
 	}
+
+	logger.Info("🔍 [API] 在线复核完成: 域名=%s, IP=%s, 评级=%d星, 握手=%dms (客户端: %s)",
+		rec.Domain, rec.IP, rec.Stars, rec.HandshakeMS, getClientIP(r))
 
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"code":    200,
@@ -365,6 +473,7 @@ func (s *TargetServer) handleTargetItemAction(w http.ResponseWriter, r *http.Req
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 500, "error": err.Error()})
 			return
 		}
+		logger.Info("✏️ [API] 变更节点活跃状态: domain=%s, is_active=%v (客户端: %s)", domain, payload.IsActive, getClientIP(r))
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "Updated successfully"})
 
 	case http.MethodDelete:
@@ -373,6 +482,7 @@ func (s *TargetServer) handleTargetItemAction(w http.ResponseWriter, r *http.Req
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 500, "error": err.Error()})
 			return
 		}
+		logger.Info("🗑️ [API] 删除资产记录: domain=%s (客户端: %s)", domain, getClientIP(r))
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "Deleted successfully"})
 
 	default:
@@ -461,6 +571,8 @@ func (s *TargetServer) handleTargetsStream(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Missing 'ip' query parameter", http.StatusBadRequest)
 		return
 	}
+
+	logger.Info("📡 [API] SSE 流式探测握手连接: 客户端 %s 查询 IP: %s", getClientIP(r), req.IP)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
