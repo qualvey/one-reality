@@ -67,11 +67,12 @@ func LoadConfig(configPath string) (*types.Config, error) {
 		for _, name := range fileNames {
 			p := filepath.Join(dir, name)
 			if _, err := os.Stat(p); err == nil {
-				if err := loadConfigFromFile(config, p); err == nil {
-					config.LoadedConfigFile = p
-					validateAndSetDefaults(config)
-					return config, nil
+				if err := loadConfigFromFile(config, p); err != nil {
+					return nil, fmt.Errorf("检测到配置文件 %s，但解析失败: %w", p, err)
 				}
+				config.LoadedConfigFile = p
+				validateAndSetDefaults(config)
+				return config, nil
 			}
 		}
 	}
