@@ -684,7 +684,7 @@ func (s *TargetStore) UpsertASNRecords(records []*types.ASNRecord) error {
 			name = CASE WHEN excluded.name != '' THEN excluded.name ELSE asn_registry.name END,
 			country = CASE WHEN excluded.country != '' THEN excluded.country ELSE asn_registry.country END,
 			total_ips = CASE WHEN excluded.total_ips > 0 THEN excluded.total_ips ELSE asn_registry.total_ips END,
-			priority = CASE WHEN excluded.priority > 0 THEN excluded.priority ELSE asn_registry.priority END,
+			priority = excluded.priority,
 			updated_at = excluded.updated_at
 	`)
 	if err != nil {
@@ -702,8 +702,8 @@ func (s *TargetStore) UpsertASNRecords(records []*types.ASNRecord) error {
 			status = "pending"
 		}
 		prio := rec.Priority
-		if prio <= 0 {
-			prio = 10
+		if prio < 0 {
+			prio = 0
 		}
 		updatedAt := rec.UpdatedAt
 		if updatedAt.IsZero() {

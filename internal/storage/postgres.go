@@ -728,7 +728,7 @@ func (s *PostgresStore) UpsertASNRecords(records []*types.ASNRecord) error {
 			name = CASE WHEN EXCLUDED.name != '' THEN EXCLUDED.name ELSE asn_registry.name END,
 			country = CASE WHEN EXCLUDED.country != '' THEN EXCLUDED.country ELSE asn_registry.country END,
 			total_ips = CASE WHEN EXCLUDED.total_ips > 0 THEN EXCLUDED.total_ips ELSE asn_registry.total_ips END,
-			priority = CASE WHEN EXCLUDED.priority > 0 THEN EXCLUDED.priority ELSE asn_registry.priority END,
+			priority = EXCLUDED.priority,
 			updated_at = EXCLUDED.updated_at
 	`
 
@@ -745,8 +745,8 @@ func (s *PostgresStore) UpsertASNRecords(records []*types.ASNRecord) error {
 			status = "pending"
 		}
 		prio := rec.Priority
-		if prio <= 0 {
-			prio = 10
+		if prio < 0 {
+			prio = 0
 		}
 		batch.Queue(query,
 			rec.ASN,

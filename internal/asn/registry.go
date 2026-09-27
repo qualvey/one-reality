@@ -18,19 +18,21 @@ import (
 
 // SeedPopularASNs 预设全球 Top 热门公有云、CDN 与 IDC 自治系统
 var SeedPopularASNs = []*types.ASNRecord{
-	// Tier 1: 超级公有云与主流全球 CDN (Priority 95 - 100)
-	{ASN: 13335, Name: "Cloudflare, Inc.", Country: "US", Priority: 100, ScanStatus: "pending"},
+	// 纯商业 CDN 基础设施 (Anycast/反代)：预设标记 completed 且权重为 0，防止全网扫描在 CDN 上做无用功
+	{ASN: 13335, Name: "Cloudflare, Inc.", Country: "US", Priority: 0, ScanStatus: "completed"},
+	{ASN: 54113, Name: "Fastly, Inc.", Country: "US", Priority: 0, ScanStatus: "completed"},
+
+	// Tier 1: 头部公有云与主流数据中心 (Priority 90 - 100)
+	{ASN: 24940, Name: "Hetzner Online GmbH", Country: "DE", Priority: 100, ScanStatus: "pending"},
+	{ASN: 14061, Name: "DigitalOcean, LLC", Country: "US", Priority: 95, ScanStatus: "pending"},
 	{ASN: 16509, Name: "Amazon.com, Inc. (AWS)", Country: "US", Priority: 95, ScanStatus: "pending"},
 	{ASN: 14618, Name: "Amazon.com, Inc. (AWS)", Country: "US", Priority: 90, ScanStatus: "pending"},
 	{ASN: 8075, Name: "Microsoft Corporation (Azure)", Country: "US", Priority: 95, ScanStatus: "pending"},
 	{ASN: 15169, Name: "Google LLC", Country: "US", Priority: 95, ScanStatus: "pending"},
 	{ASN: 396982, Name: "Google Cloud Platform", Country: "US", Priority: 92, ScanStatus: "pending"},
 	{ASN: 31898, Name: "Oracle Corporation", Country: "US", Priority: 90, ScanStatus: "pending"},
-	{ASN: 54113, Name: "Fastly, Inc.", Country: "US", Priority: 90, ScanStatus: "pending"},
 
 	// Tier 2: 主流 VPS/IDC 与海外知名服务商 (Priority 80 - 90)
-	{ASN: 14061, Name: "DigitalOcean, LLC", Country: "US", Priority: 90, ScanStatus: "pending"},
-	{ASN: 24940, Name: "Hetzner Online GmbH", Country: "DE", Priority: 90, ScanStatus: "pending"},
 	{ASN: 16276, Name: "OVH SAS", Country: "FR", Priority: 85, ScanStatus: "pending"},
 	{ASN: 63949, Name: "Linode, LLC (Akamai Connected Cloud)", Country: "US", Priority: 85, ScanStatus: "pending"},
 	{ASN: 20473, Name: "Choopa, LLC (Vultr)", Country: "US", Priority: 85, ScanStatus: "pending"},
@@ -104,12 +106,16 @@ func (m *RegistryManager) InitDefaultRegistry() (int, error) {
 	now := time.Now()
 	records := make([]*types.ASNRecord, 0, len(SeedPopularASNs))
 	for _, seed := range SeedPopularASNs {
+		status := seed.ScanStatus
+		if status == "" {
+			status = "pending"
+		}
 		rec := &types.ASNRecord{
 			ASN:        seed.ASN,
 			Name:       seed.Name,
 			Country:    seed.Country,
 			Priority:   seed.Priority,
-			ScanStatus: "pending",
+			ScanStatus: status,
 			UpdatedAt:  now,
 		}
 		records = append(records, rec)

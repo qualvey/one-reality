@@ -155,6 +155,56 @@ var datacenterOverrideKeywords = []string{
 	"contabo",
 }
 
+// pureCDNASNs 知名全球纯商业 CDN 服务商自治系统 (Anycast / 反代，不适用于 REALITY 目标伪装)
+var pureCDNASNs = map[int]string{
+	13335:  "Cloudflare, Inc.",
+	209242: "Cloudflare London",
+	394536: "Cloudflare",
+	395747: "Cloudflare",
+	132892: "Cloudflare",
+	133877: "Cloudflare",
+	54113:  "Fastly, Inc.",
+	20940:  "Akamai International B.V.",
+	16625:  "Akamai Technologies, Inc.",
+	32787:  "Akamai Prolexic",
+	35994:  "Akamai Technologies",
+	15133:  "EdgeCast / Verizon Media / Edgio",
+	22822:  "Limelight Networks / Edgio",
+	60068:  "CDN77 / Datacamp",
+	19551:  "Imperva / Incapsula",
+	199524: "Gcore CDN",
+	203020: "BunnyCDN",
+	135377: "UCSS / Cloudflare Partner",
+}
+
+var pureCDNKeywords = []string{
+	"cloudflare",
+	"fastly",
+	"akamai",
+	"incapsula",
+	"imperva",
+	"bunnycdn",
+	"cdn77",
+	"edgecast",
+	"limelight networks",
+}
+
+// IsPureCDNASN 判断指定的 ASN 或组织名称是否属于纯商业 CDN 基础设施
+func IsPureCDNASN(asnNum int, asnName ...string) (bool, string) {
+	if name, ok := pureCDNASNs[asnNum]; ok {
+		return true, name
+	}
+	if len(asnName) > 0 && asnName[0] != "" {
+		nameLower := strings.ToLower(asnName[0])
+		for _, kw := range pureCDNKeywords {
+			if strings.Contains(nameLower, kw) {
+				return true, asnName[0]
+			}
+		}
+	}
+	return false, ""
+}
+
 // ClassifyASN 判断指定的 ASN 是机房还是家庭宽带网络
 // 简单粗暴规则：只要是已知家宽运营商/ISP 就当家宽 (residential)，其余一律当机房 (datacenter)
 func ClassifyASN(asnNum int, asnName string) (ipType string, isResidential bool, providerName string) {
@@ -186,3 +236,4 @@ func ClassifyASN(asnNum int, asnName string) (ipType string, isResidential bool,
 	// 4. 其余一律归为机房 / 数据中心
 	return IPTypeDatacenter, false, asnName
 }
+

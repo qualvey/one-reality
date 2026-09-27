@@ -218,6 +218,14 @@ func (d *DaemonScheduler) Start(ctx context.Context) error {
 // processASN 解析、过滤并扫描单个自治系统
 func (d *DaemonScheduler) processASN(ctx context.Context, rec *types.ASNRecord) error {
 	asnStr := fmt.Sprintf("AS%d", rec.ASN)
+
+	// 0. CDN 基础设施拦截：纯商业 CDN 自治系统 (如 Cloudflare, Fastly, Akamai 等) 不适用于 REALITY 伪装，自动跳过并标记完成
+	if isCDN, cdnName := asnclient.IsPureCDNASN(rec.ASN, rec.Name); isCDN {
+		d.log("ℹ️ %s [%s] 属于纯商业 CDN 基础设施 (%s)，依据 REALITY 非 CDN 策略自动跳过并标记完成", asnStr, rec.Name, cdnName)
+		_ = d.store.UpdateASNStatus(rec.ASN, "completed", 0)
+		return nil
+	}
+
 	d.log("📡 开始调度 %s [%s] (国家: %s, 权重: %d)...", asnStr, rec.Name, rec.Country, rec.Priority)
 
 	// 标记为正在扫描

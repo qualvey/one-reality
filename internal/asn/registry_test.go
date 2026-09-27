@@ -39,13 +39,22 @@ func TestRegistryManager_InitAndEnsureSeeded(t *testing.T) {
 		t.Fatalf("expected %d seeded ASNs, got %d (err: %v)", len(SeedPopularASNs), seeded, err)
 	}
 
-	// 3. Verify Cloudflare AS13335 has priority 100
+	// 3. Verify Cloudflare AS13335 is pre-marked as completed with priority 0
 	cf, err := store.GetASN(13335)
 	if err != nil || cf == nil {
 		t.Fatalf("GetASN 13335 failed: %v", err)
 	}
-	if cf.Priority != 100 || cf.Country != "US" {
+	if cf.Priority != 0 || cf.Country != "US" || cf.ScanStatus != "completed" {
 		t.Errorf("unexpected Cloudflare ASN record: %#v", cf)
+	}
+
+	// Verify top VPS provider Hetzner AS24940 has priority 100
+	hz, err := store.GetASN(24940)
+	if err != nil || hz == nil {
+		t.Fatalf("GetASN 24940 failed: %v", err)
+	}
+	if hz.Priority != 100 || hz.Country != "DE" {
+		t.Errorf("unexpected Hetzner ASN record: %#v", hz)
 	}
 
 	// 4. Calling EnsureRegistrySeeded again should be a no-op

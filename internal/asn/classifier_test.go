@@ -38,3 +38,27 @@ func TestClassifyASN(t *testing.T) {
 		}
 	}
 }
+
+func TestIsPureCDNASN(t *testing.T) {
+	cdnTests := []struct {
+		asn     int
+		name    string
+		wantCDN bool
+	}{
+		{asn: 13335, name: "Cloudflare, Inc.", wantCDN: true},
+		{asn: 54113, name: "Fastly, Inc.", wantCDN: true},
+		{asn: 20940, name: "Akamai", wantCDN: true},
+		{asn: 99999, name: "Some Random Cloudflare CDN Node", wantCDN: true},
+		{asn: 24940, name: "Hetzner Online GmbH", wantCDN: false},
+		{asn: 14061, name: "DigitalOcean, LLC", wantCDN: false},
+		{asn: 16276, name: "OVH SAS", wantCDN: false},
+	}
+
+	for _, tt := range cdnTests {
+		isCDN, name := IsPureCDNASN(tt.asn, tt.name)
+		if isCDN != tt.wantCDN {
+			t.Errorf("IsPureCDNASN(%d, %q) = (%v, %q), want %v", tt.asn, tt.name, isCDN, name, tt.wantCDN)
+		}
+	}
+}
+
