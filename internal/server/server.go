@@ -19,6 +19,7 @@ import (
 // ServerConfig HTTP 服务配置
 type ServerConfig struct {
 	Addr           string        `json:"addr"`
+	APIToken       string        `json:"api_token"`
 	AllowedOrigins []string      `json:"allowed_origins"`
 	ReadTimeout    time.Duration `json:"read_timeout"`
 	WriteTimeout   time.Duration `json:"write_timeout"`
@@ -28,6 +29,7 @@ type ServerConfig struct {
 func DefaultServerConfig() ServerConfig {
 	return ServerConfig{
 		Addr:           ":8881",
+		APIToken:       "",
 		AllowedOrigins: []string{"*"},
 		ReadTimeout:    30 * time.Second,
 		WriteTimeout:   5 * time.Minute, // 支持长耗时流式扫描
@@ -84,7 +86,7 @@ func NewTargetServer(cfg ServerConfig, svc *service.ProvisionService) *TargetSer
 		})
 	}
 
-	handler := ts.corsMiddleware(mux)
+	handler := ts.corsMiddleware(ts.authMiddleware(mux))
 
 	ts.httpServer = &http.Server{
 		Addr:         cfg.Addr,
@@ -130,6 +132,54 @@ func (s *TargetServer) corsMiddleware(next http.Handler) http.Handler {
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// authMiddleware 鉴权中间件 (支持 Authorization: Bearer <token> 与 Query ?token=<token>)
+func (s *TargetServer) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.APIToken == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// 排除健康检查等公开接口与静态页面路由
+		if r.URL.Path == "/api/health" || !strings.HasPrefix(r.URL.Path, "/api/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// OPTIONS 请求直接放行（CORS 预检）
+		if r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		token := ""
+		if authHeader := r.Header.Get("Authorization"); authHeader != "" {
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+				token = strings.TrimSpace(parts[1])
+			} else {
+				token = strings.TrimSpace(authHeader)
+			}
+		}
+
+		if token == "" {
+			token = strings.TrimSpace(r.URL.Query().Get("token"))
+		}
+
+		if token != s.cfg.APIToken {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":  401,
+				"error": "Unauthorized: invalid or missing API token",
+			})
 			return
 		}
 

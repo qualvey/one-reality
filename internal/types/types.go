@@ -469,6 +469,12 @@ type Config struct {
 	Batch         BatchConfig         `yaml:"batch"`
 	RealityFilter RealityFilterConfig `yaml:"reality_filter"`
 	Log           LogConfig           `yaml:"log"`
+	Server        ServerConfig        `yaml:"server"`
+}
+
+// ServerConfig HTTP 服务配置
+type ServerConfig struct {
+	APIToken string `yaml:"api_token"`
 }
 
 // NetworkConfig 网络配置

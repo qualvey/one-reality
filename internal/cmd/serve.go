@@ -29,6 +29,7 @@ func (r *RootCmd) executeServe(args []string) {
 	hostFlag := flags.String("host", "0.0.0.0", "HTTP 服务监听地址")
 	dbFlag := flags.String("db", "data/reality_targets.db", "SQLite 资产数据库文件路径")
 	mmdbFlag := flags.String("mmdb", "data/Country.mmdb", "GeoIP 国家数据库文件路径")
+	tokenFlag := flags.String("token", "", "API 访问鉴权 Token (留空则不开启鉴权)")
 
 	if err := flags.Parse(args); err != nil {
 		return
@@ -60,8 +61,18 @@ func (r *RootCmd) executeServe(args []string) {
 	cfg, _ := config.LoadConfig("")
 	provService := service.NewProvisionService(targetStore, geoipReader, asnClient, cfg)
 
+	apiToken := *tokenFlag
+	if apiToken == "" {
+		if envToken := os.Getenv("RC_API_TOKEN"); envToken != "" {
+			apiToken = envToken
+		} else if cfg != nil && cfg.Server.APIToken != "" {
+			apiToken = cfg.Server.APIToken
+		}
+	}
+
 	srvConfig := server.DefaultServerConfig()
 	srvConfig.Addr = addr
+	srvConfig.APIToken = apiToken
 
 	targetServer := server.NewTargetServer(srvConfig, provService)
 
@@ -71,6 +82,15 @@ func (r *RootCmd) executeServe(args []string) {
 	fmt.Printf("   » 监听地址: http://%s\n", addr)
 	fmt.Printf("   » Web 控制台: http://%s/\n", addr)
 	fmt.Printf("   » 资产数据库: %s\n", *dbFlag)
+	if apiToken != "" {
+		prefixLen := 4
+		if len(apiToken) < 4 {
+			prefixLen = len(apiToken)
+		}
+		fmt.Printf("   » 接口鉴权: 已启用 (Token: %s***)\n", apiToken[:prefixLen])
+	} else {
+		fmt.Println("   » 接口鉴权: 未启用 (公网暴露建议配置 --token 或在 config.yaml 启用)")
+	}
 	if geoipReader != nil {
 		fmt.Printf("   » GeoIP 数据库: %s\n", *mmdbFlag)
 	}

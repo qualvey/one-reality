@@ -258,3 +258,58 @@ func TestServer_TargetsStream(t *testing.T) {
 		t.Fatalf("expected at least 3 events (init, target, done), got %v", eventTypes)
 	}
 }
+
+func TestServer_AuthMiddleware(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "auth_test.db")
+	store, _ := storage.NewTargetStore(dbPath)
+	defer store.Close()
+
+	svc := service.NewProvisionService(store, nil, &mockResolver{asn: 12345}, nil)
+	cfg := DefaultServerConfig()
+	cfg.APIToken = "secret123"
+	ts := NewTargetServer(cfg, svc)
+
+	// 1. 公开接口 /api/health 应允许匿名访问
+	reqHealth := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	wHealth := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(wHealth, reqHealth)
+	if wHealth.Code != http.StatusOK {
+		t.Errorf("expected 200 for /api/health without token, got %d", wHealth.Code)
+	}
+
+	// 2. /api/stats 未提供 token 应返回 401
+	reqStatsNoToken := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	wStatsNoToken := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(wStatsNoToken, reqStatsNoToken)
+	if wStatsNoToken.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for /api/stats without token, got %d", wStatsNoToken.Code)
+	}
+
+	// 3. /api/stats 带错误的 Bearer token 应返回 401
+	reqStatsWrongToken := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	reqStatsWrongToken.Header.Set("Authorization", "Bearer wrong-token")
+	wStatsWrongToken := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(wStatsWrongToken, reqStatsWrongToken)
+	if wStatsWrongToken.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 with wrong token, got %d", wStatsWrongToken.Code)
+	}
+
+	// 4. /api/stats 带正确的 Bearer token 应放行 200
+	reqStatsBearer := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	reqStatsBearer.Header.Set("Authorization", "Bearer secret123")
+	wStatsBearer := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(wStatsBearer, reqStatsBearer)
+	if wStatsBearer.Code != http.StatusOK {
+		t.Errorf("expected 200 with valid Bearer token, got %d", wStatsBearer.Code)
+	}
+
+	// 5. /api/stats 带正确的 Query token (?token=secret123) 应放行 200
+	reqStatsQuery := httptest.NewRequest(http.MethodGet, "/api/stats?token=secret123", nil)
+	wStatsQuery := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(wStatsQuery, reqStatsQuery)
+	if wStatsQuery.Code != http.StatusOK {
+		t.Errorf("expected 200 with valid query token, got %d", wStatsQuery.Code)
+	}
+}
+
