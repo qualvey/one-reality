@@ -4,14 +4,16 @@
 
 针对 24 小时全网不间断扫描系统，预计在数月内将沉淀十万至数百万级全网 REALITY 目标资产。系统采用分层演进的存储方案：
 
-1. **单机嵌入式存储（当前阶段 - SQLite WAL 模式）**：
+1. **单机嵌入式存储（SQLite WAL 模式）**：
    - 零依赖、单二进制部署，开箱即用；
    - 开启预写日志模式（`PRAGMA journal_mode=WAL`）与单写多读并发；
-   - 内存缓冲区（Buffer Queue）聚合批量事务提交（100 条 / 5 秒），消除磁盘 I/O 成为性能瓶颈；
    - 适用规模：单机 100 万条以内数据高效运转。
-2. **企业级/分布式集群演进（未来扩展 - PostgreSQL）**：
-   - 抽象通用存储接口 `TargetStoreInterface`；
-   - 支持多扫描探针（Multi-node Probes）分布式上报至集中式 PostgreSQL 库。
+2. **企业级/分布式集群引擎（PostgreSQL - 基于 pgxpool 原生驱动）**：
+   - 抽象通用存储接口 [`storage.Store`](file:///c:/Users/Ryu/Documents/workspace/RealityChecker/internal/storage/interface.go)；
+   - 基于原生二进制传输协议驱动 `github.com/jackc/pgx/v5/pgxpool`；
+   - 无锁多协程并发写入，通过 `pgx.Batch` 管线化批量执行 Upsert；
+   - 支持通过 `psql` 客户端直接管理与复杂分析；
+   - 提供 `RealityChecker migrate` 命令实现 SQLite 与 PostgreSQL 双向无缝平滑迁移。
 
 ---
 
