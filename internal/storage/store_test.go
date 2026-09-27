@@ -340,4 +340,54 @@ func TestTargetStore_PatrolAndLifecycle(t *testing.T) {
 	}
 }
 
+func TestFactory_NewStore_SQLite(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "factory_sqlite.db")
+
+	cfg := &types.DatabaseConfig{
+		Driver: "sqlite",
+		SQLite: types.SQLiteConfig{
+			Path: dbPath,
+		},
+	}
+
+	store, err := NewStore(cfg)
+	if err != nil {
+		t.Fatalf("NewStore failed for SQLite: %v", err)
+	}
+	defer store.Close()
+
+	if store.Count() != 0 {
+		t.Errorf("expected count 0, got %d", store.Count())
+	}
+}
+
+func TestFactory_NewStore_UnsupportedDriver(t *testing.T) {
+	cfg := &types.DatabaseConfig{
+		Driver: "mongodb",
+	}
+
+	_, err := NewStore(cfg)
+	if err == nil {
+		t.Fatal("expected error for unsupported driver, got nil")
+	}
+}
+
+func TestPostgresStore_ConnectionFailure(t *testing.T) {
+	// 尝试连接一个不可达的地址，校验错误捕获与资源释放
+	cfg := types.PostgresConfig{
+		Host:    "127.0.0.1",
+		Port:    54321, // 假端口
+		User:    "invalid_user",
+		DBName:  "invalid_db",
+		SSLMode: "disable",
+	}
+
+	_, err := NewPostgresStore(cfg)
+	if err == nil {
+		t.Fatal("expected connection error for invalid postgres target, got nil")
+	}
+}
+
+
 
