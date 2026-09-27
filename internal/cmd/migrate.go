@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"RealityChecker/internal/config"
 	"RealityChecker/internal/storage"
 	"RealityChecker/internal/types"
 	"RealityChecker/internal/ui"
@@ -26,10 +27,23 @@ func (r *RootCmd) executeMigrate(args []string) {
 	targetDriverFlag := flags.String("target-driver", "", "目标驱动类型 (postgres / sqlite，留空自动推导)")
 	flags.StringVar(targetDriverFlag, "driver", "", "目标驱动类型 (别名)")
 
+	configFlag := flags.String("config", "", "配置文件路径 (例如 config.yml)")
+	flags.StringVar(configFlag, "c", "", "配置文件路径 (别名)")
+
 	batchSize := flags.Int("batch", 500, "批量流式写入步长")
 
 	if err := flags.Parse(args); err != nil {
 		return
+	}
+
+	// 若在 migrate 命令中显式传入了 -c / --config，则重新加载配置
+	if *configFlag != "" {
+		reloadedCfg, err := config.LoadConfig(*configFlag)
+		if err != nil {
+			ui.PrintError(fmt.Sprintf("加载指定配置文件失败 (%s): %v", *configFlag, err))
+			return
+		}
+		r.config = reloadedCfg
 	}
 
 	ui.PrintTimestampedMessage("🚀 正在启动 REALITY 数据库平滑迁移作业...")
@@ -106,9 +120,37 @@ func (r *RootCmd) executeMigrate(args []string) {
 		}
 	}
 
+	if dstCfg.Driver == "postgres" {
+		sourceDesc := "命令行 --to 参数"
+		if *toFlag == "" {
+			if r.config != nil && r.config.LoadedConfigFile != "" {
+				sourceDesc = fmt.Sprintf("配置文件 %s", r.config.LoadedConfigFile)
+			} else {
+				sourceDesc = "系统缺省配置 (未探测到有效配置文件)"
+			}
+		}
+		pg := dstCfg.Postgres
+		if pg.DSN != "" {
+			ui.PrintTimestampedMessage("🔗 目标数据库: PostgreSQL (来源: %s)", sourceDesc)
+		} else {
+			ui.PrintTimestampedMessage("🔗 目标数据库: PostgreSQL %s:%d/%s (用户: %s, 来源: %s)", pg.Host, pg.Port, pg.DBName, pg.User, sourceDesc)
+		}
+	}
+
 	dstStore, err := storage.NewStore(dstCfg)
 	if err != nil {
-		ui.PrintError(fmt.Sprintf("连接目标数据库失败: %v", err))
+		if dstCfg.Driver == "postgres" {
+			ui.PrintErrorWithDetails(
+				fmt.Sprintf("连接目标数据库失败: %v", err),
+				"💡 排查建议:",
+				"  1. 确认当前目录下是否存在未修改的 config.yaml (系统默认 config.yaml 优先级高于 config.yml)",
+				"  2. 可使用 -c 指定配置文件: ./reality-checker -c config.yml migrate",
+				"  3. 或直接通过 --to 指定完整 DSN: ./reality-checker migrate --to \"postgres://rchecker:passwd@127.0.0.1:5432/reality?sslmode=disable\"",
+				"  4. 检查 PostgreSQL 的 pg_hba.conf 是否放通本地或对应用户的 md5/scram-sha-256 密码认证",
+			)
+		} else {
+			ui.PrintError(fmt.Sprintf("连接目标数据库失败: %v", err))
+		}
 		return
 	}
 	defer dstStore.Close()

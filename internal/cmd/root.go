@@ -27,12 +27,17 @@ type RootCmd struct {
 	cancel       context.CancelFunc
 }
 
-// NewRootCmd 创建根命令
-func NewRootCmd() (*RootCmd, error) {
-	// 加载配置
-	cfg, err := config.LoadConfig("")
-	if err != nil {
-		return nil, fmt.Errorf("加载配置失败: %v", err)
+// NewRootCmd 创建根命令 (可传入已预解析好的配置，若为空则自动通过默认策略加载)
+func NewRootCmd(initialCfg ...*types.Config) (*RootCmd, error) {
+	var cfg *types.Config
+	if len(initialCfg) > 0 && initialCfg[0] != nil {
+		cfg = initialCfg[0]
+	} else {
+		var err error
+		cfg, err = config.LoadConfig("")
+		if err != nil {
+			return nil, fmt.Errorf("加载配置失败: %v", err)
+		}
 	}
 
 	// 初始化日志系统
@@ -80,15 +85,19 @@ func NewRootCmd() (*RootCmd, error) {
 }
 
 // Execute 执行命令
-func (r *RootCmd) Execute() {
+func (r *RootCmd) Execute(customArgs ...[]string) {
 	defer r.cleanup()
 
-	if len(os.Args) < 2 {
+	var args []string
+	if len(customArgs) > 0 && len(customArgs[0]) > 0 {
+		args = customArgs[0]
+	} else if len(os.Args) >= 2 {
+		args = os.Args[1:]
+	} else {
 		ui.PrintUsage()
 		os.Exit(1)
 	}
 
-	args := os.Args[1:]
 	globalVerbose := false
 	if len(args) > 1 && (args[0] == "-v" || args[0] == "--verbose") {
 		globalVerbose = true

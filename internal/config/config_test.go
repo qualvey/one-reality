@@ -235,6 +235,44 @@ database:
 	if cfg.Database.Postgres.MaxConns != 100 {
 		t.Errorf("expected max_conns 100, got %d", cfg.Database.Postgres.MaxConns)
 	}
+	if cfg.LoadedConfigFile != configFile {
+		t.Errorf("expected LoadedConfigFile %s, got %s", configFile, cfg.LoadedConfigFile)
+	}
 }
+
+func TestLoadConfig_EnvAndLoadedPath(t *testing.T) {
+	tempDir := t.TempDir()
+	envConfigFile := filepath.Join(tempDir, "custom_env_config.yml")
+	yamlContent := `
+database:
+  driver: "postgres"
+  postgres:
+    host: "192.168.1.100"
+    port: 5432
+    user: "rchecker"
+    password: "passwd"
+    dbname: "reality"
+`
+	if err := os.WriteFile(envConfigFile, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	t.Setenv("REALITY_CONFIG", envConfigFile)
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig from env failed: %v", err)
+	}
+	if cfg.LoadedConfigFile != envConfigFile {
+		t.Errorf("expected LoadedConfigFile %s, got %s", envConfigFile, cfg.LoadedConfigFile)
+	}
+	if cfg.Database.Postgres.User != "rchecker" {
+		t.Errorf("expected user rchecker, got %s", cfg.Database.Postgres.User)
+	}
+	if cfg.Database.Postgres.DBName != "reality" {
+		t.Errorf("expected dbname reality, got %s", cfg.Database.Postgres.DBName)
+	}
+}
+
 
 

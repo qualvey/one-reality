@@ -460,17 +460,18 @@ func (p *ProxyConfig) UnmarshalYAML(value *yaml.Node) error {
 
 // Config 配置结构
 type Config struct {
-	Proxy         ProxyConfig         `yaml:"proxy"`
-	Network       NetworkConfig       `yaml:"network"`
-	TLS           TLSConfig           `yaml:"tls"`
-	Concurrency   ConcurrencyConfig   `yaml:"concurrency"`
-	Output        OutputConfig        `yaml:"output"`
-	Cache         CacheConfig         `yaml:"cache"`
-	Batch         BatchConfig         `yaml:"batch"`
-	RealityFilter RealityFilterConfig `yaml:"reality_filter"`
-	Log           LogConfig           `yaml:"log"`
-	Server        ServerConfig        `yaml:"server"`
-	Database      DatabaseConfig      `yaml:"database"`
+	LoadedConfigFile string              `yaml:"-"` // 实际加载生效的配置文件路径 (运行时状态)
+	Proxy            ProxyConfig         `yaml:"proxy"`
+	Network          NetworkConfig       `yaml:"network"`
+	TLS              TLSConfig           `yaml:"tls"`
+	Concurrency      ConcurrencyConfig   `yaml:"concurrency"`
+	Output           OutputConfig        `yaml:"output"`
+	Cache            CacheConfig         `yaml:"cache"`
+	Batch            BatchConfig         `yaml:"batch"`
+	RealityFilter    RealityFilterConfig `yaml:"reality_filter"`
+	Log              LogConfig           `yaml:"log"`
+	Server           ServerConfig        `yaml:"server"`
+	Database         DatabaseConfig      `yaml:"database"`
 }
 
 // DatabaseConfig 数据库存储引擎配置

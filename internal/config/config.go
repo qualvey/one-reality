@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -19,30 +20,63 @@ func LoadConfig(configPath string) (*types.Config, error) {
 	// 获取默认配置
 	config := getDefaultConfig()
 
-	// 如果提供了配置文件路径，尝试加载
+	// 1. 如果显式提供了配置文件路径，优先尝试加载
 	if configPath != "" {
 		if err := loadConfigFromFile(config, configPath); err != nil {
 			return nil, fmt.Errorf("加载配置文件失败: %v", err)
 		}
-	} else {
-		// 尝试从默认位置加载配置文件
-		defaultPaths := []string{
-			"config.yaml",
-			"config.yml",
-			"./config.yaml",
-			"./config.yml",
-		}
+		config.LoadedConfigFile = configPath
+		validateAndSetDefaults(config)
+		return config, nil
+	}
 
-		for _, path := range defaultPaths {
-			if _, err := os.Stat(path); err == nil {
-				if err := loadConfigFromFile(config, path); err == nil {
-					break // 成功加载，跳出循环
+	// 2. 检查环境变量 REALITY_CONFIG
+	if envPath := os.Getenv("REALITY_CONFIG"); envPath != "" {
+		if _, err := os.Stat(envPath); err == nil {
+			if err := loadConfigFromFile(config, envPath); err == nil {
+				config.LoadedConfigFile = envPath
+				validateAndSetDefaults(config)
+				return config, nil
+			}
+		}
+	}
+
+	// 3. 收集候选查找目录 (当前工作目录以及可执行文件所在目录)
+	var candidateDirs []string
+	candidateDirs = append(candidateDirs, ".")
+
+	if exePath, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exePath)
+		if exeDir != "." && exeDir != "" {
+			alreadyExists := false
+			for _, d := range candidateDirs {
+				if d == exeDir {
+					alreadyExists = true
+					break
+				}
+			}
+			if !alreadyExists {
+				candidateDirs = append(candidateDirs, exeDir)
+			}
+		}
+	}
+
+	// 依次探测配置文件 (config.yaml, config.yml)
+	fileNames := []string{"config.yaml", "config.yml"}
+	for _, dir := range candidateDirs {
+		for _, name := range fileNames {
+			p := filepath.Join(dir, name)
+			if _, err := os.Stat(p); err == nil {
+				if err := loadConfigFromFile(config, p); err == nil {
+					config.LoadedConfigFile = p
+					validateAndSetDefaults(config)
+					return config, nil
 				}
 			}
 		}
 	}
 
-	// 验证并设置默认值（包括加载外部排除规则）
+	// 验证并设置默认值（未找到配置文件，使用默认配置）
 	validateAndSetDefaults(config)
 	return config, nil
 }
