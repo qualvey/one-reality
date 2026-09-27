@@ -428,6 +428,7 @@ func parseProvisionRequest(r *http.Request) service.ProvisionRequest {
 	ipv4Only := parseBool(q.Get("ipv4_only")) || parseBool(q.Get("4"))
 	ipv6Only := parseBool(q.Get("ipv6_only")) || parseBool(q.Get("6"))
 	requireNoCN := parseBool(q.Get("require_no_cn")) || parseBool(q.Get("no_cn"))
+	scanAll := parseBool(q.Get("scan_all")) || parseBool(q.Get("all"))
 
 	return service.ProvisionRequest{
 		IP:          q.Get("ip"),
@@ -438,6 +439,7 @@ func parseProvisionRequest(r *http.Request) service.ProvisionRequest {
 		IPv4Only:    ipv4Only,
 		IPv6Only:    ipv6Only,
 		RequireNoCN: requireNoCN,
+		ScanAll:     scanAll,
 	}
 }
 

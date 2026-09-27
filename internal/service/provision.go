@@ -32,6 +32,7 @@ type ProvisionRequest struct {
 	IPv4Only    bool          `json:"ipv4_only"`
 	IPv6Only    bool          `json:"ipv6_only"`
 	RequireNoCN bool          `json:"require_no_cn"`
+	ScanAll     bool          `json:"scan_all"`
 }
 
 // TargetItem 标准化优质目标输出
@@ -61,11 +62,16 @@ type RankedTargetItem struct {
 
 // TargetSummaryInfo 目标 IP 所属网络元数据摘要
 type TargetSummaryInfo struct {
-	TargetIP    string `json:"target_ip"`
-	ASN         string `json:"asn"`
-	Country     string `json:"country"`
-	SameASNHits int    `json:"same_asn_hits"`
-	TotalHits   int    `json:"total_hits"`
+	TargetIP           string `json:"target_ip"`
+	ASN                string `json:"asn"`
+	Country            string `json:"country"`
+	CIDRCount          int    `json:"cidr_count"`
+	TotalIPs           int64  `json:"total_ips"`
+	HasCheckpoint      bool   `json:"has_checkpoint"`
+	LastCheckpointIP   string `json:"last_checkpoint_ip,omitempty"`
+	CompletedCIDRCount int    `json:"completed_cidr_count"`
+	SameASNHits        int    `json:"same_asn_hits"`
+	TotalHits          int    `json:"total_hits"`
 }
 
 
@@ -77,13 +83,16 @@ type ProvisionEvent struct {
 
 // InitEventData 任务初始化元数据
 type InitEventData struct {
-	IP         string   `json:"ip"`
-	ASN        string   `json:"asn"`
-	Country    string   `json:"country"`
-	Need       int      `json:"need"`
-	CIDRCount  int      `json:"cidr_count"`
-	CachedHits int      `json:"cached_hits"`
-	Prefixes   []string `json:"prefixes,omitempty"`
+	IP               string   `json:"ip"`
+	ASN              string   `json:"asn"`
+	Country          string   `json:"country"`
+	Need             int      `json:"need"`
+	CIDRCount        int      `json:"cidr_count"`
+	TotalIPs         int64    `json:"total_ips"`
+	CachedHits       int      `json:"cached_hits"`
+	HasCheckpoint    bool     `json:"has_checkpoint"`
+	LastCheckpointIP string   `json:"last_checkpoint_ip,omitempty"`
+	Prefixes         []string `json:"prefixes,omitempty"`
 }
 
 // ProgressEventData 实时扫描进度数据
@@ -204,101 +213,108 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 		matchedCIDRs = append(matchedCIDRs, prefix.String())
 	}
 
-	var fromCacheCount int
-	var fromScanCount int
-	seenDomains := make(map[string]bool)
-
-	// 4. 阶段一：本地资产缓存优先 (0 延迟即时推送)
+	var cachedTargets []*types.TargetRecord
 	if !req.Fresh && s.store != nil {
-		cachedTargets, err := s.store.GetTargetsByASN(asnStr, country, req.MaxAge)
-		if err == nil && len(cachedTargets) > 0 {
-			for _, rec := range cachedTargets {
-				if rec == nil || rec.Domain == "" {
-					continue
-				}
-				if rec.Stars < req.MinStars {
-					continue
-				}
-				dLower := strings.ToLower(rec.Domain)
-				if req.RequireNoCN && (strings.HasSuffix(dLower, ".cn") || strings.Contains(dLower, ".edu.cn") || strings.Contains(dLower, ".gov.cn")) {
-					continue
-				}
-				if seenDomains[rec.Domain] {
-					continue
-				}
-				seenDomains[rec.Domain] = true
-				fromCacheCount++
+		cachedTargets, _ = s.store.GetTargetsByASN(asnStr, country, req.MaxAge)
+	}
 
-				item := TargetItem{
-					Source:          "cache",
-					Domain:          rec.Domain,
-					IP:              rec.IP,
-					ASN:             rec.ASN,
-					Country:         rec.Country,
-					Stars:           rec.Stars,
-					HandshakeMS:     rec.HandshakeMS,
-					CertDays:        rec.CertDays,
-					StatusCode:      rec.StatusCode,
-					PageTitle:       rec.PageTitle,
-					IsCDN:           rec.IsCDN,
-					IsDefaultPage:   rec.IsDefaultPage,
-					DefaultPageType: rec.DefaultPageType,
-					CreatedAt:       rec.LastCheckedAt,
-				}
-
-				// 发送初始事件（如果还未发）
-				if fromCacheCount == 1 {
-					_ = emit(ProvisionEvent{
-						Event: "init",
-						Data: InitEventData{
-							IP:         targetIP,
-							ASN:        asnStr,
-							Country:    country,
-							Need:       req.Limit,
-							CIDRCount:  len(matchedCIDRs),
-							CachedHits: len(cachedTargets),
-						},
-					})
-				}
-
-				if err := emit(ProvisionEvent{Event: "target", Data: item}); err != nil {
-					return err
-				}
-
-				// 达到目标上限，直接命中缓存收工！
-				if fromCacheCount >= req.Limit {
-					return emit(ProvisionEvent{
-						Event: "done",
-						Data: DoneEventData{
-							TotalFound: fromCacheCount,
-							FromCache:  fromCacheCount,
-							FromScan:   0,
-							Reason:     "cache_full",
-						},
-					})
+	var hasCheckpoint bool
+	var lastCheckpointIP string
+	if s.store != nil {
+		if cps, err := s.store.GetCheckpoints(asnStr); err == nil && len(cps) > 0 {
+			hasCheckpoint = true
+			for _, cp := range cps {
+				if !cp.Completed && cp.LastIP != "" {
+					lastCheckpointIP = cp.LastIP
+					break
 				}
 			}
 		}
 	}
 
-	// 如果未命中缓存或缓存不足以发出 init 事件，在此补发 init 事件
-	if fromCacheCount == 0 {
-		_ = emit(ProvisionEvent{
-			Event: "init",
-			Data: InitEventData{
-				IP:         targetIP,
-				ASN:        asnStr,
-				Country:    country,
-				Need:       req.Limit,
-				CIDRCount:  len(matchedCIDRs),
-				CachedHits: 0,
-			},
-		})
+	totalIPs := core.CalculateTotalIPs(matchedCIDRs)
+
+	// 提前发出任务初始化元数据事件（Phase 0: 秒级首帧确认身份与规模）
+	if err := emit(ProvisionEvent{
+		Event: "init",
+		Data: InitEventData{
+			IP:               targetIP,
+			ASN:              asnStr,
+			Country:          country,
+			Need:             req.Limit,
+			CIDRCount:        len(matchedCIDRs),
+			TotalIPs:         totalIPs,
+			CachedHits:       len(cachedTargets),
+			HasCheckpoint:    hasCheckpoint,
+			LastCheckpointIP: lastCheckpointIP,
+			Prefixes:         matchedCIDRs,
+		},
+	}); err != nil {
+		return err
 	}
 
-	// 5. 阶段二：现场按需补齐扫描 (即扫即推)
+	var fromCacheCount int
+	var fromScanCount int
+	seenDomains := make(map[string]bool)
+
+	// 4. 阶段一：本地资产缓存优先 (0 延迟即时推送)
+	if !req.Fresh && len(cachedTargets) > 0 {
+		for _, rec := range cachedTargets {
+			if rec == nil || rec.Domain == "" {
+				continue
+			}
+			if rec.Stars < req.MinStars {
+				continue
+			}
+			dLower := strings.ToLower(rec.Domain)
+			if req.RequireNoCN && (strings.HasSuffix(dLower, ".cn") || strings.Contains(dLower, ".edu.cn") || strings.Contains(dLower, ".gov.cn")) {
+				continue
+			}
+			if seenDomains[rec.Domain] {
+				continue
+			}
+			seenDomains[rec.Domain] = true
+			fromCacheCount++
+
+			item := TargetItem{
+				Source:          "cache",
+				Domain:          rec.Domain,
+				IP:              rec.IP,
+				ASN:             rec.ASN,
+				Country:         rec.Country,
+				Stars:           rec.Stars,
+				HandshakeMS:     rec.HandshakeMS,
+				CertDays:        rec.CertDays,
+				StatusCode:      rec.StatusCode,
+				PageTitle:       rec.PageTitle,
+				IsCDN:           rec.IsCDN,
+				IsDefaultPage:   rec.IsDefaultPage,
+				DefaultPageType: rec.DefaultPageType,
+				CreatedAt:       rec.LastCheckedAt,
+			}
+
+			if err := emit(ProvisionEvent{Event: "target", Data: item}); err != nil {
+				return err
+			}
+
+			// 达到目标上限且未要求全量扫描 ASN 时，直接命中缓存收工！
+			if !req.ScanAll && fromCacheCount >= req.Limit {
+				return emit(ProvisionEvent{
+					Event: "done",
+					Data: DoneEventData{
+						TotalFound: fromCacheCount,
+						FromCache:  fromCacheCount,
+						FromScan:   0,
+						Reason:     "cache_full",
+					},
+				})
+			}
+		}
+	}
+
+	// 5. 阶段二：现场按需补齐扫描或全量 ASN 扫描 (即扫即推，支持单 IP 级断点续传)
 	needed := req.Limit - fromCacheCount
-	if needed <= 0 || len(matchedCIDRs) == 0 {
+	if !req.ScanAll && (needed <= 0 || len(matchedCIDRs) == 0) {
 		return emit(ProvisionEvent{
 			Event: "done",
 			Data: DoneEventData{
@@ -380,8 +396,8 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 
 			_ = emit(ProvisionEvent{Event: "target", Data: item})
 
-			// 凑够即停，主动刹车
-			if fromCacheCount+fromScanCount >= req.Limit {
+			// 凑够即停，主动刹车 (全量扫描模式时不按 limit 刹车)
+			if !req.ScanAll && fromCacheCount+fromScanCount >= req.Limit {
 				cancelScan()
 			}
 		},
@@ -392,13 +408,18 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 		RequireNoCN: req.RequireNoCN,
 		IPv4Only:    req.IPv4Only,
 		IPv6Only:    req.IPv6Only,
-		NoResume:    true, // 现场按需扫描无需加载断点记录
+		NoResume:    false, // 启用断点续传能力
+	}
+
+	maxTargets := needed
+	if req.ScanAll {
+		maxTargets = 0
 	}
 
 	autoCfg := core.AutoScanConfig{
 		CIDRs:      matchedCIDRs,
-		MaxTargets: needed,
-		CheckAll:   false,
+		MaxTargets: maxTargets,
+		CheckAll:   req.ScanAll,
 		Filter:     filterConfig,
 		ASN:        asnStr,
 		Country:    country,
@@ -439,8 +460,15 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 	targetIP := strings.TrimSpace(req.IP)
 	var targetASN string
 	var targetCountry string
+	var prefixes []string
+	var matchedCIDRs []string
+	var cidrCount int
+	var totalIPs int64
+	var hasCheckpoint bool
+	var lastCheckpointIP string
+	var completedCIDRCount int
 
-	// 1. 若提供了目标 IP，智能解析其 ASN 与国家
+	// 1. 若提供了目标 IP，智能解析其 ASN 与国家及网段
 	if targetIP != "" {
 		if parsedIP := net.ParseIP(targetIP); parsedIP != nil {
 			if s.geoipReader != nil {
@@ -448,14 +476,53 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 					targetCountry = strings.ToUpper(rec.Country.IsoCode)
 				}
 			}
-			if asnNum, _, err := s.asnClient.PrefixesForIP(ctx, targetIP); err == nil && asnNum > 0 {
+			if asnNum, rawPrefixes, err := s.asnClient.PrefixesForIP(ctx, targetIP); err == nil && asnNum > 0 {
 				targetASN = fmt.Sprintf("AS%d", asnNum)
+				prefixes = rawPrefixes
 			}
 		}
 	}
 
 	if req.Country != "" {
 		targetCountry = strings.ToUpper(strings.TrimSpace(req.Country))
+	}
+
+	for _, raw := range prefixes {
+		prefix, err := netip.ParsePrefix(raw)
+		if err != nil {
+			continue
+		}
+		if req.IPv4Only && !prefix.Addr().Is4() {
+			continue
+		}
+		if req.IPv6Only && !prefix.Addr().Is6() {
+			continue
+		}
+		if s.geoipReader != nil && targetCountry != "" {
+			if rec, err := s.geoipReader.Country(net.ParseIP(prefix.Addr().String())); err == nil {
+				if !strings.EqualFold(rec.Country.IsoCode, targetCountry) {
+					continue
+				}
+			}
+		}
+		matchedCIDRs = append(matchedCIDRs, prefix.String())
+	}
+	cidrCount = len(matchedCIDRs)
+	if cidrCount > 0 {
+		totalIPs = core.CalculateTotalIPs(matchedCIDRs)
+	}
+
+	if targetASN != "" && s.store != nil {
+		if cps, err := s.store.GetCheckpoints(targetASN); err == nil && len(cps) > 0 {
+			hasCheckpoint = true
+			for _, cp := range cps {
+				if cp.Completed {
+					completedCIDRCount++
+				} else if cp.LastIP != "" && lastCheckpointIP == "" {
+					lastCheckpointIP = cp.LastIP
+				}
+			}
+		}
 	}
 
 	if req.Limit <= 0 {
@@ -472,9 +539,14 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 	}
 
 	summary := &TargetSummaryInfo{
-		TargetIP: targetIP,
-		ASN:      targetASN,
-		Country:  targetCountry,
+		TargetIP:           targetIP,
+		ASN:                targetASN,
+		Country:            targetCountry,
+		CIDRCount:          cidrCount,
+		TotalIPs:           totalIPs,
+		HasCheckpoint:      hasCheckpoint,
+		LastCheckpointIP:   lastCheckpointIP,
+		CompletedCIDRCount: completedCIDRCount,
 	}
 
 	var ranked []RankedTargetItem

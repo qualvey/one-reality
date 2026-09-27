@@ -163,3 +163,52 @@ func TestProvisionService_CacheHit(t *testing.T) {
 		t.Errorf("done data mismatch: %+v", events[3].Data)
 	}
 }
+
+func TestProvisionService_GetSmartTargetsSummary(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test_summary.db")
+	store, _ := storage.NewTargetStore(dbPath)
+	defer store.Close()
+
+	// 记录一个断点
+	_ = store.RecordCheckpoint("AS13335", "1.1.1.0/24", "1.1.1.50", false)
+
+	mockASN := &mockASNResolver{
+		asn:      13335,
+		prefixes: []string{"1.1.1.0/24", "1.0.0.0/24"},
+	}
+
+	svc := NewProvisionService(store, nil, mockASN, nil)
+
+	ranked, summary, err := svc.GetSmartTargets(context.Background(), ProvisionRequest{
+		IP:      "1.1.1.1",
+		Country: "US",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if summary == nil {
+		t.Fatalf("expected non-nil summary")
+	}
+
+	if summary.ASN != "AS13335" {
+		t.Errorf("expected AS13335, got %s", summary.ASN)
+	}
+	if summary.CIDRCount != 2 {
+		t.Errorf("expected 2 CIDRs, got %d", summary.CIDRCount)
+	}
+	if summary.TotalIPs != 512 {
+		t.Errorf("expected 512 total IPs, got %d", summary.TotalIPs)
+	}
+	if !summary.HasCheckpoint {
+		t.Errorf("expected HasCheckpoint to be true")
+	}
+	if summary.LastCheckpointIP != "1.1.1.50" {
+		t.Errorf("expected last checkpoint ip 1.1.1.50, got %s", summary.LastCheckpointIP)
+	}
+	if len(ranked) != 0 {
+		t.Errorf("expected 0 cached targets, got %d", len(ranked))
+	}
+}
+
