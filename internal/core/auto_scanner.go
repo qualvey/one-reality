@@ -68,7 +68,7 @@ type AutoScanResult struct {
 // AutoScanner 核心自动扫描调度器
 type AutoScanner struct {
 	engine        *Engine
-	store         *storage.TargetStore
+	store         storage.Store
 	scannerEngine *scanner.Scanner
 	config        AutoScanConfig
 	events        AutoScanEvents
@@ -91,7 +91,7 @@ type AutoScanner struct {
 // NewAutoScanner 创建纯净的自动扫描调度器（纯内存组装，无副作用）
 func NewAutoScanner(
 	engine *Engine,
-	store *storage.TargetStore,
+	store storage.Store,
 	scannerEngine *scanner.Scanner,
 	cfg AutoScanConfig,
 	events AutoScanEvents,

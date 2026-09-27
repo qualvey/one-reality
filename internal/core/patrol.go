@@ -57,7 +57,7 @@ type PatrolEvents struct {
 
 // PatrolWatchdog 存量 REALITY 资产健康巡检与生命周期守护服务
 type PatrolWatchdog struct {
-	store    *storage.TargetStore
+	store    storage.Store
 	config   PatrolConfig
 	events   PatrolEvents
 	dialer   *net.Dialer
@@ -65,7 +65,7 @@ type PatrolWatchdog struct {
 }
 
 // NewPatrolWatchdog 创建存量资产健康守护服务
-func NewPatrolWatchdog(store *storage.TargetStore, cfg PatrolConfig, events PatrolEvents) *PatrolWatchdog {
+func NewPatrolWatchdog(store storage.Store, cfg PatrolConfig, events PatrolEvents) *PatrolWatchdog {
 	if cfg.Concurrency <= 0 {
 		cfg.Concurrency = 30
 	}

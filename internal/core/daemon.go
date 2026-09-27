@@ -64,7 +64,7 @@ type DaemonEvents struct {
 // DaemonScheduler 全网 24小时无人值守 ASN 扫描调度中枢
 type DaemonScheduler struct {
 	engine        *Engine
-	store         *storage.TargetStore
+	store         storage.Store
 	scannerEngine *scanner.Scanner
 	asnClient     *asnclient.Client
 	geoipReader   *geoip2.Reader
@@ -76,7 +76,7 @@ type DaemonScheduler struct {
 // NewDaemonScheduler 创建守护调度引擎
 func NewDaemonScheduler(
 	engine *Engine,
-	store *storage.TargetStore,
+	store storage.Store,
 	scannerEngine *scanner.Scanner,
 	geoipReader *geoip2.Reader,
 	cfg DaemonConfig,

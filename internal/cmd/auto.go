@@ -67,10 +67,10 @@ func (r *RootCmd) executeAuto(opts AutoScanCLIOptions) {
 	scannerEngine := scanner.NewScanner(scanProxy)
 	defer scannerEngine.Close()
 
-	targetStore, err := storage.NewTargetStore("data/reality_targets.db")
+	targetStore, err := initStore("", r.config)
 	if err != nil {
 		ui.PrintTimestampedMessage("⚠️ 本地资产数据库初始化失败: %v (将使用内存模式)", err)
-	} else {
+	} else if targetStore != nil {
 		defer targetStore.Close()
 	}
 
@@ -597,8 +597,8 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 	// Cache-First 快速通道：若本地库存在同 ASN 且未过期的资产，优先进行秒级直出（默认 0 网络请求，可加 --recheck 在线复核）
 	var cachedVerified []*types.DetectionResult
 	if filter.UseCache && !noCache && !checkAll && asnStr != "" {
-		store, err := storage.NewTargetStore("data/reality_targets.db")
-		if err == nil {
+		store, err := initStore("", r.config)
+		if err == nil && store != nil {
 			defer store.Close()
 			maxAge := time.Duration(filter.CacheMaxDays) * 24 * time.Hour
 			cachedRecords, _ := store.GetTargetsByASN(asnStr, countryStr, maxAge)

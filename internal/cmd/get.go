@@ -11,7 +11,6 @@ import (
 	"RealityChecker/internal/asn"
 	"RealityChecker/internal/config"
 	"RealityChecker/internal/service"
-	"RealityChecker/internal/storage"
 	"RealityChecker/internal/ui"
 	"RealityChecker/internal/version"
 
@@ -53,8 +52,10 @@ func (r *RootCmd) executeGet(args []string) {
 
 	targetIP := flags.Arg(0)
 
-	// 1. 初始化 SQLite 资产库
-	targetStore, err := storage.NewTargetStore(*dbFlag)
+	cfg, _ := config.LoadConfig("")
+
+	// 1. 初始化资产库 (支持 SQLite 与 PostgreSQL)
+	targetStore, err := initStore(*dbFlag, cfg)
 	if err != nil && !*jsonFlag {
 		ui.PrintTimestampedMessage("⚠️ 本地资产数据库打开失败: %v (将使用纯扫描模式)", err)
 	} else if targetStore != nil {
@@ -72,7 +73,6 @@ func (r *RootCmd) executeGet(args []string) {
 
 	// 3. 构建供给服务实例
 	asnClient := asn.NewClient(15 * time.Second)
-	cfg, _ := config.LoadConfig("")
 	provService := service.NewProvisionService(targetStore, geoipReader, asnClient, cfg)
 
 	req := service.ProvisionRequest{

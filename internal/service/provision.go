@@ -120,7 +120,7 @@ type DoneEventData struct {
 
 // ProvisionService 提供端到端目标发现与流式供给业务能力
 type ProvisionService struct {
-	store       *storage.TargetStore
+	store       storage.Store
 	geoipReader *geoip2.Reader
 	asnClient   asn.ASNResolver
 	appConfig   *types.Config
@@ -128,7 +128,7 @@ type ProvisionService struct {
 
 // NewProvisionService 创建供给服务实例
 func NewProvisionService(
-	store *storage.TargetStore,
+	store storage.Store,
 	geoipReader *geoip2.Reader,
 	asnClient asn.ASNResolver,
 	cfg *types.Config,

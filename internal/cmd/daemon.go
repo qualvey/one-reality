@@ -12,7 +12,6 @@ import (
 	"RealityChecker/internal/adaptive"
 	"RealityChecker/internal/core"
 	"RealityChecker/internal/scanner"
-	"RealityChecker/internal/storage"
 	"RealityChecker/internal/types"
 	"RealityChecker/internal/ui"
 
@@ -46,8 +45,8 @@ func (r *RootCmd) executeDaemon(args []string) {
 
 	ui.PrintTimestampedMessage("正在初始化 24小时 ASN 全网扫描守护进程...")
 
-	// 1. 初始化 SQLite 存储
-	store, err := storage.NewTargetStore(*storePath)
+	// 1. 初始化目标数据库 (支持 SQLite 与 PostgreSQL)
+	store, err := initStore(*storePath, r.config)
 	if err != nil {
 		ui.PrintError(fmt.Sprintf("打开目标数据库失败: %v", err))
 		return

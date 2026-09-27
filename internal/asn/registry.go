@@ -63,17 +63,17 @@ var SeedPopularASNs = []*types.ASNRecord{
 
 // RegistryManager 负责全球 ASN 注册表的初始化、权重配置与网络更新
 type RegistryManager struct {
-	store      *storage.TargetStore
+	store      storage.Store
 	httpClient *http.Client
 }
 
 // NewRegistryManager 创建 ASN 注册表管理器
-func NewRegistryManager(store *storage.TargetStore, timeout ...time.Duration) *RegistryManager {
+func NewRegistryManager(store storage.Store, timeout ...time.Duration) *RegistryManager {
 	return NewRegistryManagerWithProxy(store, "", timeout...)
 }
 
 // NewRegistryManagerWithProxy 创建支持代理的 ASN 注册表管理器
-func NewRegistryManagerWithProxy(store *storage.TargetStore, proxyURL string, timeout ...time.Duration) *RegistryManager {
+func NewRegistryManagerWithProxy(store storage.Store, proxyURL string, timeout ...time.Duration) *RegistryManager {
 	reqTimeout := 30 * time.Second
 	if len(timeout) > 0 && timeout[0] > 0 {
 		reqTimeout = timeout[0]

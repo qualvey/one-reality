@@ -14,7 +14,6 @@ import (
 	"RealityChecker/internal/config"
 	"RealityChecker/internal/server"
 	"RealityChecker/internal/service"
-	"RealityChecker/internal/storage"
 	"RealityChecker/internal/ui"
 	"RealityChecker/internal/version"
 
@@ -37,11 +36,13 @@ func (r *RootCmd) executeServe(args []string) {
 
 	addr := fmt.Sprintf("%s:%d", *hostFlag, *portFlag)
 
-	// 1. 初始化 SQLite 资产库
-	targetStore, err := storage.NewTargetStore(*dbFlag)
+	cfg, _ := config.LoadConfig("")
+
+	// 1. 初始化资产库 (支持 SQLite 与 PostgreSQL)
+	targetStore, err := initStore(*dbFlag, cfg)
 	if err != nil {
 		ui.PrintTimestampedMessage("⚠️ 资产数据库初始化失败: %v (将使用无缓存模式运行)", err)
-	} else {
+	} else if targetStore != nil {
 		defer targetStore.Close()
 	}
 
@@ -58,7 +59,6 @@ func (r *RootCmd) executeServe(args []string) {
 
 	// 3. 构建核心业务与 HTTP 实例
 	asnClient := asn.NewClient(15 * time.Second)
-	cfg, _ := config.LoadConfig("")
 	provService := service.NewProvisionService(targetStore, geoipReader, asnClient, cfg)
 
 	apiToken := *tokenFlag

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"RealityChecker/internal/core"
-	"RealityChecker/internal/storage"
 	"RealityChecker/internal/types"
 	"RealityChecker/internal/ui"
 )
@@ -33,7 +32,7 @@ func (r *RootCmd) executePatrol(args []string) {
 
 	ui.PrintTimestampedMessage("正在初始化 REALITY 资产保鲜巡检守护服务 (Watchdog)...")
 
-	store, err := storage.NewTargetStore(*storePath)
+	store, err := initStore(*storePath, r.config)
 	if err != nil {
 		ui.PrintError(fmt.Sprintf("打开目标数据库失败: %v", err))
 		return

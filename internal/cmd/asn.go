@@ -9,7 +9,6 @@ import (
 
 	asnclient "RealityChecker/internal/asn"
 	"RealityChecker/internal/config"
-	"RealityChecker/internal/storage"
 
 	"github.com/oschwald/geoip2-golang"
 )
@@ -43,7 +42,7 @@ func executeASN(args []string) {
 
 	// 1. 注册表管理逻辑
 	if *seedFlag || *syncURL != "" || *statsFlag || *listFlag {
-		store, err := storage.NewTargetStore(*storePath)
+		store, err := initStore(*storePath, cfg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "打开数据库失败: %v\n", err)
 			return
