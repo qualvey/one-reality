@@ -13,6 +13,9 @@ import {
   Key,
   Square,
   Play,
+  Home,
+  Server,
+  AlertTriangle,
 } from 'lucide-react';
 
 export const SmartFinder = () => {
@@ -147,7 +150,11 @@ export const SmartFinder = () => {
         setSummary((prev) => ({
           target_ip: data.ip,
           asn: data.asn,
+          asn_name: data.asn_name,
           country: data.country,
+          ip_type: data.ip_type,
+          is_residential: data.is_residential,
+          suggest_scan: data.suggest_scan,
           cidr_count: data.cidr_count,
           total_ips: data.total_ips,
           has_checkpoint: data.has_checkpoint,
@@ -156,7 +163,10 @@ export const SmartFinder = () => {
           total_hits: prev?.total_hits || data.cached_hits,
         }));
 
-        let msg = `⚡ 提前就绪：${data.asn} (${data.country})，涵盖 ${data.cidr_count} 个网段 (约 ${data.total_ips?.toLocaleString() || 0} 个 IP)`;
+        let msg = `⚡ 提前就绪：${data.asn} (${data.country}) · ${data.is_residential ? '家庭宽带' : '机房数据中心'}`;
+        if (data.cidr_count) {
+          msg += `，涵盖 ${data.cidr_count} 个网段 (约 ${data.total_ips?.toLocaleString() || 0} 个 IP)`;
+        }
         if (data.has_checkpoint && data.last_checkpoint_ip) {
           msg += `，发现断点，正从 ${data.last_checkpoint_ip} 自动精准续传...`;
         } else {
@@ -389,12 +399,26 @@ export const SmartFinder = () => {
               <div className="summary-meta-item">
                 <span className="summary-meta-label">所属 ASN:</span>
                 <span className="summary-meta-value" style={{ color: 'var(--accent-fire)' }}>
-                  {summary.asn || '未知'}
+                  {summary.asn || '未知'} {summary.asn_name ? `(${summary.asn_name})` : ''}
                 </span>
               </div>
               <div className="summary-meta-item">
                 <span className="summary-meta-label">国家/地区:</span>
                 <span className="summary-meta-value">{summary.country || 'GLOBAL'}</span>
+              </div>
+              <div className="summary-meta-item">
+                <span className="summary-meta-label">网络属性:</span>
+                {summary.is_residential ? (
+                  <span className="badge badge-warning" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }} title="家庭宽带/住宅 ISP (通常无对外公网网站与443端口，不建议扫描)">
+                    <Home size={12} />
+                    住宅家宽 / ISP
+                  </span>
+                ) : (
+                  <span className="badge badge-success" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }} title="数据中心机房/云服务商 (适合托管真实业务与伪装选型)">
+                    <Server size={12} />
+                    机房 / 数据中心
+                  </span>
+                )}
               </div>
               {summary.cidr_count !== undefined && summary.cidr_count > 0 && (
                 <div className="summary-meta-item">
@@ -448,31 +472,62 @@ export const SmartFinder = () => {
             marginTop: '24px',
             padding: '36px 28px',
             borderRadius: 'var(--radius-lg)',
-            border: '1px solid rgba(56, 189, 248, 0.35)',
-            background: 'linear-gradient(180deg, rgba(15, 23, 42, 0.8) 0%, rgba(30, 41, 59, 0.6) 100%)',
+            border: summary.is_residential ? '1px solid rgba(245, 158, 11, 0.4)' : '1px solid rgba(56, 189, 248, 0.35)',
+            background: summary.is_residential
+              ? 'linear-gradient(180deg, rgba(30, 27, 24, 0.85) 0%, rgba(20, 20, 25, 0.7) 100%)'
+              : 'linear-gradient(180deg, rgba(15, 23, 42, 0.8) 0%, rgba(30, 41, 59, 0.6) 100%)',
             textAlign: 'center',
             position: 'relative',
             overflow: 'hidden',
           }}
         >
-          <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '56px', height: '56px', borderRadius: '50%', background: 'rgba(249, 115, 22, 0.15)', border: '1px solid rgba(249, 115, 22, 0.4)', marginBottom: '16px' }}>
-            <Zap size={28} style={{ color: '#fb923c' }} />
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '56px',
+              height: '56px',
+              borderRadius: '50%',
+              background: summary.is_residential ? 'rgba(245, 158, 11, 0.15)' : 'rgba(249, 115, 22, 0.15)',
+              border: summary.is_residential ? '1px solid rgba(245, 158, 11, 0.4)' : '1px solid rgba(249, 115, 22, 0.4)',
+              marginBottom: '16px',
+            }}
+          >
+            {summary.is_residential ? (
+              <AlertTriangle size={28} style={{ color: 'var(--accent-amber)' }} />
+            ) : (
+              <Zap size={28} style={{ color: '#fb923c' }} />
+            )}
           </div>
 
           <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-main)', marginBottom: '8px' }}>
-            该 ASN ({summary.asn} · {summary.country}) 本地库暂无收录资产
+            {summary.is_residential
+              ? `⚠️ 检测到该 IP 为家庭宽带网络 (${summary.asn} · ${summary.asn_name || summary.country})`
+              : `该机房 ASN (${summary.asn} · ${summary.asn_name || summary.country}) 本地库暂无收录资产`}
           </h3>
-          <p style={{ color: 'var(--text-sub)', fontSize: '0.9rem', maxWidth: '640px', margin: '0 auto 20px auto', lineHeight: 1.6 }}>
-            已为您提前锁定该节点归属网络，共计识别出{' '}
-            <strong style={{ color: 'var(--accent-cyan)' }}>{summary.cidr_count || 0} 个网段</strong>，
-            涵盖约 <strong style={{ color: 'var(--accent-cyan)' }}>{summary.total_ips?.toLocaleString() || 0} 个 IP 地址</strong>。
-            {summary.has_checkpoint ? (
-              <span style={{ display: 'block', color: 'var(--accent-emerald)', marginTop: '6px' }}>
-                🔄 发现历史断点记录，上次已扫描至 <b>{summary.last_checkpoint_ip}</b>，开启后将从该 IP 精确续传！
+
+          <p style={{ color: 'var(--text-sub)', fontSize: '0.9rem', maxWidth: '680px', margin: '0 auto 20px auto', lineHeight: 1.6 }}>
+            {summary.is_residential ? (
+              <span>
+                <strong style={{ color: 'var(--accent-amber)' }}>不建议扫描：</strong>
+                家庭宽带几乎不存在对外开放 443 端口的真实公网网站与合法证书，全网探测绝大部分为握手超时，难以获得可用 REALITY 伪装目标。
+                建议优先更换为云厂商或 IDC 机房 IP。若确需探索该网段，仍可尝试强制扫描。
               </span>
             ) : (
-              <span style={{ display: 'block', marginTop: '6px' }}>
-                打开下方开关即刻启动并发流水线，边扫边流式返回入库。
+              <span>
+                已为您提前锁定该机房归属网络，共计识别出{' '}
+                <strong style={{ color: 'var(--accent-cyan)' }}>{summary.cidr_count || 0} 个网段</strong>，
+                涵盖约 <strong style={{ color: 'var(--accent-cyan)' }}>{summary.total_ips?.toLocaleString() || 0} 个 IP 地址</strong>。
+                {summary.has_checkpoint ? (
+                  <span style={{ display: 'block', color: 'var(--accent-emerald)', marginTop: '6px' }}>
+                    🔄 发现历史断点记录，上次已扫描至 <b>{summary.last_checkpoint_ip}</b>，开启后将从该 IP 精确续传！
+                  </span>
+                ) : (
+                  <span style={{ display: 'block', marginTop: '6px' }}>
+                    打开下方开关即刻启动并发流水线，边扫边流式返回入库。
+                  </span>
+                )}
               </span>
             )}
           </p>
@@ -480,13 +535,18 @@ export const SmartFinder = () => {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '16px' }}>
             <button
               type="button"
-              className="btn btn-primary"
+              className="btn"
               style={{
                 padding: '12px 28px',
                 fontSize: '1rem',
                 fontWeight: 600,
-                background: 'linear-gradient(135deg, #0ea5e9, #6366f1)',
-                boxShadow: '0 0 25px rgba(99, 102, 241, 0.4)',
+                color: '#fff',
+                background: summary.is_residential
+                  ? 'linear-gradient(135deg, #d97706, #b45309)'
+                  : 'linear-gradient(135deg, #0ea5e9, #6366f1)',
+                boxShadow: summary.is_residential
+                  ? '0 0 20px rgba(217, 119, 6, 0.35)'
+                  : '0 0 25px rgba(99, 102, 241, 0.4)',
                 border: 'none',
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -495,8 +555,8 @@ export const SmartFinder = () => {
               }}
               onClick={() => startScanStream(true)}
             >
-              <Zap size={18} />
-              马上扫描该 ASN (流式探测)
+              {summary.is_residential ? <AlertTriangle size={18} /> : <Zap size={18} />}
+              {summary.is_residential ? '强制尝试扫描该家宽 ASN' : '马上扫描该 ASN (流式探测)'}
             </button>
           </div>
         </div>

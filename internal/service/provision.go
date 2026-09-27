@@ -64,7 +64,11 @@ type RankedTargetItem struct {
 type TargetSummaryInfo struct {
 	TargetIP           string `json:"target_ip"`
 	ASN                string `json:"asn"`
+	ASNName            string `json:"asn_name,omitempty"`
 	Country            string `json:"country"`
+	IPType             string `json:"ip_type"`             // "datacenter" (机房) 或 "residential" (家宽)
+	IsResidential      bool   `json:"is_residential"`     // 是否为住宅宽带
+	SuggestScan        bool   `json:"suggest_scan"`        // 是否建议扫描 (机房为 true，家宽因几乎无网站为 false)
 	CIDRCount          int    `json:"cidr_count"`
 	TotalIPs           int64  `json:"total_ips"`
 	HasCheckpoint      bool   `json:"has_checkpoint"`
@@ -85,7 +89,11 @@ type ProvisionEvent struct {
 type InitEventData struct {
 	IP               string   `json:"ip"`
 	ASN              string   `json:"asn"`
+	ASNName          string   `json:"asn_name,omitempty"`
 	Country          string   `json:"country"`
+	IPType           string   `json:"ip_type"`             // "datacenter" 或 "residential"
+	IsResidential    bool     `json:"is_residential"`
+	SuggestScan      bool     `json:"suggest_scan"`
 	Need             int      `json:"need"`
 	CIDRCount        int      `json:"cidr_count"`
 	TotalIPs         int64    `json:"total_ips"`
@@ -234,13 +242,28 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 
 	totalIPs := core.CalculateTotalIPs(matchedCIDRs)
 
+	var asnProviderName string
+	if s.store != nil {
+		if record, err := s.store.GetASN(asnNumber); err == nil && record != nil && record.Name != "" {
+			asnProviderName = record.Name
+		}
+	}
+	ipType, isResidential, resolvedName := asn.ClassifyASN(asnNumber, asnProviderName)
+	if asnProviderName == "" {
+		asnProviderName = resolvedName
+	}
+
 	// 提前发出任务初始化元数据事件（Phase 0: 秒级首帧确认身份与规模）
 	if err := emit(ProvisionEvent{
 		Event: "init",
 		Data: InitEventData{
 			IP:               targetIP,
 			ASN:              asnStr,
+			ASNName:          asnProviderName,
 			Country:          country,
+			IPType:           ipType,
+			IsResidential:    isResidential,
+			SuggestScan:      !isResidential,
 			Need:             req.Limit,
 			CIDRCount:        len(matchedCIDRs),
 			TotalIPs:         totalIPs,
@@ -468,6 +491,7 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 	var lastCheckpointIP string
 	var completedCIDRCount int
 
+	var asnNum int
 	// 1. 若提供了目标 IP，智能解析其 ASN 与国家及网段
 	if targetIP != "" {
 		if parsedIP := net.ParseIP(targetIP); parsedIP != nil {
@@ -476,7 +500,8 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 					targetCountry = strings.ToUpper(rec.Country.IsoCode)
 				}
 			}
-			if asnNum, rawPrefixes, err := s.asnClient.PrefixesForIP(ctx, targetIP); err == nil && asnNum > 0 {
+			if num, rawPrefixes, err := s.asnClient.PrefixesForIP(ctx, targetIP); err == nil && num > 0 {
+				asnNum = num
 				targetASN = fmt.Sprintf("AS%d", asnNum)
 				prefixes = rawPrefixes
 			}
@@ -525,6 +550,17 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 		}
 	}
 
+	var asnProviderName string
+	if s.store != nil && asnNum > 0 {
+		if record, err := s.store.GetASN(asnNum); err == nil && record != nil && record.Name != "" {
+			asnProviderName = record.Name
+		}
+	}
+	ipType, isResidential, resolvedName := asn.ClassifyASN(asnNum, asnProviderName)
+	if asnProviderName == "" {
+		asnProviderName = resolvedName
+	}
+
 	if req.Limit <= 0 {
 		req.Limit = 10
 	}
@@ -541,7 +577,11 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 	summary := &TargetSummaryInfo{
 		TargetIP:           targetIP,
 		ASN:                targetASN,
+		ASNName:            asnProviderName,
 		Country:            targetCountry,
+		IPType:             ipType,
+		IsResidential:      isResidential,
+		SuggestScan:        !isResidential,
 		CIDRCount:          cidrCount,
 		TotalIPs:           totalIPs,
 		HasCheckpoint:      hasCheckpoint,

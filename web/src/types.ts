@@ -25,7 +25,11 @@ export interface RankedTargetItem extends TargetItem {
 export interface TargetSummaryInfo {
   target_ip: string;
   asn: string;
+  asn_name?: string;
   country: string;
+  ip_type?: 'datacenter' | 'residential';
+  is_residential?: boolean;
+  suggest_scan?: boolean;
   cidr_count?: number;
   total_ips?: number;
   has_checkpoint?: boolean;
