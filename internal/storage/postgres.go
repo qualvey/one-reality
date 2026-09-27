@@ -265,19 +265,19 @@ func (s *PostgresStore) UpsertTargets(records []*types.TargetRecord) error {
 		}
 
 		batch.Queue(query,
-			domainKey,
-			strings.ToUpper(strings.TrimSpace(rec.ASN)),
-			strings.ToUpper(strings.TrimSpace(rec.Country)),
-			rec.IP,
+			sanitizeUTF8(domainKey),
+			sanitizeUTF8(strings.ToUpper(strings.TrimSpace(rec.ASN))),
+			sanitizeUTF8(strings.ToUpper(strings.TrimSpace(rec.Country))),
+			sanitizeUTF8(rec.IP),
 			port,
 			rec.HandshakeMS,
 			rec.CertDays,
 			rec.StatusCode,
-			rec.PageTitle,
+			sanitizeUTF8(rec.PageTitle),
 			rec.IsCDN,
 			rec.IsHot,
 			rec.IsDefaultPage,
-			rec.DefaultPageType,
+			sanitizeUTF8(rec.DefaultPageType),
 			rec.Stars,
 			isActive,
 			rec.CheckFailCount,
@@ -698,7 +698,7 @@ func (s *PostgresStore) RecordCheckpoint(taskKey, cidr, lastIP string, completed
 			completed = EXCLUDED.completed,
 			updated_at = EXCLUDED.updated_at
 	`
-	_, err := s.pool.Exec(ctx, query, taskKey, cidr, lastIP, completed, time.Now().UTC())
+	_, err := s.pool.Exec(ctx, query, sanitizeUTF8(taskKey), sanitizeUTF8(cidr), sanitizeUTF8(lastIP), completed, time.Now().UTC())
 	return err
 }
 
@@ -750,11 +750,11 @@ func (s *PostgresStore) UpsertASNRecords(records []*types.ASNRecord) error {
 		}
 		batch.Queue(query,
 			rec.ASN,
-			rec.Name,
-			strings.ToUpper(strings.TrimSpace(rec.Country)),
+			sanitizeUTF8(rec.Name),
+			sanitizeUTF8(strings.ToUpper(strings.TrimSpace(rec.Country))),
 			rec.TotalIPs,
 			prio,
-			status,
+			sanitizeUTF8(status),
 			rec.LastScannedAt,
 			rec.SuccessTargetCount,
 			now,
@@ -1008,7 +1008,7 @@ func (s *PostgresStore) InsertPatrolLog(log *types.PatrolLogRecord) error {
 		INSERT INTO target_patrol_logs (domain, ip, handshake_ms, is_success, error_msg, checked_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
 	`
-	_, err := s.pool.Exec(ctx, query, log.Domain, log.IP, log.HandshakeMS, log.IsSuccess, log.ErrorMsg, checkedAt)
+	_, err := s.pool.Exec(ctx, query, sanitizeUTF8(log.Domain), sanitizeUTF8(log.IP), log.HandshakeMS, log.IsSuccess, sanitizeUTF8(log.ErrorMsg), checkedAt)
 	return err
 }
 
@@ -1051,7 +1051,7 @@ func (s *PostgresStore) UpdateTargetPatrolResult(domain, ip string, handshakeMS 
 	_, err = tx.Exec(ctx, `
 		INSERT INTO target_patrol_logs (domain, ip, handshake_ms, is_success, error_msg, checked_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
-	`, domainKey, ip, handshakeMS, success, errStr, now)
+	`, sanitizeUTF8(domainKey), sanitizeUTF8(ip), handshakeMS, success, sanitizeUTF8(errStr), now)
 	if err != nil {
 		return err
 	}
@@ -1157,4 +1157,15 @@ func IsPostgresError(err error) bool {
 	return err != nil && (strings.Contains(err.Error(), "pgx") || strings.Contains(err.Error(), "postgres")) || (func() bool {
 		return fmt.Errorf("%w", err) == pgErr
 	})()
+}
+
+// sanitizeUTF8 清洗非合法 UTF-8 字节与 NUL 字符，确保符合 PostgreSQL 文本存储规范 (防御 SQLSTATE 22021)
+func sanitizeUTF8(s string) string {
+	if s == "" {
+		return ""
+	}
+	if strings.ContainsRune(s, '\x00') {
+		s = strings.ReplaceAll(s, "\x00", "")
+	}
+	return strings.ToValidUTF8(s, "")
 }

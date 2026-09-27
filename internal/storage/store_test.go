@@ -2,6 +2,7 @@ package storage
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -386,6 +387,29 @@ func TestPostgresStore_ConnectionFailure(t *testing.T) {
 	_, err := NewPostgresStore(cfg)
 	if err == nil {
 		t.Fatal("expected connection error for invalid postgres target, got nil")
+	}
+}
+
+func TestSanitizeUTF8(t *testing.T) {
+	// 包含非法 UTF-8 字节序列 (例如 0xe9 0x6d 0x69) 以及 NUL 字符
+	rawInvalid := string([]byte{0xe9, 0x6d, 0x69, 'h', 'e', 'l', 'l', 'o', 0x00, 'w', 'o', 'r', 'l', 'd'})
+	cleaned := sanitizeUTF8(rawInvalid)
+
+	// 必须去除了 \x00
+	for i := 0; i < len(cleaned); i++ {
+		if cleaned[i] == 0 {
+			t.Fatalf("sanitizeUTF8 should remove NUL bytes")
+		}
+	}
+
+	// 必须是合法 UTF-8 字符串
+	if !strings.Contains(cleaned, "helloworld") {
+		t.Fatalf("expected helloworld in output, got: %s", cleaned)
+	}
+
+	// 空字符串测试
+	if sanitizeUTF8("") != "" {
+		t.Fatalf("expected empty string")
 	}
 }
 
