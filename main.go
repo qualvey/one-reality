@@ -8,7 +8,6 @@ import (
 	"RealityChecker/internal/cmd"
 	"RealityChecker/internal/config"
 	"RealityChecker/internal/data"
-	"RealityChecker/internal/ui"
 )
 
 // parseGlobalFlags 从命令行参数中提取全局选项 (-c/--config 配置文件路径)
@@ -40,15 +39,15 @@ func main() {
 
 	// 若无参数或显式请求 help (-h, --help, help)，立刻打印帮助信息并退出
 	if len(remainingArgs) < 1 {
-		ui.PrintBanner()
-		ui.PrintUsage()
+		cmd.PrintBanner()
+		cmd.PrintUsage()
 		os.Exit(0)
 	}
 
 	subcmd := remainingArgs[0]
 	if subcmd == "-h" || subcmd == "--help" || subcmd == "help" {
-		ui.PrintBanner()
-		ui.PrintUsage()
+		cmd.PrintBanner()
+		cmd.PrintUsage()
 		os.Exit(0)
 	}
 
@@ -59,7 +58,7 @@ func main() {
 	}
 
 	if shouldPrintBanner {
-		ui.PrintBanner()
+		cmd.PrintBanner()
 	}
 
 	// 统一加载配置 (优先使用 -c/--config，其次探测环境变量/当前目录/二进制所在目录)

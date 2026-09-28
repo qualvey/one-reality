@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"RealityChecker/internal/core"
+	"RealityChecker/internal/logger"
 	"RealityChecker/internal/types"
-	"RealityChecker/internal/ui"
 )
 
 // executePatrol 启动存量 REALITY 资产健康巡检与生命周期淘汰
@@ -30,11 +30,11 @@ func (r *RootCmd) executePatrol(args []string) {
 		return
 	}
 
-	ui.PrintTimestampedMessage("正在初始化 REALITY 资产保鲜巡检守护服务 (Watchdog)...")
+	logger.PrintTimestampedMessage("正在初始化 REALITY 资产保鲜巡检守护服务 (Watchdog)...")
 
 	store, err := initStore(*storePath, r.config)
 	if err != nil {
-		ui.PrintError(fmt.Sprintf("打开目标数据库失败: %v", err))
+		logger.PrintError(fmt.Sprintf("打开目标数据库失败: %v", err))
 		return
 	}
 	defer store.Close()
@@ -45,14 +45,14 @@ func (r *RootCmd) executePatrol(args []string) {
 
 	events := core.PatrolEvents{
 		OnLog: func(msg string) {
-			ui.PrintTimestampedMessage("%s", msg)
+			logger.PrintTimestampedMessage("%s", msg)
 		},
 		OnTargetChecked: func(target *types.TargetRecord, success bool, ms int64, err error) {
 			if success {
-				ui.PrintTimestampedMessage("✅ [%-22s] 存活有效 | 握手: %dms | 剩余证书: %d天",
+				logger.PrintTimestampedMessage("✅ [%-22s] 存活有效 | 握手: %dms | 剩余证书: %d天",
 					target.Domain, ms, target.CertDays)
 			} else {
-				ui.PrintTimestampedMessage("❌ [%-22s] 握手失败: %v (连续失败 %d 次)",
+				logger.PrintTimestampedMessage("❌ [%-22s] 握手失败: %v (连续失败 %d 次)",
 					target.Domain, err, target.CheckFailCount+1)
 			}
 		},
@@ -66,7 +66,7 @@ func (r *RootCmd) executePatrol(args []string) {
 	go func() {
 		select {
 		case <-sigChan:
-			ui.PrintTimestampedMessage("🛑 捕获退出信号，巡检守护服务平滑停机...")
+			logger.PrintTimestampedMessage("🛑 捕获退出信号，巡检守护服务平滑停机...")
 			cancel()
 		case <-ctx.Done():
 		}
@@ -75,14 +75,14 @@ func (r *RootCmd) executePatrol(args []string) {
 	if *isDaemon {
 		cycleInterval := time.Duration(*intervalMin) * time.Minute
 		if err := watchdog.Start(ctx, cycleInterval); err != nil && err != context.Canceled {
-			ui.PrintError(fmt.Sprintf("巡检 Watchdog 异常: %v", err))
+			logger.PrintError(fmt.Sprintf("巡检 Watchdog 异常: %v", err))
 			return
 		}
 	} else {
 		// 单次巡检并输出汇总报告
 		report, err := watchdog.RunOnce(ctx)
 		if err != nil {
-			ui.PrintError(fmt.Sprintf("巡检执行失败: %v", err))
+			logger.PrintError(fmt.Sprintf("巡检执行失败: %v", err))
 			return
 		}
 		fmt.Println("\n=== 存量资产健康巡检汇总报告 ===")

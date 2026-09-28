@@ -14,7 +14,6 @@ import (
 	"RealityChecker/internal/core"
 	"RealityChecker/internal/logger"
 	"RealityChecker/internal/types"
-	"RealityChecker/internal/ui"
 	"RealityChecker/internal/version"
 )
 
@@ -94,7 +93,7 @@ func (r *RootCmd) Execute(customArgs ...[]string) {
 	} else if len(os.Args) >= 2 {
 		args = os.Args[1:]
 	} else {
-		ui.PrintUsage()
+		PrintUsage()
 		os.Exit(1)
 	}
 
@@ -129,7 +128,7 @@ func (r *RootCmd) Execute(customArgs ...[]string) {
 		r.executeMigrate(subArgs)
 	case "check":
 		if len(subArgs) < 1 {
-			ui.PrintErrorWithDetails(
+			logger.PrintErrorWithDetails(
 				"错误：缺少域名参数",
 				"用法: reality-checker check <domain>",
 				"示例: reality-checker check apple.com",
@@ -139,7 +138,7 @@ func (r *RootCmd) Execute(customArgs ...[]string) {
 		r.executeCheck(subArgs[0])
 	case "batch":
 		if len(subArgs) < 1 {
-			ui.PrintErrorWithDetails(
+			logger.PrintErrorWithDetails(
 				"错误：缺少域名参数",
 				"用法: reality-checker batch <domain1> <domain2> <domain3> ...",
 				"示例: reality-checker batch apple.com google.com microsoft.com",
@@ -149,7 +148,7 @@ func (r *RootCmd) Execute(customArgs ...[]string) {
 		domainsStr := strings.Join(subArgs, " ")
 		r.executeBatch(domainsStr)
 	case "csv":
-		ui.PrintErrorWithDetails(
+		logger.PrintErrorWithDetails(
 			"提示：'csv' 命令已废弃并整合",
 			"请直接使用更为高效的流式管道命令：",
 			"  cat file.csv | reality-checker pipe  (Linux/macOS)",
@@ -161,9 +160,9 @@ func (r *RootCmd) Execute(customArgs ...[]string) {
 	case "version", "-v", "--version":
 		r.showVersion()
 	case "help", "-h", "--help":
-		ui.PrintUsage()
+		PrintUsage()
 	default:
-		ui.PrintErrorWithDetails(
+		logger.PrintErrorWithDetails(
 			fmt.Sprintf("错误：未知命令 '%s'", subCmd),
 			"可用命令: get, serve, daemon, patrol, auto, asn, migrate, pipe, check, batch, version",
 		)

@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"RealityChecker/internal/config"
+	"RealityChecker/internal/logger"
 	"RealityChecker/internal/report"
-	"RealityChecker/internal/ui"
 )
 
 // executeCheck 执行单域名检测
@@ -16,7 +16,7 @@ func (r *RootCmd) executeCheck(domain string) {
 	// 验证域名格式
 	domain = strings.TrimSpace(domain)
 	if !isValidDomain(domain) {
-		ui.PrintErrorWithDetails(
+		logger.PrintErrorWithDetails(
 			fmt.Sprintf("错误：域名格式无效 '%s'", domain),
 			"提示：请检查域名格式，例如：apple.com, google.com",
 			"域名要求：",
@@ -28,7 +28,7 @@ func (r *RootCmd) executeCheck(domain string) {
 		return
 	}
 
-	ui.PrintTimestampedMessage("开始检测域名: %s", domain)
+	logger.PrintTimestampedMessage("开始检测域名: %s", domain)
 
 	result, err := r.engine.CheckDomain(r.ctx, domain)
 	if err != nil {

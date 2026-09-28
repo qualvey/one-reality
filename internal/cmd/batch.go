@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"RealityChecker/internal/ui"
+	"RealityChecker/internal/logger"
 )
 
 // executeBatch 执行批量检测
@@ -13,7 +13,7 @@ func (r *RootCmd) executeBatch(domainsStr string) {
 	domains, invalidDomains, duplicateDomains := parseDomains(domainsStr)
 
 	if len(domains) == 0 {
-		ui.PrintErrorWithDetails(
+		logger.PrintErrorWithDetails(
 			"错误：没有有效的域名可以检测",
 			"提示：请检查域名格式，例如：apple.com, google.com",
 		)
@@ -22,7 +22,7 @@ func (r *RootCmd) executeBatch(domainsStr string) {
 
 	// 显示重复域名警告
 	if len(duplicateDomains) > 0 {
-		ui.PrintTimestampedMessage("警告：发现 %d 个重复域名，已去重：", len(duplicateDomains))
+		logger.PrintTimestampedMessage("警告：发现 %d 个重复域名，已去重：", len(duplicateDomains))
 
 		// 只显示前5个重复域名，避免显示过多
 		displayCount := 5
@@ -44,7 +44,7 @@ func (r *RootCmd) executeBatch(domainsStr string) {
 
 	// 显示无效域名警告
 	if len(invalidDomains) > 0 {
-		ui.PrintTimestampedMessage("警告：发现 %d 个无效域名，已跳过：", len(invalidDomains))
+		logger.PrintTimestampedMessage("警告：发现 %d 个无效域名，已跳过：", len(invalidDomains))
 
 		// 只显示前5个无效域名，避免显示过多
 		displayCount := 5
@@ -64,7 +64,7 @@ func (r *RootCmd) executeBatch(domainsStr string) {
 		fmt.Println()
 	}
 
-	ui.PrintTimestampedMessage("开始批量检测 %d 个域名...", len(domains))
+	logger.PrintTimestampedMessage("开始批量检测 %d 个域名...", len(domains))
 
 	_, err := r.batchManager.CheckDomains(r.ctx, domains)
 	if err != nil {

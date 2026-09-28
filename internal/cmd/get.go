@@ -10,8 +10,8 @@ import (
 
 	"RealityChecker/internal/asn"
 	"RealityChecker/internal/config"
+	"RealityChecker/internal/logger"
 	"RealityChecker/internal/service"
-	"RealityChecker/internal/ui"
 	"RealityChecker/internal/version"
 
 	"github.com/oschwald/geoip2-golang"
@@ -42,7 +42,7 @@ func (r *RootCmd) executeGet(args []string) {
 	}
 
 	if flags.NArg() < 1 {
-		ui.PrintErrorWithDetails(
+		logger.PrintErrorWithDetails(
 			"错误：缺少目标 IP 地址",
 			"用法: reality-checker get <ip> [--limit 5] [--stars 3] [--fresh] [--json]",
 			"示例: reality-checker get 85.155.184.100 -n 5 -s 4",
@@ -57,7 +57,7 @@ func (r *RootCmd) executeGet(args []string) {
 	// 1. 初始化资产库 (支持 SQLite 与 PostgreSQL)
 	targetStore, err := initStore(*dbFlag, cfg)
 	if err != nil && !*jsonFlag {
-		ui.PrintTimestampedMessage("⚠️ 本地资产数据库打开失败: %v (将使用纯扫描模式)", err)
+		logger.PrintTimestampedMessage("⚠️ 本地资产数据库打开失败: %v (将使用纯扫描模式)", err)
 	} else if targetStore != nil {
 		defer targetStore.Close()
 	}
@@ -89,7 +89,7 @@ func (r *RootCmd) executeGet(args []string) {
 	if !*jsonFlag {
 		fmt.Println()
 		fmt.Printf("🔍 REALITY 优质目标极速供给引擎 [%s]\n", version.GetVersion())
-		ui.PrintTimestampedMessage("目标入口 IP: %s (需匹配 %d 个 ≥%d 星级目标)...", targetIP, *limitFlag, *minStarsFlag)
+		logger.PrintTimestampedMessage("目标入口 IP: %s (需匹配 %d 个 ≥%d 星级目标)...", targetIP, *limitFlag, *minStarsFlag)
 	}
 
 	var initData *service.InitEventData
@@ -102,12 +102,12 @@ func (r *RootCmd) executeGet(args []string) {
 			if d, ok := evt.Data.(service.InitEventData); ok {
 				initData = &d
 				if !*jsonFlag {
-					ui.PrintTimestampedMessage("所属自治域: %s | 归属国: %s | 关联网段: %d 个 | 本地缓存命中: %d 条",
+					logger.PrintTimestampedMessage("所属自治域: %s | 归属国: %s | 关联网段: %d 个 | 本地缓存命中: %d 条",
 						d.ASN, d.Country, d.CIDRCount, d.CachedHits)
 					if d.CachedHits > 0 && !*freshFlag {
-						ui.PrintTimestampedMessage("⚡ 优先从本地已验证优质资产中极速提取...")
+						logger.PrintTimestampedMessage("⚡ 优先从本地已验证优质资产中极速提取...")
 					} else {
-						ui.PrintTimestampedMessage("🚀 启动现场就近网段深度并发探测流水线...")
+						logger.PrintTimestampedMessage("🚀 启动现场就近网段深度并发探测流水线...")
 					}
 				}
 			}
@@ -134,14 +134,14 @@ func (r *RootCmd) executeGet(args []string) {
 				doneData = &d
 				if !*jsonFlag {
 					fmt.Println()
-					ui.PrintTimestampedMessage("✅ 供给完成！共获取 %d 个优质目标 (本地库: %d, 现场扫描: %d) [原因: %s]",
+					logger.PrintTimestampedMessage("✅ 供给完成！共获取 %d 个优质目标 (本地库: %d, 现场扫描: %d) [原因: %s]",
 						d.TotalFound, d.FromCache, d.FromScan, d.Reason)
 					fmt.Println()
 				}
 			}
 		case "error":
 			if !*jsonFlag {
-				ui.PrintError(fmt.Sprintf("❌ 发生错误: %v", evt.Data))
+				logger.PrintError(fmt.Sprintf("❌ 发生错误: %v", evt.Data))
 			}
 		}
 		return nil
@@ -165,6 +165,6 @@ func (r *RootCmd) executeGet(args []string) {
 		encoder.SetIndent("", "  ")
 		_ = encoder.Encode(output)
 	} else if err != nil {
-		ui.PrintError(fmt.Sprintf("执行失败: %v", err))
+		logger.PrintError(fmt.Sprintf("执行失败: %v", err))
 	}
 }

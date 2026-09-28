@@ -12,9 +12,9 @@ import (
 
 	"RealityChecker/internal/asn"
 	"RealityChecker/internal/config"
+	"RealityChecker/internal/logger"
 	"RealityChecker/internal/server"
 	"RealityChecker/internal/service"
-	"RealityChecker/internal/ui"
 	"RealityChecker/internal/version"
 
 	"github.com/oschwald/geoip2-golang"
@@ -41,7 +41,7 @@ func (r *RootCmd) executeServe(args []string) {
 	// 1. 初始化资产库 (支持 SQLite 与 PostgreSQL)
 	targetStore, err := initStore(*dbFlag, cfg)
 	if err != nil {
-		ui.PrintTimestampedMessage("⚠️ 资产数据库初始化失败: %v (将使用无缓存模式运行)", err)
+		logger.PrintTimestampedMessage("⚠️ 资产数据库初始化失败: %v (将使用无缓存模式运行)", err)
 	} else if targetStore != nil {
 		defer targetStore.Close()
 	}
@@ -53,7 +53,7 @@ func (r *RootCmd) executeServe(args []string) {
 			geoipReader = reader
 			defer geoipReader.Close()
 		} else {
-			ui.PrintTimestampedMessage("ℹ️ 未加载本地 GeoIP 数据库 (%s): %v", *mmdbFlag, err)
+			logger.PrintTimestampedMessage("ℹ️ 未加载本地 GeoIP 数据库 (%s): %v", *mmdbFlag, err)
 		}
 	}
 
@@ -101,7 +101,7 @@ func (r *RootCmd) executeServe(args []string) {
 	fmt.Printf("     • SSE 流式探测: GET http://%s/api/targets/stream?ip=<IP>&limit=5\n", addr)
 	fmt.Printf("     • 健康检查探测: GET http://%s/api/health\n", addr)
 	fmt.Println()
-	ui.PrintTimestampedMessage("服务就绪，按 Ctrl+C 优雅退出...")
+	logger.PrintTimestampedMessage("服务就绪，按 Ctrl+C 优雅退出...")
 
 
 	// 5. 启动服务与优雅停机
@@ -117,15 +117,15 @@ func (r *RootCmd) executeServe(args []string) {
 
 	select {
 	case err := <-errChan:
-		ui.PrintError(fmt.Sprintf("❌ 服务异常终止: %v", err))
+		logger.PrintError(fmt.Sprintf("❌ 服务异常终止: %v", err))
 	case <-sigChan:
-		ui.PrintTimestampedMessage("正在平滑关闭 HTTP 服务...")
+		logger.PrintTimestampedMessage("正在平滑关闭 HTTP 服务...")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := targetServer.Shutdown(shutdownCtx); err != nil {
-			ui.PrintError(fmt.Sprintf("强制终止服务: %v", err))
+			logger.PrintError(fmt.Sprintf("强制终止服务: %v", err))
 		} else {
-			ui.PrintTimestampedMessage("HTTP 服务已安全关闭。")
+			logger.PrintTimestampedMessage("HTTP 服务已安全关闭。")
 		}
 	case <-r.ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

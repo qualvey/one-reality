@@ -11,9 +11,9 @@ import (
 
 	"RealityChecker/internal/adaptive"
 	"RealityChecker/internal/core"
+	"RealityChecker/internal/logger"
 	"RealityChecker/internal/scanner"
 	"RealityChecker/internal/types"
-	"RealityChecker/internal/ui"
 
 	"github.com/oschwald/geoip2-golang"
 )
@@ -43,12 +43,12 @@ func (r *RootCmd) executeDaemon(args []string) {
 		return
 	}
 
-	ui.PrintTimestampedMessage("正在初始化 24小时 ASN 全网扫描守护进程...")
+	logger.PrintTimestampedMessage("正在初始化 24小时 ASN 全网扫描守护进程...")
 
 	// 1. 初始化目标数据库 (支持 SQLite 与 PostgreSQL)
 	store, err := initStore(*storePath, r.config)
 	if err != nil {
-		ui.PrintError(fmt.Sprintf("打开目标数据库失败: %v", err))
+		logger.PrintError(fmt.Sprintf("打开目标数据库失败: %v", err))
 		return
 	}
 	defer store.Close()
@@ -58,7 +58,7 @@ func (r *RootCmd) executeDaemon(args []string) {
 	if _, err := os.Stat(*dbPath); err == nil {
 		geoipReader, err = geoip2.Open(*dbPath)
 		if err != nil {
-			ui.PrintTimestampedMessage("⚠️ 加载 GeoIP 数据库警告: %v (将跳过国家本地离线验证)", err)
+			logger.PrintTimestampedMessage("⚠️ 加载 GeoIP 数据库警告: %v (将跳过国家本地离线验证)", err)
 		} else {
 			defer geoipReader.Close()
 		}
@@ -89,14 +89,14 @@ func (r *RootCmd) executeDaemon(args []string) {
 
 	events := core.DaemonEvents{
 		OnLog: func(msg string) {
-			ui.PrintTimestampedMessage("%s", msg)
+			logger.PrintTimestampedMessage("%s", msg)
 		},
 		OnASNStart: func(asn *types.ASNRecord, cidrCount int, totalIPs int64) {
-			ui.PrintTimestampedMessage("🎯 [调度中枢] 选中自治系统 AS%d (%s, %s) - 启动 %d 个网段，约 %d 个 IP",
+			logger.PrintTimestampedMessage("🎯 [调度中枢] 选中自治系统 AS%d (%s, %s) - 启动 %d 个网段，约 %d 个 IP",
 				asn.ASN, asn.Name, asn.Country, cidrCount, totalIPs)
 		},
 		OnASNComplete: func(asn *types.ASNRecord, foundTargets int, duration time.Duration) {
-			ui.PrintTimestampedMessage("🏆 [调度中枢] 自治系统 AS%d 扫描完毕！新增有效资产 %d 个 (耗时 %v)",
+			logger.PrintTimestampedMessage("🏆 [调度中枢] 自治系统 AS%d 扫描完毕！新增有效资产 %d 个 (耗时 %v)",
 				asn.ASN, foundTargets, duration.Round(time.Second))
 		},
 		OnScanRecord: func(probe *scanner.ProbeResult) {
@@ -104,9 +104,9 @@ func (r *RootCmd) executeDaemon(args []string) {
 				return
 			}
 			if !probe.Success {
-				ui.PrintTimestampedMessage("[-] %-15s:%-4d | 探活失败: %s", probe.IP, probe.Port, probe.FailureReason)
+				logger.PrintTimestampedMessage("[-] %-15s:%-4d | 探活失败: %s", probe.IP, probe.Port, probe.FailureReason)
 			} else {
-				ui.PrintTimestampedMessage("[+] %-15s:%-4d | 握手成功: 提取域名 %s (ALPN: %s, 套件: %s)",
+				logger.PrintTimestampedMessage("[+] %-15s:%-4d | 握手成功: 提取域名 %s (ALPN: %s, 套件: %s)",
 					probe.IP, probe.Port, probe.Result.CertDomain, probe.Result.ALPN, probe.Result.Curve)
 			}
 		},
@@ -114,13 +114,13 @@ func (r *RootCmd) executeDaemon(args []string) {
 			if !*verbose {
 				return
 			}
-			ui.PrintTimestampedMessage("[~] %-15s      | 域名未入选: %-25s | 原因: %s", ip, domain, reason)
+			logger.PrintTimestampedMessage("[~] %-15s      | 域名未入选: %-25s | 原因: %s", ip, domain, reason)
 		},
 		OnAdaptiveAdjust: func(stats adaptive.LimiterStats) {
-			ui.PrintTimestampedMessage("⚡ [自适应调谐] %s", stats.LastActionReason)
+			logger.PrintTimestampedMessage("⚡ [自适应调谐] %s", stats.LastActionReason)
 		},
 		OnTargetFound: func(target *types.TargetRecord) {
-			ui.PrintTimestampedMessage("⭐ 发现优质 REALITY 目标: %-25s (IP: %-15s, 握手: %dms, 评级: %d星)",
+			logger.PrintTimestampedMessage("⭐ 发现优质 REALITY 目标: %-25s (IP: %-15s, 握手: %dms, 评级: %d星)",
 				target.Domain, target.IP, target.HandshakeMS, target.Stars)
 		},
 	}
@@ -142,7 +142,7 @@ func (r *RootCmd) executeDaemon(args []string) {
 	go func() {
 		select {
 		case sig := <-sigChan:
-			ui.PrintTimestampedMessage("🛑 捕获系统退出信号 (%s)，通知扫描调度引擎平滑停机...", sig)
+			logger.PrintTimestampedMessage("🛑 捕获系统退出信号 (%s)，通知扫描调度引擎平滑停机...", sig)
 			cancel()
 		case <-ctx.Done():
 		}
@@ -150,9 +150,9 @@ func (r *RootCmd) executeDaemon(args []string) {
 
 	// 6. 运行守护循环
 	if err := daemon.Start(ctx); err != nil && err != context.Canceled {
-		ui.PrintError(fmt.Sprintf("守护进程异常终止: %v", err))
+		logger.PrintError(fmt.Sprintf("守护进程异常终止: %v", err))
 		return
 	}
 
-	ui.PrintTimestampedMessage("👋 24小时守护进程已优雅退出，所有扫描进度与断点均已妥善保存。")
+	logger.PrintTimestampedMessage("👋 24小时守护进程已优雅退出，所有扫描进度与断点均已妥善保存。")
 }

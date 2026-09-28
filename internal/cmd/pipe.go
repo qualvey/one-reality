@@ -10,13 +10,13 @@ import (
 
 	"RealityChecker/internal/config"
 	"RealityChecker/internal/core"
+	"RealityChecker/internal/logger"
 	"RealityChecker/internal/types"
-	"RealityChecker/internal/ui"
 )
 
 // executePipe 从标准输入(Stdin)流式读取 CSV 数据或域名，进行实时并行检测并输出彩色表格
 func (r *RootCmd) executePipe() {
-	ui.PrintTimestampedMessage("开启管道流式检测模式 (Pipe Mode)...")
+	logger.PrintTimestampedMessage("开启管道流式检测模式 (Pipe Mode)...")
 
 	filter := types.RealityFilterConfig{}
 	if r.batchManager != nil && r.batchManager.GetConfig() != nil {
@@ -135,10 +135,10 @@ func (r *RootCmd) executePipe() {
 	close(domainChan)
 
 	if err := scanner.Err(); err != nil {
-		ui.PrintError(fmt.Sprintf("读取管道输入错误: %v", err))
+		logger.PrintError(fmt.Sprintf("读取管道输入错误: %v", err))
 	}
 
-	ui.PrintTimestampedMessage("管道流式检测结束。共找到 %d 个适合的 REALITY 目标域名。", len(suitableResults))
+	logger.PrintTimestampedMessage("管道流式检测结束。共找到 %d 个适合的 REALITY 目标域名。", len(suitableResults))
 
 	// 渲染经典带颜色 ASCII 表格
 	if len(suitableResults) > 0 {

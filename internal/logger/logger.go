@@ -110,3 +110,34 @@ func logMsg(tag string, format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	fmt.Fprintf(globalLogger.out, "[%s] [%s] %s\n", timestamp, tag, msg)
 }
+
+// PrintTimestampedMessage 打印带时间戳的控制台消息（兼容原 ui 包行为并安全输出至 logger 目标）
+func PrintTimestampedMessage(format string, args ...interface{}) {
+	globalLogger.mu.Lock()
+	defer globalLogger.mu.Unlock()
+	timestamp := time.Now().Format("15:04:05")
+	msg := fmt.Sprintf(format, args...)
+	fmt.Fprintf(globalLogger.out, "[%s] %s\n", timestamp, msg)
+}
+
+// PrintError 打印错误信息（带空行间距）
+func PrintError(message string) {
+	globalLogger.mu.Lock()
+	defer globalLogger.mu.Unlock()
+	fmt.Fprintln(globalLogger.out)
+	fmt.Fprintln(globalLogger.out, message)
+	fmt.Fprintln(globalLogger.out)
+}
+
+// PrintErrorWithDetails 打印错误信息和详细说明
+func PrintErrorWithDetails(message string, details ...string) {
+	globalLogger.mu.Lock()
+	defer globalLogger.mu.Unlock()
+	fmt.Fprintln(globalLogger.out)
+	fmt.Fprintln(globalLogger.out, message)
+	for _, detail := range details {
+		fmt.Fprintln(globalLogger.out, detail)
+	}
+	fmt.Fprintln(globalLogger.out)
+}
+

@@ -22,7 +22,6 @@ import (
 	"RealityChecker/internal/scanner"
 	"RealityChecker/internal/storage"
 	"RealityChecker/internal/types"
-	"RealityChecker/internal/ui"
 
 	"github.com/oschwald/geoip2-golang"
 	"github.com/schollz/progressbar/v3"
@@ -54,14 +53,14 @@ type AutoScanCLIOptions struct {
 // executeAuto 组装 CLI 终端进度条与事件回调，调用 core.AutoScanner 执行扫描
 func (r *RootCmd) executeAuto(opts AutoScanCLIOptions) {
 	if len(opts.CIDRs) == 0 {
-		ui.PrintError("错误：未提供有效的 CIDR 扫描网段")
+		logger.PrintError("错误：未提供有效的 CIDR 扫描网段")
 		return
 	}
 
 	scanProxy := ""
 	if r.config != nil && r.config.Proxy.Scanner && r.config.Proxy.URL != "" {
 		scanProxy = r.config.Proxy.URL
-		ui.PrintTimestampedMessage("⚠️ 提示: 网络扫描已启用代理通道 [%s] (测速与握手延迟将包含代理链路耗时)", scanProxy)
+		logger.PrintTimestampedMessage("⚠️ 提示: 网络扫描已启用代理通道 [%s] (测速与握手延迟将包含代理链路耗时)", scanProxy)
 	}
 
 	scannerEngine := scanner.NewScanner(scanProxy)
@@ -69,7 +68,7 @@ func (r *RootCmd) executeAuto(opts AutoScanCLIOptions) {
 
 	targetStore, err := initStore("", r.config)
 	if err != nil {
-		ui.PrintTimestampedMessage("⚠️ 本地资产数据库初始化失败: %v (将使用内存模式)", err)
+		logger.PrintTimestampedMessage("⚠️ 本地资产数据库初始化失败: %v (将使用内存模式)", err)
 	} else if targetStore != nil {
 		defer targetStore.Close()
 	}
@@ -108,22 +107,22 @@ func (r *RootCmd) executeAuto(opts AutoScanCLIOptions) {
 		}
 	}
 
-	ui.PrintTimestampedMessage("开启内嵌自动化扫描与检测模式 (Native Engine)...")
+	logger.PrintTimestampedMessage("开启内嵌自动化扫描与检测模式 (Native Engine)...")
 	if opts.Verbose {
-		ui.PrintTimestampedMessage("模式: 详细记录模式 (-v / --verbose)，将实时输出每一条 IP 探测与判定记录到标准输出")
+		logger.PrintTimestampedMessage("模式: 详细记录模式 (-v / --verbose)，将实时输出每一条 IP 探测与判定记录到标准输出")
 	}
 	if opts.CheckAll {
-		ui.PrintTimestampedMessage("模式: 全量摸底扫描 (--check-all)，将收集并存档所有合规资产入库")
+		logger.PrintTimestampedMessage("模式: 全量摸底扫描 (--check-all)，将收集并存档所有合规资产入库")
 	}
 
 	nonDefaults := formatNonDefaultFilters(opts.Filter)
 	if len(nonDefaults) > 0 {
-		ui.PrintTimestampedMessage("检测到自定义非默认过滤条件: [%s]", strings.Join(nonDefaults, ", "))
+		logger.PrintTimestampedMessage("检测到自定义非默认过滤条件: [%s]", strings.Join(nonDefaults, ", "))
 	} else {
-		ui.PrintTimestampedMessage("应用 REALITY 选型策略: [全部使用推荐默认值]")
+		logger.PrintTimestampedMessage("应用 REALITY 选型策略: [全部使用推荐默认值]")
 	}
 
-	ui.PrintTimestampedMessage("待扫描网段总数: %d 个。排序如下:", len(opts.CIDRs))
+	logger.PrintTimestampedMessage("待扫描网段总数: %d 个。排序如下:", len(opts.CIDRs))
 	for i, c := range opts.CIDRs {
 		if i < 5 {
 			fmt.Printf("  [%d] %s\n", i+1, c)
@@ -153,9 +152,9 @@ func (r *RootCmd) executeAuto(opts AutoScanCLIOptions) {
 				return
 			}
 			if !probe.Success {
-				ui.PrintTimestampedMessage("[-] %-15s:%-4d | 探活失败: %s", probe.IP, probe.Port, probe.FailureReason)
+				logger.PrintTimestampedMessage("[-] %-15s:%-4d | 探活失败: %s", probe.IP, probe.Port, probe.FailureReason)
 			} else {
-				ui.PrintTimestampedMessage("[+] %-15s:%-4d | 握手成功: 提取域名 %s (ALPN: %s, 套件: %s)",
+				logger.PrintTimestampedMessage("[+] %-15s:%-4d | 握手成功: 提取域名 %s (ALPN: %s, 套件: %s)",
 					probe.IP, probe.Port, probe.Result.CertDomain, probe.Result.ALPN, probe.Result.Curve)
 			}
 		},
@@ -163,13 +162,13 @@ func (r *RootCmd) executeAuto(opts AutoScanCLIOptions) {
 			if !opts.Verbose {
 				return
 			}
-			ui.PrintTimestampedMessage("[~] %-15s      | 域名未入选: %-25s | 原因: %s", ip, domain, reason)
+			logger.PrintTimestampedMessage("[~] %-15s      | 域名未入选: %-25s | 原因: %s", ip, domain, reason)
 		},
 		OnAdaptiveAdjust: func(stats adaptive.LimiterStats) {
 			if bar != nil {
 				logger.AboveBar(bar, "⚡ [算力与网络自适应] %s", stats.LastActionReason)
 			} else {
-				ui.PrintTimestampedMessage("⚡ [算力与网络自适应] %s", stats.LastActionReason)
+				logger.PrintTimestampedMessage("⚡ [算力与网络自适应] %s", stats.LastActionReason)
 			}
 		},
 		OnTargetFound: func(res *types.DetectionResult, count int, ip string, handshakeMs int64, statusCode int) {
@@ -180,12 +179,12 @@ func (r *RootCmd) executeAuto(opts AutoScanCLIOptions) {
 			} else {
 				stars := core.CalculateTargetStars(res)
 				starStr := strings.Repeat("★", stars) + strings.Repeat("☆", 5-stars)
-				ui.PrintTimestampedMessage("🎯 [%-15s:%-4d] 命中优质目标 [%d]: %-25s | 握手: %3dms | 状态: %3d | 推荐: %s",
+				logger.PrintTimestampedMessage("🎯 [%-15s:%-4d] 命中优质目标 [%d]: %-25s | 握手: %3dms | 状态: %3d | 推荐: %s",
 					ip, 443, count, res.Domain, handshakeMs, statusCode, starStr)
 			}
 		},
 		OnLimitHit: func(maxTargets int) {
-			ui.PrintTimestampedMessage("已达到设定的目标数量限制 (%d 个)，即刻刹车并停止扫描...", maxTargets)
+			logger.PrintTimestampedMessage("已达到设定的目标数量限制 (%d 个)，即刻刹车并停止扫描...", maxTargets)
 		},
 		OnCIDRScanStart: func(currentIdx int, totalCIDRs int, cidr string, resumeIP string) {
 			if bar != nil {
@@ -196,14 +195,14 @@ func (r *RootCmd) executeAuto(opts AutoScanCLIOptions) {
 				}
 			} else {
 				if resumeIP != "" {
-					ui.PrintTimestampedMessage("[%d/%d] 正在并发扫描网段: %s (从断点 IP: %s 继续)...", currentIdx, totalCIDRs, cidr, resumeIP)
+					logger.PrintTimestampedMessage("[%d/%d] 正在并发扫描网段: %s (从断点 IP: %s 继续)...", currentIdx, totalCIDRs, cidr, resumeIP)
 				} else {
-					ui.PrintTimestampedMessage("[%d/%d] 正在并发扫描网段: %s ...", currentIdx, totalCIDRs, cidr)
+					logger.PrintTimestampedMessage("[%d/%d] 正在并发扫描网段: %s ...", currentIdx, totalCIDRs, cidr)
 				}
 			}
 		},
 		OnLog: func(msg string) {
-			ui.PrintTimestampedMessage("%s", msg)
+			logger.PrintTimestampedMessage("%s", msg)
 		},
 	}
 
@@ -229,17 +228,17 @@ func (r *RootCmd) executeAuto(opts AutoScanCLIOptions) {
 
 	if err != nil {
 		if errors.Is(err, core.ErrAllCompleted) {
-			ui.PrintTimestampedMessage("✅ 全量摸排任务 (%s) 的所有网段此前已全部扫描完成！如需重新全量扫描请指定 --reset-scan", taskKey)
+			logger.PrintTimestampedMessage("✅ 全量摸排任务 (%s) 的所有网段此前已全部扫描完成！如需重新全量扫描请指定 --reset-scan", taskKey)
 			return
 		}
-		ui.PrintError(fmt.Sprintf("扫描失败: %v", err))
+		logger.PrintError(fmt.Sprintf("扫描失败: %v", err))
 		return
 	}
 
 	if res.IsInterrupted {
-		ui.PrintTimestampedMessage("扫描已响应用户中断 (Ctrl+C) 并安全退出。")
+		logger.PrintTimestampedMessage("扫描已响应用户中断 (Ctrl+C) 并安全退出。")
 		if opts.CheckAll && taskKey != "" {
-			ui.PrintTimestampedMessage("💡 已自动保存当前网段与当前 IP 扫描断点进度，再次运行时将无缝续传。")
+			logger.PrintTimestampedMessage("💡 已自动保存当前网段与当前 IP 扫描断点进度，再次运行时将无缝续传。")
 		}
 		if len(res.SuitableResults) > 0 {
 			r.batchManager.SortByRecommendationStars(res.SuitableResults)
@@ -258,11 +257,11 @@ func (r *RootCmd) executeAuto(opts AutoScanCLIOptions) {
 		}
 		if data, err := json.MarshalIndent(exportPool, "", "  "); err == nil {
 			_ = os.WriteFile(opts.ExportFile, data, 0644)
-			ui.PrintTimestampedMessage("已将本次摸排发现的 %d 个候选资产导出至: %s", len(res.RawCandidatePool), opts.ExportFile)
+			logger.PrintTimestampedMessage("已将本次摸排发现的 %d 个候选资产导出至: %s", len(res.RawCandidatePool), opts.ExportFile)
 		}
 	}
 
-	ui.PrintTimestampedMessage("扫描与检测完成！共找到 %d 个符合策略的优质 REALITY 目标域名（技术基线合格总数: %d）。",
+	logger.PrintTimestampedMessage("扫描与检测完成！共找到 %d 个符合策略的优质 REALITY 目标域名（技术基线合格总数: %d）。",
 		len(res.SuitableResults), len(res.RawCandidatePool))
 
 	// 渲染经典带颜色 ASCII 表格
@@ -324,7 +323,7 @@ func resolveAutoInput(ctx context.Context, targetInput string, inFile string, co
 
 	reader, err := geoip2.Open("data/Country.mmdb")
 	if err != nil {
-		ui.PrintTimestampedMessage("⚠️ GeoIP 数据库不可用 (%v)，跳过 ASN/国家过滤，直接扫描入口 IP 所在网段", err)
+		logger.PrintTimestampedMessage("⚠️ GeoIP 数据库不可用 (%v)，跳过 ASN/国家过滤，直接扫描入口 IP 所在网段", err)
 		return resolveInputToCIDRs(targetInput, inFile, filter), "", "", nil
 	}
 	defer reader.Close()
@@ -368,7 +367,7 @@ func resolveAutoInput(ctx context.Context, targetInput string, inFile string, co
 	if len(filtered) == 0 {
 		return nil, asnStr, targetCountry, fmt.Errorf("AS%d 没有与入口 IP 同国家（%s）且符合 IP 协议族限制的宣布网段", asnNumber, targetCountry)
 	}
-	ui.PrintTimestampedMessage("入口 IP %s 属于 %s，国家 %s；已过滤为 %d 个同国家网段",
+	logger.PrintTimestampedMessage("入口 IP %s 属于 %s，国家 %s；已过滤为 %d 个同国家网段",
 		targetInput, asnStr, targetCountry, len(filtered))
 	return filtered, asnStr, targetCountry, nil
 }
@@ -437,7 +436,7 @@ func appendCIDR(list []string, input string, filter types.RealityFilterConfig) [
 // parseAndExecuteAuto 解析命令行参数并应用 YAML 策略与 CLI 参数覆盖
 func (r *RootCmd) parseAndExecuteAuto(args []string) {
 	if len(args) == 0 {
-		ui.PrintErrorWithDetails(
+		logger.PrintErrorWithDetails(
 			"错误：缺少目标 IP / CIDR 参数或 --in 文件参数",
 			"用法:",
 			"  reality-checker auto <ip_or_cidr> [选项]",
@@ -590,7 +589,7 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 
 	cidrs, asnStr, countryStr, err := resolveAutoInput(r.ctx, targetInput, inFile, country, filter)
 	if err != nil {
-		ui.PrintError(fmt.Sprintf("自动查询 ASN 网段失败: %v", err))
+		logger.PrintError(fmt.Sprintf("自动查询 ASN 网段失败: %v", err))
 		return
 	}
 
@@ -617,7 +616,7 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 					}
 
 					if len(cachedVerified) >= maxTargets {
-						ui.PrintTimestampedMessage("✅ 从本地资产库秒级命中 %d 个历史资产（0 网络延迟，极速直出）！如需在线连通性复核可添加 --recheck", len(cachedVerified))
+						logger.PrintTimestampedMessage("✅ 从本地资产库秒级命中 %d 个历史资产（0 网络延迟，极速直出）！如需在线连通性复核可添加 --recheck", len(cachedVerified))
 						cachedVerified = core.FilterPool(cachedVerified, filter)
 						if len(cachedVerified) > maxTargets {
 							cachedVerified = cachedVerified[:maxTargets]
@@ -627,12 +626,12 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 						fmt.Println(r.batchManager.FormatSuitableTable(cachedVerified))
 						return
 					} else if len(cachedVerified) > 0 {
-						ui.PrintTimestampedMessage("本地资产库命中 %d 个目标，不足指定数量 (%d)，已预置并启动网络扫描补充...",
+						logger.PrintTimestampedMessage("本地资产库命中 %d 个目标，不足指定数量 (%d)，已预置并启动网络扫描补充...",
 							len(cachedVerified), maxTargets)
 					}
 				} else {
 					// 传入了 --recheck / --verify-cache：在线并发复核连通性
-					ui.PrintTimestampedMessage("发现同 ASN/国家 (%s, %s) 的历史资产 %d 条，正在在线并发复核连通性...",
+					logger.PrintTimestampedMessage("发现同 ASN/国家 (%s, %s) 的历史资产 %d 条，正在在线并发复核连通性...",
 						asnStr, countryStr, len(cachedRecords))
 
 					var vMu sync.Mutex
@@ -674,12 +673,12 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 					vWg.Wait()
 
 					if r.ctx.Err() != nil {
-						ui.PrintTimestampedMessage("任务已被用户中断 (Ctrl+C)。")
+						logger.PrintTimestampedMessage("任务已被用户中断 (Ctrl+C)。")
 						return
 					}
 
 					if len(cachedVerified) >= maxTargets {
-						ui.PrintTimestampedMessage("✅ 成功从本地资产库复核通过 %d 个优质 REALITY 目标！", len(cachedVerified))
+						logger.PrintTimestampedMessage("✅ 成功从本地资产库复核通过 %d 个优质 REALITY 目标！", len(cachedVerified))
 						cachedVerified = core.FilterPool(cachedVerified, filter)
 						if len(cachedVerified) > maxTargets {
 							cachedVerified = cachedVerified[:maxTargets]
@@ -689,7 +688,7 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 						fmt.Println(r.batchManager.FormatSuitableTable(cachedVerified))
 						return
 					} else if len(cachedVerified) > 0 {
-						ui.PrintTimestampedMessage("本地缓存复核通过 %d 个目标，不足指定数量 (%d)，已预置并继续启动网络扫描补充...",
+						logger.PrintTimestampedMessage("本地缓存复核通过 %d 个目标，不足指定数量 (%d)，已预置并继续启动网络扫描补充...",
 							len(cachedVerified), maxTargets)
 					}
 				}
