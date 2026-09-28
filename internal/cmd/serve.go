@@ -10,14 +10,11 @@ import (
 	"syscall"
 	"time"
 
-	"RealityChecker/internal/asn"
+	"RealityChecker/internal/app"
 	"RealityChecker/internal/config"
 	"RealityChecker/internal/logger"
 	"RealityChecker/internal/server"
-	"RealityChecker/internal/service"
 	"RealityChecker/internal/version"
-
-	"github.com/oschwald/geoip2-golang"
 )
 
 func (r *RootCmd) executeServe(args []string) {
@@ -38,28 +35,27 @@ func (r *RootCmd) executeServe(args []string) {
 
 	cfg, _ := config.LoadConfig("")
 
-	// 1. 初始化资产库 (支持 SQLite 与 PostgreSQL)
-	targetStore, err := initStore(*dbFlag, cfg)
+	// 1. 初始化统一应用依赖容器
+	container, err := app.NewContainer(app.ContainerOptions{
+		Config:       cfg,
+		ExplicitDB:   *dbFlag,
+		ExplicitMMDB: *mmdbFlag,
+	})
 	if err != nil {
+		logger.PrintError(fmt.Sprintf("初始化应用容器失败: %v", err))
+		return
+	}
+	defer container.Close()
+
+	if _, err := container.GetStore(); err != nil {
 		logger.PrintTimestampedMessage("⚠️ 资产数据库初始化失败: %v (将使用无缓存模式运行)", err)
-	} else if targetStore != nil {
-		defer targetStore.Close()
 	}
 
-	// 2. 初始化 GeoIP 数据库（非强制）
-	var geoipReader *geoip2.Reader
-	if *mmdbFlag != "" {
-		if reader, err := geoip2.Open(*mmdbFlag); err == nil {
-			geoipReader = reader
-			defer geoipReader.Close()
-		} else {
-			logger.PrintTimestampedMessage("ℹ️ 未加载本地 GeoIP 数据库 (%s): %v", *mmdbFlag, err)
-		}
+	provService, err := container.GetProvisionService()
+	if err != nil {
+		logger.PrintError(fmt.Sprintf("构建供给业务服务失败: %v", err))
+		return
 	}
-
-	// 3. 构建核心业务与 HTTP 实例
-	asnClient := asn.NewClient(15 * time.Second)
-	provService := service.NewProvisionService(targetStore, geoipReader, asnClient, cfg)
 
 	apiToken := *tokenFlag
 	if apiToken == "" {
@@ -91,7 +87,7 @@ func (r *RootCmd) executeServe(args []string) {
 	} else {
 		fmt.Println("   » 接口鉴权: 未启用 (公网暴露建议配置 --token 或在 config.yaml 启用)")
 	}
-	if geoipReader != nil {
+	if container.GetGeoIP() != nil {
 		fmt.Printf("   » GeoIP 数据库: %s\n", *mmdbFlag)
 	}
 	fmt.Println("   » API 端点:")

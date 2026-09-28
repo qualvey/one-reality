@@ -7,10 +7,9 @@ import (
 	"os"
 	"strings"
 
+	"RealityChecker/internal/app"
 	asnclient "RealityChecker/internal/asn"
 	"RealityChecker/internal/config"
-
-	"github.com/oschwald/geoip2-golang"
 )
 
 func executeASN(args []string) {
@@ -40,14 +39,24 @@ func executeASN(args []string) {
 		proxyURL = cfg.Proxy.URL
 	}
 
+	container, err := app.NewContainer(app.ContainerOptions{
+		Config:       cfg,
+		ExplicitDB:   *storePath,
+		ExplicitMMDB: *dbPath,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "初始化应用容器失败: %v\n", err)
+		return
+	}
+	defer container.Close()
+
 	// 1. 注册表管理逻辑
 	if *seedFlag || *syncURL != "" || *statsFlag || *listFlag {
-		store, err := initStore(*storePath, cfg)
+		store, err := container.GetStore()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "打开数据库失败: %v\n", err)
 			return
 		}
-		defer store.Close()
 
 		mgr := asnclient.NewRegistryManagerWithProxy(store, proxyURL)
 
@@ -119,12 +128,11 @@ func executeASN(args []string) {
 		return
 	}
 
-	db, err := geoip2.Open(*dbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "打开GeoIP数据库失败: %v\n", err)
+	db := container.GetGeoIP()
+	if db == nil {
+		fmt.Fprintf(os.Stderr, "打开GeoIP数据库失败: 未能加载有效的 GeoIP 数据库文件 (%s)\n", *dbPath)
 		return
 	}
-	defer db.Close()
 
 	prefixes, err := asnclient.NewClientWithProxy(proxyURL).FetchPrefixes(context.Background(), flags.Arg(0))
 	if err != nil {

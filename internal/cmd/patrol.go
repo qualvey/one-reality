@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"RealityChecker/internal/app"
 	"RealityChecker/internal/core"
 	"RealityChecker/internal/logger"
 	"RealityChecker/internal/types"
@@ -32,12 +33,22 @@ func (r *RootCmd) executePatrol(args []string) {
 
 	logger.PrintTimestampedMessage("正在初始化 REALITY 资产保鲜巡检守护服务 (Watchdog)...")
 
-	store, err := initStore(*storePath, r.config)
+	// 1. 初始化统一应用依赖容器
+	container, err := app.NewContainer(app.ContainerOptions{
+		Config:     r.config,
+		ExplicitDB: *storePath,
+	})
+	if err != nil {
+		logger.PrintError(fmt.Sprintf("初始化应用容器失败: %v", err))
+		return
+	}
+	defer container.Close()
+
+	store, err := container.GetStore()
 	if err != nil {
 		logger.PrintError(fmt.Sprintf("打开目标数据库失败: %v", err))
 		return
 	}
-	defer store.Close()
 
 	cfg := core.DefaultPatrolConfig()
 	cfg.Concurrency = *concurrency

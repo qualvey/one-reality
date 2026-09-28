@@ -10,12 +10,11 @@ import (
 	"time"
 
 	"RealityChecker/internal/adaptive"
+	"RealityChecker/internal/app"
 	"RealityChecker/internal/core"
 	"RealityChecker/internal/logger"
 	"RealityChecker/internal/scanner"
 	"RealityChecker/internal/types"
-
-	"github.com/oschwald/geoip2-golang"
 )
 
 // executeDaemon 启动 24 小时全网 ASN 自动化扫描守护进程
@@ -45,31 +44,25 @@ func (r *RootCmd) executeDaemon(args []string) {
 
 	logger.PrintTimestampedMessage("正在初始化 24小时 ASN 全网扫描守护进程...")
 
-	// 1. 初始化目标数据库 (支持 SQLite 与 PostgreSQL)
-	store, err := initStore(*storePath, r.config)
+	// 1. 初始化统一应用依赖容器
+	container, err := app.NewContainer(app.ContainerOptions{
+		Config:       r.config,
+		ExplicitDB:   *storePath,
+		ExplicitMMDB: *dbPath,
+	})
+	if err != nil {
+		logger.PrintError(fmt.Sprintf("初始化应用容器失败: %v", err))
+		return
+	}
+	defer container.Close()
+
+	store, err := container.GetStore()
 	if err != nil {
 		logger.PrintError(fmt.Sprintf("打开目标数据库失败: %v", err))
 		return
 	}
-	defer store.Close()
-
-	// 2. 加载 GeoIP
-	var geoipReader *geoip2.Reader
-	if _, err := os.Stat(*dbPath); err == nil {
-		geoipReader, err = geoip2.Open(*dbPath)
-		if err != nil {
-			logger.PrintTimestampedMessage("⚠️ 加载 GeoIP 数据库警告: %v (将跳过国家本地离线验证)", err)
-		} else {
-			defer geoipReader.Close()
-		}
-	}
-
-	// 3. 构建扫描网络核心
-	scanProxy := ""
-	if r.config != nil && r.config.Proxy.Scanner && r.config.Proxy.URL != "" {
-		scanProxy = r.config.Proxy.URL
-	}
-	scannerEngine := scanner.NewScanner(scanProxy)
+	geoipReader := container.GetGeoIP()
+	scannerEngine := container.GetScanner()
 
 	// 4. 构建配置与事件回调
 	cfg := core.DaemonConfig{

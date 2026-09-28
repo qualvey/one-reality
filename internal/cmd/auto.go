@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"RealityChecker/internal/adaptive"
+	"RealityChecker/internal/app"
 	"RealityChecker/internal/asn"
 	"RealityChecker/internal/config"
 	"RealityChecker/internal/core"
@@ -57,20 +58,24 @@ func (r *RootCmd) executeAuto(opts AutoScanCLIOptions) {
 		return
 	}
 
-	scanProxy := ""
 	if r.config != nil && r.config.Proxy.Scanner && r.config.Proxy.URL != "" {
-		scanProxy = r.config.Proxy.URL
-		logger.PrintTimestampedMessage("⚠️ 提示: 网络扫描已启用代理通道 [%s] (测速与握手延迟将包含代理链路耗时)", scanProxy)
+		logger.PrintTimestampedMessage("⚠️ 提示: 网络扫描已启用代理通道 [%s] (测速与握手延迟将包含代理链路耗时)", r.config.Proxy.URL)
 	}
 
-	scannerEngine := scanner.NewScanner(scanProxy)
-	defer scannerEngine.Close()
+	// 1. 初始化统一应用依赖容器
+	container, err := app.NewContainer(app.ContainerOptions{
+		Config: r.config,
+	})
+	if err != nil {
+		logger.PrintError(fmt.Sprintf("初始化应用容器失败: %v", err))
+		return
+	}
+	defer container.Close()
 
-	targetStore, err := initStore("", r.config)
+	scannerEngine := container.GetScanner()
+	targetStore, err := container.GetStore()
 	if err != nil {
 		logger.PrintTimestampedMessage("⚠️ 本地资产数据库初始化失败: %v (将使用内存模式)", err)
-	} else if targetStore != nil {
-		defer targetStore.Close()
 	}
 
 	taskKey := ""

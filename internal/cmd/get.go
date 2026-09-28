@@ -6,15 +6,12 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
-	"RealityChecker/internal/asn"
+	"RealityChecker/internal/app"
 	"RealityChecker/internal/config"
 	"RealityChecker/internal/logger"
 	"RealityChecker/internal/service"
 	"RealityChecker/internal/version"
-
-	"github.com/oschwald/geoip2-golang"
 )
 
 func (r *RootCmd) executeGet(args []string) {
@@ -54,26 +51,28 @@ func (r *RootCmd) executeGet(args []string) {
 
 	cfg, _ := config.LoadConfig("")
 
-	// 1. 初始化资产库 (支持 SQLite 与 PostgreSQL)
-	targetStore, err := initStore(*dbFlag, cfg)
-	if err != nil && !*jsonFlag {
+	// 1. 初始化统一应用依赖容器
+	container, err := app.NewContainer(app.ContainerOptions{
+		Config:       cfg,
+		ExplicitDB:   *dbFlag,
+		ExplicitMMDB: *mmdbFlag,
+	})
+	if err != nil {
+		logger.PrintError(fmt.Sprintf("初始化应用容器失败: %v", err))
+		return
+	}
+	defer container.Close()
+
+	if _, err := container.GetStore(); err != nil && !*jsonFlag {
 		logger.PrintTimestampedMessage("⚠️ 本地资产数据库打开失败: %v (将使用纯扫描模式)", err)
-	} else if targetStore != nil {
-		defer targetStore.Close()
 	}
 
-	// 2. 初始化 GeoIP 数据库（非强制）
-	var geoipReader *geoip2.Reader
-	if *mmdbFlag != "" {
-		if reader, err := geoip2.Open(*mmdbFlag); err == nil {
-			geoipReader = reader
-			defer geoipReader.Close()
-		}
+	// 2. 获取端到端供给服务
+	provService, err := container.GetProvisionService()
+	if err != nil {
+		logger.PrintError(fmt.Sprintf("构建供给业务服务失败: %v", err))
+		return
 	}
-
-	// 3. 构建供给服务实例
-	asnClient := asn.NewClient(15 * time.Second)
-	provService := service.NewProvisionService(targetStore, geoipReader, asnClient, cfg)
 
 	req := service.ProvisionRequest{
 		IP:          targetIP,
