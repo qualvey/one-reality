@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"RealityChecker/internal/detectors"
@@ -11,45 +12,223 @@ import (
 	"RealityChecker/internal/types"
 )
 
+// PipelineProfile 检测流水线编排画像
+type PipelineProfile string
+
+const (
+	// ProfileFast 吞吐优先基线模式 (海量网段全网扫描场景)
+	// 聚焦硬性技术基线：GFW 内存名单、TLS 1.3 / X25519 / H2 / 证书有效性 / CDN 识别、热门网站内存对比
+	// 跳过多重 HTTP 重定向、状态码探测与重复 DNS 反查，大幅降低大吞吐扫描延迟
+	ProfileFast PipelineProfile = "fast"
+
+	// ProfileStandard 标准检测模式 (默认模式)
+	// 包含完整的 8 个检测阶段：GFW封锁、HTTP重定向、HTTP状态码、DNS解析、地理位置检测与核对、综合TLS、热门网站
+	ProfileStandard PipelineProfile = "standard"
+
+	// ProfileThorough 深度审计模式
+	// 包含标准模式全部阶段，可支持深入语义与严格规则审计
+	ProfileThorough PipelineProfile = "thorough"
+)
+
 // Pipeline 检测流水线
 type Pipeline struct {
+	profile     PipelineProfile
 	stages      []types.DetectionStage
 	config      *types.Config
 	earlyExit   bool
 	connections *network.ConnectionManager
+	mu          sync.RWMutex
 }
 
-// NewPipeline 创建新的检测流水线
+// PipelineOption 配置选项
+type PipelineOption func(*Pipeline)
+
+// WithProfile 设置流水线模式
+func WithProfile(profile PipelineProfile) PipelineOption {
+	return func(p *Pipeline) {
+		p.profile = profile
+	}
+}
+
+// WithEarlyExit 设置是否在阶段失败时提前退出
+func WithEarlyExit(earlyExit bool) PipelineOption {
+	return func(p *Pipeline) {
+		p.earlyExit = earlyExit
+	}
+}
+
+// WithStages 显式指定流水线阶段
+func WithStages(stages ...types.DetectionStage) PipelineOption {
+	return func(p *Pipeline) {
+		p.stages = make([]types.DetectionStage, len(stages))
+		copy(p.stages, stages)
+		sort.Slice(p.stages, func(i, j int) bool {
+			return p.stages[i].Priority() < p.stages[j].Priority()
+		})
+	}
+}
+
+// NewPipeline 创建新的检测流水线 (默认使用 ProfileStandard 保持向下兼容)
 func NewPipeline(connections *network.ConnectionManager, config *types.Config) *Pipeline {
-	pipeline := &Pipeline{
+	return NewPipelineWithProfile(connections, config, ProfileStandard)
+}
+
+// NewPipelineWithProfile 根据指定画像创建检测流水线
+func NewPipelineWithProfile(connections *network.ConnectionManager, config *types.Config, profile PipelineProfile) *Pipeline {
+	p := &Pipeline{
+		profile:     profile,
 		config:      config,
 		earlyExit:   true,
 		connections: connections,
 	}
 
-	// 初始化检测阶段
-	pipeline.initializeStages()
-
-	return pipeline
+	p.loadStagesForProfile(profile)
+	return p
 }
 
-// initializeStages 初始化检测阶段
-func (p *Pipeline) initializeStages() {
-	p.stages = []types.DetectionStage{
-		detectors.NewBlockedStage(),          // 1. 被墙检测 (最高优先级)
-		detectors.NewRedirectStage(),         // 2. 重定向检测
-		detectors.NewStatusCheckStage(),      // 3. 状态码检查
-		detectors.NewIPResolverStage(),       // 4. IP解析
-		detectors.NewLocationStage(),         // 5. 地理位置检测
-		detectors.NewLocationCheckStage(),    // 6. 地理位置检查
-		detectors.NewComprehensiveTLSStage(), // 7. 综合TLS检测 (TLS1.3、X25519、H2、SNI、证书、CDN)
-		detectors.NewHotWebsiteStage(),       // 8. 热门网站检测
+// NewPipelineWithOptions 使用自定义选项构建检测流水线
+func NewPipelineWithOptions(connections *network.ConnectionManager, config *types.Config, opts ...PipelineOption) *Pipeline {
+	p := &Pipeline{
+		profile:     ProfileStandard,
+		config:      config,
+		earlyExit:   true,
+		connections: connections,
 	}
 
-	// 按优先级排序
+	// 先按默认 profile 加载阶段
+	p.loadStagesForProfile(p.profile)
+
+	// 应用选项
+	for _, opt := range opts {
+		if opt != nil {
+			opt(p)
+		}
+	}
+
+	return p
+}
+
+// loadStagesForProfile 根据画像装配对应阶段
+func (p *Pipeline) loadStagesForProfile(profile PipelineProfile) {
+	switch profile {
+	case ProfileFast:
+		// 吞吐优先：仅保留内存级与核心 TLS/证书/CDN 必须检测
+		p.stages = []types.DetectionStage{
+			detectors.NewBlockedStage(),          // 1. GFW 内存黑名单快速过滤
+			detectors.NewComprehensiveTLSStage(), // 2. 综合 TLS 检测 (TLS1.3、X25519、H2、证书合规、CDN识别)
+			detectors.NewHotWebsiteStage(),       // 3. 热门网站快速内存识别
+		}
+	case ProfileThorough:
+		fallthrough
+	case ProfileStandard:
+		fallthrough
+	default:
+		p.profile = ProfileStandard
+		p.stages = []types.DetectionStage{
+			detectors.NewBlockedStage(),          // 1. 被墙检测 (最高优先级)
+			detectors.NewRedirectStage(),         // 2. 重定向检测
+			detectors.NewStatusCheckStage(),      // 3. 状态码检查
+			detectors.NewIPResolverStage(),       // 4. IP解析
+			detectors.NewLocationStage(),         // 5. 地理位置检测
+			detectors.NewLocationCheckStage(),    // 6. 地理位置检查
+			detectors.NewComprehensiveTLSStage(), // 7. 综合TLS检测 (TLS1.3、X25519、H2、SNI、证书、CDN)
+			detectors.NewHotWebsiteStage(),       // 8. 热门网站检测
+		}
+	}
+
+	// 按优先级严格排序
 	sort.Slice(p.stages, func(i, j int) bool {
 		return p.stages[i].Priority() < p.stages[j].Priority()
 	})
+}
+
+// Profile 返回当前流水线编排画像
+func (p *Pipeline) Profile() PipelineProfile {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.profile
+}
+
+// SetProfile 动态切换流水线编排画像并重新装载阶段
+func (p *Pipeline) SetProfile(profile PipelineProfile) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.profile = profile
+	p.loadStagesForProfile(profile)
+}
+
+// StageNames 获取当前所有激活的检测阶段名称列表
+func (p *Pipeline) StageNames() []string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	names := make([]string, len(p.stages))
+	for i, stage := range p.stages {
+		names[i] = stage.Name()
+	}
+	return names
+}
+
+// HasStage 查询指定阶段是否已启用
+func (p *Pipeline) HasStage(name string) bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	for _, stage := range p.stages {
+		if stage.Name() == name {
+			return true
+		}
+	}
+	return false
+}
+
+// EnableStage 动态启用或禁用某个阶段
+func (p *Pipeline) EnableStage(name string, enabled bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	has := false
+	for _, stage := range p.stages {
+		if stage.Name() == name {
+			has = true
+			break
+		}
+	}
+
+	if enabled && !has {
+		// 根据名称实例化补充该阶段
+		var newStage types.DetectionStage
+		switch name {
+		case "blocked":
+			newStage = detectors.NewBlockedStage()
+		case "redirect":
+			newStage = detectors.NewRedirectStage()
+		case "status_check":
+			newStage = detectors.NewStatusCheckStage()
+		case "ip_resolver":
+			newStage = detectors.NewIPResolverStage()
+		case "location":
+			newStage = detectors.NewLocationStage()
+		case "location_check":
+			newStage = detectors.NewLocationCheckStage()
+		case "comprehensive_tls":
+			newStage = detectors.NewComprehensiveTLSStage()
+		case "hot_website":
+			newStage = detectors.NewHotWebsiteStage()
+		}
+		if newStage != nil {
+			p.stages = append(p.stages, newStage)
+			sort.Slice(p.stages, func(i, j int) bool {
+				return p.stages[i].Priority() < p.stages[j].Priority()
+			})
+		}
+	} else if !enabled && has {
+		var newStages []types.DetectionStage
+		for _, stage := range p.stages {
+			if stage.Name() != name {
+				newStages = append(newStages, stage)
+			}
+		}
+		p.stages = newStages
+	}
 }
 
 // Execute 执行检测流水线
@@ -82,7 +261,13 @@ func (p *Pipeline) Execute(ctx context.Context, domain string) (*types.Detection
 
 // executeStages 按优先级顺序严格执行各检测阶段（确定性且无数据竞争）
 func (p *Pipeline) executeStages(ctx context.Context, pipelineCtx *types.PipelineContext) {
-	for _, stage := range p.stages {
+	p.mu.RLock()
+	stages := make([]types.DetectionStage, len(p.stages))
+	copy(stages, p.stages)
+	earlyExit := p.earlyExit
+	p.mu.RUnlock()
+
+	for _, stage := range stages {
 		select {
 		case <-ctx.Done():
 			pipelineCtx.Result.Error = ctx.Err()
@@ -107,7 +292,7 @@ func (p *Pipeline) executeStages(ctx context.Context, pipelineCtx *types.Pipelin
 		}()
 
 		// 检查是否触发早期退出
-		if p.earlyExit && stage.CanEarlyExit() && pipelineCtx.EarlyExit {
+		if earlyExit && stage.CanEarlyExit() && pipelineCtx.EarlyExit {
 			pipelineCtx.Result.EarlyExit = true
 			return
 		}
@@ -218,16 +403,24 @@ func (p *Pipeline) evaluateSuitability(result *types.DetectionResult) {
 
 // SetEarlyExit 设置是否早期退出
 func (p *Pipeline) SetEarlyExit(earlyExit bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.earlyExit = earlyExit
 }
 
-// GetStages 获取检测阶段
+// GetStages 获取当前所有阶段副本
 func (p *Pipeline) GetStages() []types.DetectionStage {
-	return p.stages
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	res := make([]types.DetectionStage, len(p.stages))
+	copy(res, p.stages)
+	return res
 }
 
 // AddStage 添加检测阶段
 func (p *Pipeline) AddStage(stage types.DetectionStage) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.stages = append(p.stages, stage)
 	sort.Slice(p.stages, func(i, j int) bool {
 		return p.stages[i].Priority() < p.stages[j].Priority()
@@ -236,6 +429,8 @@ func (p *Pipeline) AddStage(stage types.DetectionStage) {
 
 // RemoveStage 移除检测阶段
 func (p *Pipeline) RemoveStage(name string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	var newStages []types.DetectionStage
 	for _, stage := range p.stages {
 		if stage.Name() != name {

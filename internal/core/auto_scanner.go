@@ -32,6 +32,7 @@ type AutoScanConfig struct {
 	ASN            string
 	Country        string
 	InitialResults []*types.DetectionResult
+	Profile        PipelineProfile // 可选指定流水线编排画像 (如 ProfileFast 吞吐优先)
 	Verbose        bool
 }
 
@@ -135,6 +136,10 @@ func NewAutoScanner(
 			s.suitableResults = append(s.suitableResults, res)
 			s.rawCandidatePool = append(s.rawCandidatePool, res)
 		}
+	}
+
+	if cfg.Profile != "" && engine != nil {
+		engine.SetProfile(cfg.Profile)
 	}
 
 	return s

@@ -18,15 +18,19 @@ type Engine struct {
 	running     bool
 }
 
-// NewEngine 创建新的检测引擎（简化版本）
+// NewEngine 创建新的检测引擎 (默认标准画像)
 func NewEngine(config *types.Config) *Engine {
+	return NewEngineWithProfile(config, ProfileStandard)
+}
+
+// NewEngineWithProfile 指定编排画像创建检测引擎
+func NewEngineWithProfile(config *types.Config, profile PipelineProfile) *Engine {
 	engine := &Engine{
 		config: config,
 	}
 
-	// 初始化组件
 	engine.connections = network.NewConnectionManager(config)
-	engine.pipeline = NewPipeline(engine.connections, config)
+	engine.pipeline = NewPipelineWithProfile(engine.connections, config, profile)
 
 	return engine
 }
@@ -152,7 +156,29 @@ func (e *Engine) CheckDomainsStream(ctx context.Context, domains []string) (<-ch
 	return resultChan, nil
 }
 
-// GetStats 获取引擎统计信息（简化版本）
+// GetPipeline 获取底层的检测流水线实例
+func (e *Engine) GetPipeline() *Pipeline {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.pipeline
+}
+
+// Profile 获取当前流水线画像
+func (e *Engine) Profile() PipelineProfile {
+	if e.pipeline == nil {
+		return ProfileStandard
+	}
+	return e.pipeline.Profile()
+}
+
+// SetProfile 动态切换底层流水线的编排画像
+func (e *Engine) SetProfile(profile PipelineProfile) {
+	if e.pipeline != nil {
+		e.pipeline.SetProfile(profile)
+	}
+}
+
+// GetStats 获取引擎统计信息
 func (e *Engine) GetStats() *EngineStats {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -160,21 +186,11 @@ func (e *Engine) GetStats() *EngineStats {
 	return &EngineStats{
 		Running:     e.running,
 		Connections: e.connections.GetStats(),
-		Cache:       nil, // 缓存管理器已移除
 	}
 }
 
-// EngineStats 引擎统计信息（简化版本）
+// EngineStats 引擎统计信息
 type EngineStats struct {
 	Running     bool                   `json:"running"`
 	Connections *types.ConnectionStats `json:"connections"`
-	Cache       *types.CacheStats      `json:"cache"`
-}
-
-// CoordinatorStats 协调器统计
-type CoordinatorStats struct {
-	TotalTasks     int `json:"total_tasks"`
-	CompletedTasks int `json:"completed_tasks"`
-	FailedTasks    int `json:"failed_tasks"`
-	ActiveWorkers  int `json:"active_workers"`
 }
