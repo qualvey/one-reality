@@ -3,6 +3,7 @@ package detectors
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
 	"time"
@@ -124,8 +125,9 @@ func (cts *ComprehensiveTLSStage) analyzeTLSState(state tls.ConnectionState, dom
 		// 检查证书是否在有效期内
 		inValidityPeriod := now.After(cert.NotBefore) && now.Before(cert.NotAfter)
 
-		// 检查证书链是否可信
-		chainTrusted := len(state.VerifiedChains) > 0
+		// TLS 连接管理器使用 InsecureSkipVerify，以便无效证书也能完成握手并被分析。
+		// 此模式下 Go 不会填充 ConnectionState.VerifiedChains，因此需要显式验证证书链。
+		chainTrusted := verifyPeerCertificate(cert, state.PeerCertificates[1:], domain, now, nil) == nil
 
 		// 检查主机名验证（已在上面完成）
 		hostnameValid := sniMatch
@@ -164,6 +166,25 @@ func (cts *ComprehensiveTLSStage) analyzeTLSState(state tls.ConnectionState, dom
 		},
 		Certificate: certResult,
 	}
+}
+
+// verifyPeerCertificate verifies the leaf certificate against the system roots (or
+// the supplied roots in tests), using the peer-provided certificates as intermediates.
+func verifyPeerCertificate(leaf *x509.Certificate, peerIntermediates []*x509.Certificate, domain string, now time.Time, roots *x509.CertPool) error {
+	intermediates := x509.NewCertPool()
+	for _, cert := range peerIntermediates {
+		if cert != nil {
+			intermediates.AddCert(cert)
+		}
+	}
+
+	_, err := leaf.Verify(x509.VerifyOptions{
+		DNSName:       domain,
+		Roots:         roots,
+		Intermediates: intermediates,
+		CurrentTime:   now,
+	})
+	return err
 }
 
 // performDirectTLSDetection 直接TLS检测（回退方案）
@@ -284,4 +305,3 @@ func (cts *ComprehensiveTLSStage) performCDNDetection(ctx *types.PipelineContext
 	}
 	return nil
 }
-
