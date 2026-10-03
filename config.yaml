@@ -9,7 +9,7 @@ log:
 # 数据库存储引擎配置
 database:
   # 可选驱动类型: "sqlite" (默认，单机轻量零依赖) 或 "postgres" (推荐高并发与分布式扫描)
-  driver: "sqlite"
+  driver: "postgres"
 
   # SQLite 专用配置 (当 driver 为 sqlite 时生效)
   sqlite:
@@ -27,11 +27,11 @@ database:
     user: "postgres"
     password: ""
     dbname: "reality_checker"
-    sslmode: "disable"               # disable / require / verify-ca / verify-full
-    max_conns: 50                    # 最大并发连接池大小
-    min_conns: 5                     # 最小空闲连接数
-    max_conn_lifetime: "1h"          # 连接最长复用时间
-    max_conn_idle_time: "30m"        # 空闲连接超时释放
+    sslmode: "disable" # disable / require / verify-ca / verify-full
+    max_conns: 50 # 最大并发连接池大小
+    min_conns: 5 # 最小空闲连接数
+    max_conn_lifetime: "1h" # 连接最长复用时间
+    max_conn_idle_time: "30m" # 空闲连接超时释放
 
 # REALITY 目标选型过滤策略 (遵从 Xray 官方最佳实践)
 reality_filter:
@@ -43,17 +43,17 @@ reality_filter:
   check_gfw: false
 
   # 3. IP 协议族过滤 (拉取 CIDR 网段时直接过滤)
-  ipv4_only: false             # 是否仅拉取与扫描 IPv4 网段 (默认 false)
-  ipv6_only: false             # 是否仅拉取与扫描 IPv6 网段 (默认 false)
+  ipv4_only: false # 是否仅拉取与扫描 IPv4 网段 (默认 false)
+  ipv6_only: false # 是否仅拉取与扫描 IPv6 网段 (默认 false)
 
   # 4. 资产数据库与缓存快速通道
-  use_cache: true              # 是否优先使用本地 SQLite 资产库 (默认 true)
-  verify_cache: false          # 是否对本地缓存发起在线网络复核 (默认 false: 直接使用历史参数 0 延迟秒出; true: 在线并发复核)
-  cache_max_days: 7            # 缓存有效天数 (默认 7)
+  use_cache: true # 是否优先使用本地 SQLite 资产库 (默认 true)
+  verify_cache: false # 是否对本地缓存发起在线网络复核 (默认 false: 直接使用历史参数 0 延迟秒出; true: 在线并发复核)
+  cache_max_days: 7 # 缓存有效天数 (默认 7)
 
   # 5. 网络扫描性能调优
-  scan_threads: 200            # 网络扫描并发协程数 (默认 200，在高性能 VPS 上可设 500~1000)
-  scan_timeout: 3              # 单 IP 握手超时秒数 (默认 3 秒，死 IP 快速熔断推荐 1~2 秒)
+  scan_threads: 200 # 网络扫描并发协程数 (默认 200，在高性能 VPS 上可设 500~1000)
+  scan_timeout: 3 # 单 IP 握手超时秒数 (默认 3 秒，死 IP 快速熔断推荐 1~2 秒)
 
   # ==================== 阶段二：进阶偏好过滤策略 ====================
   # 4. 强制非 CDN 过滤 (true: 剔除 Cloudflare/Akamai/Fastly 等 CDN 节点，防止 VPS 变成公网免费反代)
@@ -79,7 +79,7 @@ reality_filter:
 
   # 11. 白名单域名后缀（可选，若配置则只保留指定后缀，如只要 .com/.de）
   include_suffixes:
-     - ".com"
+    #- ".com"
   #   - ".de"
   #   - ".org"
 
@@ -132,11 +132,11 @@ reality_filter:
 # 留空为直连，也可直接简写为字符串形式，例如 proxy: "http://127.0.0.1:7890"
 proxy:
   # 代理服务器地址，例如: "http://127.0.0.1:7890" 或 "socks5://127.0.0.1:1080"
-  url: ""
+  url: "socks5://10.0.0.1:666"
   # 是否用于资源与外部数据下载 (GitHub 规则库、GeoIP 数据库、ASN 远程接口等)
-  download: true
+  download: no
   # 是否用于目标检测与网络扫描 (注意: 扫描走代理可能影响握手延迟及真实连通性测试，建议保持 false 直连)
-  scanner: false
+  scanner: true
 
 # 网络检测配置
 network:
