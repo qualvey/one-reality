@@ -260,7 +260,26 @@ func TestTargetStore_ASNRegistry(t *testing.T) {
 	if err != nil || len(list) != 2 {
 		t.Errorf("expected 2 pending ASNs, got %d", len(list))
 	}
+
+	// 8. 测试 UpdateASNPriority
+	if err := store.UpdateASNPriority(13335, 0); err != nil {
+		t.Fatalf("UpdateASNPriority failed: %v", err)
+	}
+	cfUpdated, _ := store.GetASN(13335)
+	if cfUpdated.Priority != 0 {
+		t.Errorf("expected cf priority to be 0, got %d", cfUpdated.Priority)
+	}
+
+	// 9. 测试 ResetAllASNsStatus（应只重置 priority > 0 的记录）
+	if err := store.ResetAllASNsStatus(); err != nil {
+		t.Fatalf("ResetAllASNsStatus failed: %v", err)
+	}
+	cfAfterReset, _ := store.GetASN(13335)
+	if cfAfterReset.ScanStatus != "completed" {
+		t.Errorf("expected priority 0 CDN to remain completed after ResetAllASNsStatus, got %s", cfAfterReset.ScanStatus)
+	}
 }
+
 
 func TestTargetStore_PatrolAndLifecycle(t *testing.T) {
 	tempDir := t.TempDir()

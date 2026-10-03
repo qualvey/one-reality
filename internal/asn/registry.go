@@ -22,7 +22,7 @@ var SeedPopularASNs = []*types.ASNRecord{
 	{ASN: 13335, Name: "Cloudflare, Inc.", Country: "US", Priority: 0, ScanStatus: "completed"},
 	{ASN: 54113, Name: "Fastly, Inc.", Country: "US", Priority: 0, ScanStatus: "completed"},
 
-	// Tier 1: 头部公有云与主流数据中心 (Priority 90 - 100)
+	// Tier 1: 核心四大中转国（美、港、日、德）头部公有云与数据中心 (Priority 90 - 100)
 	{ASN: 24940, Name: "Hetzner Online GmbH", Country: "DE", Priority: 100, ScanStatus: "pending"},
 	{ASN: 14061, Name: "DigitalOcean, LLC", Country: "US", Priority: 95, ScanStatus: "pending"},
 	{ASN: 16509, Name: "Amazon.com, Inc. (AWS)", Country: "US", Priority: 95, ScanStatus: "pending"},
@@ -32,35 +32,40 @@ var SeedPopularASNs = []*types.ASNRecord{
 	{ASN: 396982, Name: "Google Cloud Platform", Country: "US", Priority: 92, ScanStatus: "pending"},
 	{ASN: 31898, Name: "Oracle Corporation", Country: "US", Priority: 90, ScanStatus: "pending"},
 
-	// Tier 2: 主流 VPS/IDC 与海外知名服务商 (Priority 80 - 90)
-	{ASN: 16276, Name: "OVH SAS", Country: "FR", Priority: 85, ScanStatus: "pending"},
-	{ASN: 63949, Name: "Linode, LLC (Akamai Connected Cloud)", Country: "US", Priority: 85, ScanStatus: "pending"},
-	{ASN: 20473, Name: "Choopa, LLC (Vultr)", Country: "US", Priority: 85, ScanStatus: "pending"},
-	{ASN: 12876, Name: "Scaleway S.A.S.", Country: "FR", Priority: 82, ScanStatus: "pending"},
-	{ASN: 51167, Name: "Contabo GmbH", Country: "DE", Priority: 80, ScanStatus: "pending"},
-	{ASN: 25820, Name: "IT7 Networks Inc (BandwagonHost)", Country: "CA", Priority: 80, ScanStatus: "pending"},
-	{ASN: 46652, Name: "RackNerd LLC", Country: "US", Priority: 80, ScanStatus: "pending"},
-	{ASN: 53667, Name: "FranTech Solutions (BuyVM)", Country: "US", Priority: 80, ScanStatus: "pending"},
-	{ASN: 60781, Name: "Leaseweb Netherlands B.V.", Country: "NL", Priority: 78, ScanStatus: "pending"},
-	{ASN: 16265, Name: "Leaseweb USA, Inc.", Country: "US", Priority: 78, ScanStatus: "pending"},
-	{ASN: 36352, Name: "ColoCrossing", Country: "US", Priority: 75, ScanStatus: "pending"},
-	{ASN: 212238, Name: "Datacamp Limited", Country: "GB", Priority: 75, ScanStatus: "pending"},
-	{ASN: 9009, Name: "M247 Ltd", Country: "GB", Priority: 75, ScanStatus: "pending"},
-	{ASN: 49981, Name: "WorldStream B.V.", Country: "NL", Priority: 75, ScanStatus: "pending"},
+	// Tier 2: 核心四大中转国主流 VPS/IDC 机房 (Priority 85 - 90)
+	{ASN: 51167, Name: "Contabo GmbH", Country: "DE", Priority: 88, ScanStatus: "pending"},
+	{ASN: 63949, Name: "Linode, LLC (Akamai Connected Cloud)", Country: "US", Priority: 88, ScanStatus: "pending"},
+	{ASN: 20473, Name: "Choopa, LLC (Vultr)", Country: "US", Priority: 88, ScanStatus: "pending"},
+	{ASN: 46652, Name: "RackNerd LLC", Country: "US", Priority: 85, ScanStatus: "pending"},
+	{ASN: 53667, Name: "FranTech Solutions (BuyVM)", Country: "US", Priority: 85, ScanStatus: "pending"},
+	{ASN: 16265, Name: "Leaseweb USA, Inc.", Country: "US", Priority: 85, ScanStatus: "pending"},
+	{ASN: 36352, Name: "ColoCrossing", Country: "US", Priority: 85, ScanStatus: "pending"},
+	{ASN: 45102, Name: "Alibaba Cloud (US) LLC", Country: "US", Priority: 88, ScanStatus: "pending"},
+	{ASN: 4713, Name: "NTT America, Inc.", Country: "US", Priority: 85, ScanStatus: "pending"},
+	{ASN: 2914, Name: "NTT Communications", Country: "JP", Priority: 88, ScanStatus: "pending"},
+	{ASN: 7684, Name: "SAKURA Internet Inc.", Country: "JP", Priority: 88, ScanStatus: "pending"},
+	{ASN: 2497, Name: "Internet Initiative Japan Inc. (IIJ)", Country: "JP", Priority: 88, ScanStatus: "pending"},
+	{ASN: 133119, Name: "Equinix Hong Kong", Country: "HK", Priority: 88, ScanStatus: "pending"},
 
-	// Tier 3: 亚洲与国内出海主流厂商 (Priority 75 - 85)
-	{ASN: 37963, Name: "Hangzhou Alibaba Advertising Co.,Ltd.", Country: "CN", Priority: 82, ScanStatus: "pending"},
-	{ASN: 45102, Name: "Alibaba Cloud (US) LLC", Country: "US", Priority: 82, ScanStatus: "pending"},
-	{ASN: 132203, Name: "Tencent Building, Kejizhongyi Avenue", Country: "CN", Priority: 82, ScanStatus: "pending"},
-	{ASN: 45090, Name: "Shenzhen Tencent Computer Systems", Country: "CN", Priority: 80, ScanStatus: "pending"},
-	{ASN: 58519, Name: "Cloud Innovation Ltd", Country: "SC", Priority: 70, ScanStatus: "pending"},
-	{ASN: 136800, Name: "Ksyun / Kingsoft Cloud", Country: "CN", Priority: 70, ScanStatus: "pending"},
-	{ASN: 9381, Name: "Hong Kong Broadband Network", Country: "HK", Priority: 70, ScanStatus: "pending"},
-	{ASN: 9269, Name: "HKT Limited", Country: "HK", Priority: 70, ScanStatus: "pending"},
-	{ASN: 2914, Name: "NTT Communications", Country: "JP", Priority: 75, ScanStatus: "pending"},
-	{ASN: 2516, Name: "KDDI Corporation", Country: "JP", Priority: 75, ScanStatus: "pending"},
-	{ASN: 4713, Name: "NTT America, Inc.", Country: "US", Priority: 75, ScanStatus: "pending"},
-	{ASN: 7473, Name: "Singapore Telecommunications (Singtel)", Country: "SG", Priority: 75, ScanStatus: "pending"},
+	// Tier 3: 其他国家优质海外公有云与 IDC (Priority 65 - 75)
+	{ASN: 16276, Name: "OVH SAS", Country: "FR", Priority: 75, ScanStatus: "pending"},
+	{ASN: 12876, Name: "Scaleway S.A.S.", Country: "FR", Priority: 72, ScanStatus: "pending"},
+	{ASN: 25820, Name: "IT7 Networks Inc (BandwagonHost)", Country: "CA", Priority: 75, ScanStatus: "pending"},
+	{ASN: 60781, Name: "Leaseweb Netherlands B.V.", Country: "NL", Priority: 72, ScanStatus: "pending"},
+	{ASN: 212238, Name: "Datacamp Limited", Country: "GB", Priority: 72, ScanStatus: "pending"},
+	{ASN: 9009, Name: "M247 Ltd", Country: "GB", Priority: 72, ScanStatus: "pending"},
+	{ASN: 49981, Name: "WorldStream B.V.", Country: "NL", Priority: 72, ScanStatus: "pending"},
+	{ASN: 37963, Name: "Hangzhou Alibaba Advertising Co.,Ltd.", Country: "CN", Priority: 75, ScanStatus: "pending"},
+	{ASN: 132203, Name: "Tencent Building, Kejizhongyi Avenue", Country: "CN", Priority: 75, ScanStatus: "pending"},
+	{ASN: 45090, Name: "Shenzhen Tencent Computer Systems", Country: "CN", Priority: 72, ScanStatus: "pending"},
+	{ASN: 58519, Name: "Cloud Innovation Ltd", Country: "SC", Priority: 65, ScanStatus: "pending"},
+	{ASN: 136800, Name: "Ksyun / Kingsoft Cloud", Country: "CN", Priority: 65, ScanStatus: "pending"},
+	{ASN: 7473, Name: "Singapore Telecommunications (Singtel)", Country: "SG", Priority: 72, ScanStatus: "pending"},
+
+	// Tier 4: 电信与家庭宽带运营商（优先级降级至 15 ~ 50）
+	{ASN: 9269, Name: "HKT Limited", Country: "HK", Priority: 50, ScanStatus: "pending"},
+	{ASN: 2516, Name: "KDDI Corporation", Country: "JP", Priority: 20, ScanStatus: "pending"},
+	{ASN: 9381, Name: "Hong Kong Broadband Network", Country: "HK", Priority: 15, ScanStatus: "pending"},
 }
 
 // RegistryManager 负责全球 ASN 注册表的初始化、权重配置与网络更新
@@ -106,15 +111,15 @@ func (m *RegistryManager) InitDefaultRegistry() (int, error) {
 	now := time.Now()
 	records := make([]*types.ASNRecord, 0, len(SeedPopularASNs))
 	for _, seed := range SeedPopularASNs {
-		status := seed.ScanStatus
-		if status == "" {
-			status = "pending"
+		prio, status := CalculateASNPriority(seed.ASN, seed.Country, seed.Name, seed.Priority)
+		if seed.ScanStatus == "completed" {
+			status = "completed"
 		}
 		rec := &types.ASNRecord{
 			ASN:        seed.ASN,
 			Name:       seed.Name,
 			Country:    seed.Country,
-			Priority:   seed.Priority,
+			Priority:   prio,
 			ScanStatus: status,
 			UpdatedAt:  now,
 		}
@@ -125,10 +130,12 @@ func (m *RegistryManager) InitDefaultRegistry() (int, error) {
 		return 0, fmt.Errorf("写入预设 ASN 注册表失败: %w", err)
 	}
 
+	_ = m.CalibrateDefaultRegistry()
+
 	return len(records), nil
 }
 
-// EnsureRegistrySeeded 如果数据库内 ASN 记录为空，则自动载入默认热门 ASN
+// EnsureRegistrySeeded 如果数据库内 ASN 记录为空，则自动载入默认热门 ASN；若已存在，校准预设纯商业 CDN 与核心种子权重
 func (m *RegistryManager) EnsureRegistrySeeded() (int, error) {
 	if m.store == nil {
 		return 0, nil
@@ -138,9 +145,40 @@ func (m *RegistryManager) EnsureRegistrySeeded() (int, error) {
 		return 0, err
 	}
 	if count > 0 {
+		_ = m.CalibrateDefaultRegistry()
 		return count, nil
 	}
 	return m.InitDefaultRegistry()
+}
+
+// CalibrateDefaultRegistry 校准数据库中关键预设 ASN 的权重与纯商业 CDN 状态
+func (m *RegistryManager) CalibrateDefaultRegistry() error {
+	if m.store == nil {
+		return nil
+	}
+
+	for _, seed := range SeedPopularASNs {
+		rec, err := m.store.GetASN(seed.ASN)
+		if err != nil || rec == nil {
+			continue
+		}
+
+		prio, _ := CalculateASNPriority(seed.ASN, seed.Country, seed.Name, seed.Priority)
+		if isCDN, _ := IsPureCDNASN(seed.ASN, seed.Name); isCDN {
+			if rec.ScanStatus != "completed" {
+				_ = m.store.UpdateASNStatus(seed.ASN, "completed", 0)
+			}
+			if rec.Priority != 0 {
+				_ = m.store.UpdateASNPriority(seed.ASN, 0)
+			}
+			continue
+		}
+
+		if rec.Priority != prio {
+			_ = m.store.UpdateASNPriority(seed.ASN, prio)
+		}
+	}
+	return nil
 }
 
 // SyncFromURL 从远程 BGP 或 RIPE / CAIDA 转储源同步 ASN 列表
@@ -196,10 +234,11 @@ func (m *RegistryManager) ParseAndImportReader(r io.Reader) (int, error) {
 		if mMatches := asnOnlyRegex.FindStringSubmatch(line); len(mMatches) >= 2 {
 			asnNum, _ := strconv.Atoi(mMatches[1])
 			if asnNum > 0 {
+				prio, status := CalculateASNPriority(asnNum, "", "")
 				records = append(records, &types.ASNRecord{
 					ASN:        asnNum,
-					Priority:   10,
-					ScanStatus: "pending",
+					Priority:   prio,
+					ScanStatus: status,
 					UpdatedAt:  now,
 				})
 			}
@@ -211,12 +250,13 @@ func (m *RegistryManager) ParseAndImportReader(r io.Reader) (int, error) {
 				if len(matches) >= 4 {
 					country = strings.ToUpper(strings.TrimSpace(matches[3]))
 				}
+				prio, status := CalculateASNPriority(asnNum, country, name)
 				records = append(records, &types.ASNRecord{
 					ASN:        asnNum,
 					Name:       name,
 					Country:    country,
-					Priority:   10,
-					ScanStatus: "pending",
+					Priority:   prio,
+					ScanStatus: status,
 					UpdatedAt:  now,
 				})
 			}

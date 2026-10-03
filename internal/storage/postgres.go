@@ -849,6 +849,15 @@ func (s *PostgresStore) UpdateASNStatus(asn int, status string, successCountDelt
 	return err
 }
 
+// UpdateASNPriority 更新指定自治系统的调度优先级权重
+func (s *PostgresStore) UpdateASNPriority(asn int, priority int) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := s.pool.Exec(ctx, "UPDATE asn_registry SET priority = $1, updated_at = $2 WHERE asn = $3", priority, time.Now(), asn)
+	return err
+}
+
 // GetASN 获取单个 ASN 记录
 func (s *PostgresStore) GetASN(asn int) (*types.ASNRecord, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -981,12 +990,12 @@ func (s *PostgresStore) ResetScanningASNs() error {
 	return err
 }
 
-// ResetAllASNsStatus 将全部 ASN 任务重置为 pending
+// ResetAllASNsStatus 将全部非 CDN ASN 任务重置为 pending（保留 priority=0 纯商业 CDN 为 completed）
 func (s *PostgresStore) ResetAllASNsStatus() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err := s.pool.Exec(ctx, "UPDATE asn_registry SET scan_status = 'pending'")
+	_, err := s.pool.Exec(ctx, "UPDATE asn_registry SET scan_status = 'pending' WHERE priority > 0")
 	return err
 }
 

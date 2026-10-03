@@ -85,13 +85,34 @@ AS12345 Test Provider, JP
 		t.Errorf("expected 4 imported ASNs, got %d", imported)
 	}
 
-	// Check ASN 12345
+	// Check ASN 13335 (Cloudflare CDN)
+	recCF, err := store.GetASN(13335)
+	if err != nil || recCF == nil {
+		t.Fatalf("failed to find ASN 13335: %v", err)
+	}
+	if recCF.Priority != 0 || recCF.ScanStatus != "completed" {
+		t.Errorf("expected Cloudflare to have priority 0 and completed status, got %#v", recCF)
+	}
+
+	// Check ASN 24940 (Hetzner, DE datacenter)
+	recHZ, err := store.GetASN(24940)
+	if err != nil || recHZ == nil {
+		t.Fatalf("failed to find ASN 24940: %v", err)
+	}
+	if recHZ.Priority < 85 {
+		t.Errorf("expected Hetzner DE datacenter to have priority >= 85, got %d", recHZ.Priority)
+	}
+
+	// Check ASN 12345 (JP datacenter)
 	rec, err := store.GetASN(12345)
 	if err != nil || rec == nil {
 		t.Fatalf("failed to find ASN 12345: %v", err)
 	}
 	if rec.Name != "Test Provider" || rec.Country != "JP" {
 		t.Errorf("unexpected ASN 12345: %#v", rec)
+	}
+	if rec.Priority < 85 {
+		t.Errorf("expected JP datacenter ASN 12345 to have transit priority >= 85, got %d", rec.Priority)
 	}
 
 	// Check ASN 99999
@@ -101,6 +122,9 @@ AS12345 Test Provider, JP
 	}
 	if rec2.ASN != 99999 {
 		t.Errorf("expected ASN 99999, got %d", rec2.ASN)
+	}
+	if rec2.Priority != 20 {
+		t.Errorf("expected unknown ASN 99999 to have base priority 20, got %d", rec2.Priority)
 	}
 }
 

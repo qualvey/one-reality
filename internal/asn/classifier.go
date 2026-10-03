@@ -76,10 +76,8 @@ var residentialASNs = map[int]string{
 	3786: "LG Uplus",
 
 	// 欧洲主要宽带 ISP
-	3320:  "Deutsche Telekom AG",
 	12353: "Vodafone GmbH",
 	1273:  "Vodafone Group",
-	3209:  "Vodafone D2",
 	3215:  "Orange S.A.",
 	12322: "Free SAS / Proxad",
 	15557: "SFR",
@@ -91,6 +89,17 @@ var residentialASNs = map[int]string{
 	3352:  "Telefonica de Espana",
 	12389: "Rostelecom",
 	8359:  "MTS",
+	// 德国
+	3320:  "Deutsche Telekom",
+	3209:  "Vodafone Deutschland (Kabel/DOCSIS)",
+	8881:  "Vodafone Deutschland (DSL/Cable)",
+	6805:  "Telefónica Germany (O2)",
+	8560:  "1&1 Versatel",
+	39706: "Deutsche Glasfaser",
+	8422:  "NetCologne",
+	8767:  "M-net Telekommunikations",
+	9145:  "EWE TEL",
+	15943: "wilhelm.tel",
 
 	// 东南亚 / 澳洲
 	7473: "Singapore Telecommunications (Singtel)",
@@ -235,5 +244,78 @@ func ClassifyASN(asnNum int, asnName string) (ipType string, isResidential bool,
 
 	// 4. 其余一律归为机房 / 数据中心
 	return IPTypeDatacenter, false, asnName
+}
+
+// TransitCountries 四大核心中转/线路机国家代码（美、港、日、德）
+var TransitCountries = map[string]struct{}{
+	"US": {},
+	"HK": {},
+	"JP": {},
+	"DE": {},
+}
+
+// IsTransitCountry 检查国家代码是否属于美、港、日、德四大线路机核心国
+func IsTransitCountry(country string) bool {
+	_, ok := TransitCountries[strings.ToUpper(strings.TrimSpace(country))]
+	return ok
+}
+
+// IsTransitDatacenterASN 判断指定的 ASN 是否为美/港/日/德纯机房（排除纯商业 CDN 与已知家宽）
+func IsTransitDatacenterASN(asnNum int, country string, asnName string) bool {
+	if !IsTransitCountry(country) {
+		return false
+	}
+	if isCDN, _ := IsPureCDNASN(asnNum, asnName); isCDN {
+		return false
+	}
+	if _, isResidential, _ := ClassifyASN(asnNum, asnName); isResidential {
+		return false
+	}
+	return true
+}
+
+// CalculateASNPriority 根据国家、IDC/家宽分类、商业CDN特征计算 ASN 推荐初始扫描优先级与初始状态
+func CalculateASNPriority(asnNum int, country string, asnName string, basePriority ...int) (priority int, scanStatus string) {
+	// 1. 商业 CDN 基础设施：权重降为 0 并直接预设为 completed，防止全网扫描在 CDN 上做无用功
+	if isCDN, _ := IsPureCDNASN(asnNum, asnName); isCDN {
+		return 0, "completed"
+	}
+
+	// 2. 判断是否为家宽网络：家宽优先级降至低等级 (10 ~ 20)
+	_, isResidential, _ := ClassifyASN(asnNum, asnName)
+	if isResidential {
+		return 10, "pending"
+	}
+
+	// 3. 纯机房：若属于美、港、日、德四大线路机核心国家，赋予最高调度优先级 (85 ~ 100)
+	if IsTransitCountry(country) {
+		p := 90
+		if len(basePriority) > 0 && basePriority[0] > 0 {
+			p = basePriority[0]
+			if p < 85 {
+				p = 85
+			}
+		}
+		return p, "pending"
+	}
+
+	// 4. 国家未标注或未知
+	if strings.TrimSpace(country) == "" {
+		p := 20
+		if len(basePriority) > 0 && basePriority[0] > 0 {
+			p = basePriority[0]
+		}
+		return p, "pending"
+	}
+
+	// 5. 其他国家的纯机房：普通机房权重 (50 ~ 75)
+	p := 50
+	if len(basePriority) > 0 && basePriority[0] > 0 {
+		p = basePriority[0]
+		if p > 75 {
+			p = 75
+		}
+	}
+	return p, "pending"
 }
 

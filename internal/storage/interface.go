@@ -33,6 +33,7 @@ type Store interface {
 	UpsertASNRecords(records []*types.ASNRecord) error
 	GetNextPendingASN(minPriority int) (*types.ASNRecord, error)
 	UpdateASNStatus(asn int, status string, successCountDelta int) error
+	UpdateASNPriority(asn int, priority int) error
 	GetASN(asn int) (*types.ASNRecord, error)
 	CountASNs(status string) (int, error)
 	ListASNs(status string, minPriority, limit, offset int) ([]*types.ASNRecord, error)

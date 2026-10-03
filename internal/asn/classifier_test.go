@@ -62,3 +62,69 @@ func TestIsPureCDNASN(t *testing.T) {
 	}
 }
 
+func TestTransitAndPriorityCalculation(t *testing.T) {
+	// 1. IsTransitCountry
+	if !IsTransitCountry("US") || !IsTransitCountry("hk") || !IsTransitCountry("JP") || !IsTransitCountry("de") {
+		t.Errorf("expected US, HK, JP, DE to be transit countries")
+	}
+	if IsTransitCountry("FR") || IsTransitCountry("CN") || IsTransitCountry("SG") {
+		t.Errorf("FR, CN, SG should not be in the 4 core transit countries")
+	}
+
+	// 2. IsTransitDatacenterASN
+	// Hetzner (DE, IDC) -> true
+	if !IsTransitDatacenterASN(24940, "DE", "Hetzner Online GmbH") {
+		t.Errorf("Hetzner should be transit datacenter ASN")
+	}
+	// AWS (US, IDC) -> true
+	if !IsTransitDatacenterASN(16509, "US", "Amazon AWS") {
+		t.Errorf("AWS US should be transit datacenter ASN")
+	}
+	// SAKURA Internet (JP, IDC) -> true
+	if !IsTransitDatacenterASN(7684, "JP", "SAKURA Internet Inc.") {
+		t.Errorf("Sakura Internet JP should be transit datacenter ASN")
+	}
+	// Cloudflare (US, CDN) -> false
+	if IsTransitDatacenterASN(13335, "US", "Cloudflare, Inc.") {
+		t.Errorf("Cloudflare is CDN and should not be transit datacenter ASN")
+	}
+	// Deutsche Telekom (DE, Residential) -> false
+	if IsTransitDatacenterASN(3320, "DE", "Deutsche Telekom") {
+		t.Errorf("Deutsche Telekom is residential and should not be transit datacenter ASN")
+	}
+	// Comcast (US, Residential) -> false
+	if IsTransitDatacenterASN(7922, "US", "Comcast Cable") {
+		t.Errorf("Comcast is residential and should not be transit datacenter ASN")
+	}
+	// OVH (FR, IDC) -> false (FR not transit country)
+	if IsTransitDatacenterASN(16276, "FR", "OVH SAS") {
+		t.Errorf("OVH is in FR, not one of US/HK/JP/DE")
+	}
+
+	// 3. CalculateASNPriority
+	// CDN -> 0, completed
+	prioCDN, statusCDN := CalculateASNPriority(13335, "US", "Cloudflare, Inc.")
+	if prioCDN != 0 || statusCDN != "completed" {
+		t.Errorf("CDN priority should be 0 completed, got (%d, %s)", prioCDN, statusCDN)
+	}
+
+	// Transit Datacenter (US/HK/JP/DE) -> >= 85, pending
+	prioTransit, statusTransit := CalculateASNPriority(12345, "US", "Some US Hosting IDC")
+	if prioTransit < 85 || statusTransit != "pending" {
+		t.Errorf("Transit datacenter priority should be >= 85, got (%d, %s)", prioTransit, statusTransit)
+	}
+
+	// Non-transit Datacenter (FR) -> 50 ~ 75, pending
+	prioFR, statusFR := CalculateASNPriority(16276, "FR", "OVH SAS", 75)
+	if prioFR != 75 || statusFR != "pending" {
+		t.Errorf("FR IDC priority should be 75, got (%d, %s)", prioFR, statusFR)
+	}
+
+	// Residential -> 10, pending
+	prioRes, statusRes := CalculateASNPriority(3320, "DE", "Deutsche Telekom")
+	if prioRes != 10 || statusRes != "pending" {
+		t.Errorf("Residential priority should be 10, got (%d, %s)", prioRes, statusRes)
+	}
+}
+
+

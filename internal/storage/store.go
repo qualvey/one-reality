@@ -804,6 +804,15 @@ func (s *TargetStore) UpdateASNStatus(asn int, status string, successCountDelta 
 	return err
 }
 
+// UpdateASNPriority 更新指定 ASN 的调度优先级
+func (s *TargetStore) UpdateASNPriority(asn int, priority int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec("UPDATE asn_registry SET priority = ?, updated_at = ? WHERE asn = ?", priority, time.Now(), asn)
+	return err
+}
+
 // GetASN 获取单个 ASN 信息
 func (s *TargetStore) GetASN(asn int) (*types.ASNRecord, error) {
 	s.mu.RLock()
@@ -924,12 +933,12 @@ func (s *TargetStore) ResetScanningASNs() error {
 	return err
 }
 
-// ResetAllASNsStatus 将全部 ASN 状态重置为 pending（用于一整轮扫描完成后的全网周期重置）
+// ResetAllASNsStatus 将全部非 CDN ASN 状态重置为 pending（保留 priority=0 纯商业 CDN 为 completed）
 func (s *TargetStore) ResetAllASNsStatus() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_, err := s.db.Exec("UPDATE asn_registry SET scan_status = 'pending'")
+	_, err := s.db.Exec("UPDATE asn_registry SET scan_status = 'pending' WHERE priority > 0")
 	return err
 }
 
