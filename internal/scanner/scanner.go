@@ -501,5 +501,3 @@ func (s *Scanner) ScanCIDRStreamAdaptive(ctx context.Context, cidrStr string, st
 
 	wg.Wait()
 }
-
-

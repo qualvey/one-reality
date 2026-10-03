@@ -44,6 +44,8 @@ type AutoScanEvents struct {
 	OnScanRecord func(probe *scanner.ProbeResult)
 	// OnCandidateRejected 候选域名未能通过阶段一基线或阶段二过滤时回调
 	OnCandidateRejected func(ip string, domain string, reason string)
+	// OnCandidateDiscovered 从证书中发现新域名候选时回调（适用性检测前）
+	OnCandidateDiscovered func(ip string, domain string)
 	// OnAdaptiveAdjust 自适应限流中枢做出并发收敛或爬升决策时通知
 	OnAdaptiveAdjust func(stats adaptive.LimiterStats)
 	// OnTargetFound 发现并判定为符合条件的目标时回调
@@ -54,6 +56,8 @@ type AutoScanEvents struct {
 	OnCIDRScanStart func(currentIdx int, totalCIDRs int, cidr string, resumeIP string)
 	// OnLog 一般信息日志通知
 	OnLog func(msg string)
+	// OnError 持久化或断点操作失败时通知调用方
+	OnError func(err error)
 }
 
 // AutoScanResult 扫描完成或中断返回的聚合业务结果
@@ -86,7 +90,8 @@ type AutoScanner struct {
 	limiter adaptive.RateLimiter
 	profile adaptive.HardwareProfile
 
-	dbWriteMu sync.Mutex
+	dbWriteMu          sync.Mutex
+	persistenceErrOnce sync.Once
 }
 
 // NewAutoScanner 创建纯净的自动扫描调度器（纯内存组装，无副作用）
@@ -330,7 +335,9 @@ func (s *AutoScanner) processCandidate(ctx context.Context, scanRes *scanner.Sca
 		// 自动持久化资产库 (按 ASN/国家 归档)
 		if s.store != nil {
 			rec := storage.DetectionResultToRecord(res, s.config.ASN, s.config.Country, scanRes.IP, stars)
-			_ = s.store.UpsertTarget(rec)
+			if err := s.store.UpsertTarget(rec); err != nil {
+				s.reportPersistenceError(fmt.Errorf("写入目标 %q (IP %s) 失败: %w", rec.Domain, rec.IP, err))
+			}
 		}
 
 		// 阶段二：进阶偏好过滤
@@ -417,6 +424,21 @@ func (s *AutoScanner) scanSingleCIDR(
 					continue
 				}
 
+				s.mu.Lock()
+				alreadySeen := s.domainSet[candidateDomain]
+				if !alreadySeen {
+					s.domainSet[candidateDomain] = true
+				}
+				s.mu.Unlock()
+
+				if alreadySeen {
+					continue
+				}
+
+				if s.events.OnCandidateDiscovered != nil {
+					s.events.OnCandidateDiscovered(res.IP, candidateDomain)
+				}
+
 				// 早期过滤：如果启用了排除国内站点策略，立刻拦截
 				if s.config.Filter.RequireNoCN {
 					dLower := strings.ToLower(candidateDomain)
@@ -427,24 +449,15 @@ func (s *AutoScanner) scanSingleCIDR(
 					}
 				}
 
-				s.mu.Lock()
-				alreadySeen := s.domainSet[candidateDomain]
-				if !alreadySeen {
-					s.domainSet[candidateDomain] = true
-				}
-				s.mu.Unlock()
-
-				if !alreadySeen {
-					taskWg.Add(1)
-					// 浅拷贝对象，为当前特定 SAN 域名派生独立评估任务
-					item := *res
-					item.CertDomain = candidateDomain
-					select {
-					case scanResultChan <- &item:
-					case <-ctx.Done():
-						taskWg.Done()
-						return
-					}
+				taskWg.Add(1)
+				// 浅拷贝对象，为当前特定 SAN 域名派生独立评估任务
+				item := *res
+				item.CertDomain = candidateDomain
+				select {
+				case scanResultChan <- &item:
+				case <-ctx.Done():
+					taskWg.Done()
+					return
 				}
 			}
 		}
@@ -523,8 +536,19 @@ func (s *AutoScanner) recordCheckpointSafe(taskKey, cidr, ip string, completed b
 	s.dbWriteMu.Lock()
 	defer s.dbWriteMu.Unlock()
 	if s.store != nil {
-		_ = s.store.RecordCheckpoint(taskKey, cidr, ip, completed)
+		if err := s.store.RecordCheckpoint(taskKey, cidr, ip, completed); err != nil {
+			s.reportPersistenceError(fmt.Errorf("保存扫描断点 %s %s 失败: %w", taskKey, cidr, err))
+		}
 	}
+}
+
+func (s *AutoScanner) reportPersistenceError(err error) {
+	if s.events.OnError == nil {
+		return
+	}
+	s.persistenceErrOnce.Do(func() {
+		s.events.OnError(err)
+	})
 }
 
 func (s *AutoScanner) hasHitTargetLimit() bool {

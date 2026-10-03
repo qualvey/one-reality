@@ -169,6 +169,9 @@ func (r *RootCmd) executeAuto(opts AutoScanCLIOptions) {
 			}
 			logger.PrintTimestampedMessage("[~] %-15s      | 域名未入选: %-25s | 原因: %s", ip, domain, reason)
 		},
+		OnCandidateDiscovered: func(ip string, domain string) {
+			logger.Info("🔎 扫描发现候选域名: %s (IP: %s)", domain, ip)
+		},
 		OnAdaptiveAdjust: func(stats adaptive.LimiterStats) {
 			if bar != nil {
 				logger.AboveBar(bar, "⚡ [算力与网络自适应] %s", stats.LastActionReason)
@@ -276,7 +279,6 @@ func (r *RootCmd) executeAuto(opts AutoScanCLIOptions) {
 		fmt.Println(r.batchManager.FormatSuitableTable(res.SuitableResults))
 	}
 }
-
 
 func contains(slice []string, item string) bool {
 	for _, s := range slice {

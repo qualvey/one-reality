@@ -43,6 +43,11 @@ func (r *RootCmd) executeDaemon(args []string) {
 	}
 
 	logger.PrintTimestampedMessage("正在初始化 24小时 ASN 全网扫描守护进程...")
+	if r.config == nil || r.config.LoadedConfigFile == "" {
+		logger.PrintTimestampedMessage("未加载配置文件，将使用内置默认配置")
+	} else {
+		logger.PrintTimestampedMessage("已加载配置文件: %s", r.config.LoadedConfigFile)
+	}
 
 	// 1. 初始化统一应用依赖容器
 	container, err := app.NewContainer(app.ContainerOptions{
@@ -61,6 +66,8 @@ func (r *RootCmd) executeDaemon(args []string) {
 		logger.PrintError(fmt.Sprintf("打开目标数据库失败: %v", err))
 		return
 	}
+	logger.PrintTimestampedMessage("数据库已连接: backend=%T, 当前 target 数=%d, 扫描代理启用=%t",
+		store, store.Count(), r.config != nil && r.config.Proxy.Scanner)
 	geoipReader := container.GetGeoIP()
 	scannerEngine := container.GetScanner()
 
@@ -108,6 +115,9 @@ func (r *RootCmd) executeDaemon(args []string) {
 				return
 			}
 			logger.PrintTimestampedMessage("[~] %-15s      | 域名未入选: %-25s | 原因: %s", ip, domain, reason)
+		},
+		OnCandidateDiscovered: func(ip string, domain string) {
+			logger.Info("🔎 扫描发现候选域名: %s (IP: %s)", domain, ip)
 		},
 		OnAdaptiveAdjust: func(stats adaptive.LimiterStats) {
 			logger.PrintTimestampedMessage("⚡ [自适应调谐] %s", stats.LastActionReason)

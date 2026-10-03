@@ -14,6 +14,7 @@ import (
 	"RealityChecker/internal/asn"
 	"RealityChecker/internal/config"
 	"RealityChecker/internal/core"
+	"RealityChecker/internal/logger"
 	"RealityChecker/internal/scanner"
 	"RealityChecker/internal/storage"
 	"RealityChecker/internal/types"
@@ -66,9 +67,9 @@ type TargetSummaryInfo struct {
 	ASN                string `json:"asn"`
 	ASNName            string `json:"asn_name,omitempty"`
 	Country            string `json:"country"`
-	IPType             string `json:"ip_type"`             // "datacenter" (机房) 或 "residential" (家宽)
-	IsResidential      bool   `json:"is_residential"`     // 是否为住宅宽带
-	SuggestScan        bool   `json:"suggest_scan"`        // 是否建议扫描 (机房为 true，家宽因几乎无网站为 false)
+	IPType             string `json:"ip_type"`        // "datacenter" (机房) 或 "residential" (家宽)
+	IsResidential      bool   `json:"is_residential"` // 是否为住宅宽带
+	SuggestScan        bool   `json:"suggest_scan"`   // 是否建议扫描 (机房为 true，家宽因几乎无网站为 false)
 	CIDRCount          int    `json:"cidr_count"`
 	TotalIPs           int64  `json:"total_ips"`
 	HasCheckpoint      bool   `json:"has_checkpoint"`
@@ -77,7 +78,6 @@ type TargetSummaryInfo struct {
 	SameASNHits        int    `json:"same_asn_hits"`
 	TotalHits          int    `json:"total_hits"`
 }
-
 
 // ProvisionEvent SSE 流式事件载体
 type ProvisionEvent struct {
@@ -91,7 +91,7 @@ type InitEventData struct {
 	ASN              string   `json:"asn"`
 	ASNName          string   `json:"asn_name,omitempty"`
 	Country          string   `json:"country"`
-	IPType           string   `json:"ip_type"`             // "datacenter" 或 "residential"
+	IPType           string   `json:"ip_type"` // "datacenter" 或 "residential"
 	IsResidential    bool     `json:"is_residential"`
 	SuggestScan      bool     `json:"suggest_scan"`
 	Need             int      `json:"need"`
@@ -384,6 +384,9 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 			} else {
 				progressMu.Unlock()
 			}
+		},
+		OnCandidateDiscovered: func(ip string, domain string) {
+			logger.Info("🔎 扫描发现候选域名: %s (IP: %s)", domain, ip)
 		},
 		OnTargetFound: func(res *types.DetectionResult, count int, ip string, handshakeMs int64, statusCode int) {
 			if res == nil || res.Domain == "" {
@@ -777,4 +780,3 @@ func (s *ProvisionService) ListASNs(status string, minPriority, limit, offset in
 	}
 	return s.store.ListASNs(status, minPriority, limit, offset)
 }
-
