@@ -6,9 +6,13 @@ import (
 	"regexp"
 	"strings"
 
+	"RealityChecker/internal/app"
 	"RealityChecker/internal/config"
+	"RealityChecker/internal/core"
 	"RealityChecker/internal/logger"
 	"RealityChecker/internal/report"
+	"RealityChecker/internal/storage"
+	"RealityChecker/internal/types"
 )
 
 // executeCheck 执行单域名检测
@@ -35,11 +39,49 @@ func (r *RootCmd) executeCheck(domain string) {
 		fmt.Printf("检测失败: %v\n", err)
 		return
 	}
+	if result.Suitable {
+		if err := r.saveCheckResult(result); err != nil {
+			logger.PrintError(fmt.Sprintf("检测合格，但写入资产数据库失败: %v", err))
+		} else {
+			logger.PrintTimestampedMessage("✅ 检测合格，已写入或更新资产数据库")
+		}
+	}
 
 	// 使用格式化器输出结果
 	cfg, _ := config.LoadConfig("")
 	formatter := report.NewFormatter(cfg)
 	fmt.Printf("\n%s", formatter.FormatSingleResult(result))
+}
+
+func (r *RootCmd) saveCheckResult(result *types.DetectionResult) error {
+	container, err := app.NewContainer(app.ContainerOptions{Config: r.config})
+	if err != nil {
+		return err
+	}
+	defer container.Close()
+
+	store, err := container.GetStore()
+	if err != nil {
+		return err
+	}
+
+	ip, asnName, country := "", "", ""
+	if result.Location != nil {
+		ip = result.Location.IPAddress
+	}
+	if parsedIP := net.ParseIP(ip); parsedIP != nil {
+		if geoip := container.GetGeoIP(); geoip != nil {
+			if record, err := geoip.Country(parsedIP); err == nil {
+				country = strings.ToUpper(record.Country.IsoCode)
+			}
+		}
+		if asnNumber, _, err := container.GetASNClient().PrefixesForIP(r.ctx, ip); err == nil && asnNumber > 0 {
+			asnName = fmt.Sprintf("AS%d", asnNumber)
+		}
+	}
+
+	record := storage.DetectionResultToRecord(result, asnName, country, ip, core.CalculateTargetStars(result))
+	return store.UpsertTarget(record)
 }
 
 // isValidDomain 验证域名格式是否有效
