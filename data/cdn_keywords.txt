@@ -181,11 +181,10 @@ ns_hint_suffix:
 # 6) 证书签发者（弱/中等提示，不参与最终结论）
 ########################################
 cert_issuer_hint:
-  Cloudflare Inc ECC CA
-  Cloudflare Inc RSA CA
-  Cloudflare Origin Certificate
-  Akamai Subordinate CA
-  Fastly CA
+  Cloudflare Inc
+  Amazon
+  Google Trust Services
+  Akamai
 
 ########################################
 # 7) 排除/降权关键字（避免误判）
