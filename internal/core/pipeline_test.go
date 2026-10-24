@@ -139,3 +139,91 @@ func TestEngineProfileIntegration(t *testing.T) {
 		t.Errorf("pipeline profile mismatch: %v", pipeline.Profile())
 	}
 }
+
+func TestEvaluateSuitabilityDecoupledFromQueryPreferences(t *testing.T) {
+	cfg := &types.Config{
+		RealityFilter: types.RealityFilterConfig{
+			RequireNoDefaultPage: true,
+			ExcludeStatus:        []int{403, 404},
+		},
+	}
+	p := NewPipeline(nil, cfg)
+
+	// 1. 测试默认页面 (虽然启用了 RequireNoDefaultPage，但协议硬基线应判定适合落库)
+	resDefault := &types.DetectionResult{
+		Domain: "nginx-default.org",
+		Network: &types.NetworkResult{
+			Accessible:        true,
+			StatusCode:        200,
+			IsDefaultPage:     true,
+			DefaultPageType:   "nginx",
+			DefaultPageReason: "默认欢迎页",
+		},
+		TLS: &types.TLSResult{
+			SupportsTLS13:  true,
+			SupportsX25519: true,
+			SupportsHTTP2:  true,
+		},
+		Certificate: &types.CertificateResult{
+			Valid:            true,
+			DaysUntilExpiry:  30,
+		},
+		SNI: &types.SNIResult{
+			SupportsSNI: true,
+			SNIMatch:    true,
+		},
+	}
+
+	p.evaluateSuitability(resDefault)
+	if !resDefault.Suitable {
+		t.Errorf("expected resDefault.Suitable to be true for ingestion, got false (err: %v)", resDefault.Error)
+	}
+
+	// 验证在阶段二偏好过滤 FilterTarget 中依然被正确拦截
+	passed, reason := FilterTarget(resDefault, cfg.RealityFilter)
+	if passed {
+		t.Errorf("expected FilterTarget to reject default page during query filtering")
+	}
+	if reason == "" {
+		t.Errorf("expected non-empty reject reason for default page")
+	}
+
+	// 2. 测试排除状态码 (403 依然判定适合落库，但 StatusCodeCategory 被打标为 Excluded)
+	res403 := &types.DetectionResult{
+		Domain: "forbidden.example.com",
+		Network: &types.NetworkResult{
+			Accessible: true,
+			StatusCode: 403,
+		},
+		TLS: &types.TLSResult{
+			SupportsTLS13:  true,
+			SupportsX25519: true,
+			SupportsHTTP2:  true,
+		},
+		Certificate: &types.CertificateResult{
+			Valid:            true,
+			DaysUntilExpiry:  30,
+		},
+		SNI: &types.SNIResult{
+			SupportsSNI: true,
+			SNIMatch:    true,
+		},
+	}
+
+	p.evaluateSuitability(res403)
+	if !res403.Suitable {
+		t.Errorf("expected res403.Suitable to be true for ingestion, got false (err: %v)", res403.Error)
+	}
+	if res403.StatusCodeCategory != types.StatusCodeCategoryExcluded {
+		t.Errorf("expected StatusCodeCategoryExcluded, got %v", res403.StatusCodeCategory)
+	}
+
+	// 验证阶段二偏好过滤拦截 403 状态码
+	passed403, reason403 := FilterTarget(res403, cfg.RealityFilter)
+	if passed403 {
+		t.Errorf("expected FilterTarget to reject status code 403")
+	}
+	if reason403 == "" {
+		t.Errorf("expected non-empty reject reason for 403")
+	}
+}

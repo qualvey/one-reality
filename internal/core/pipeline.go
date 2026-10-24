@@ -299,7 +299,10 @@ func (p *Pipeline) executeStages(ctx context.Context, pipelineCtx *types.Pipelin
 	}
 }
 
-// evaluateSuitability 评估适合性（硬性技术基线）
+// evaluateSuitability 评估硬性技术与协议基线
+// 注意：本方法仅检验该目标是否具备作为 REALITY 伪装协议的技术硬性底线（TLS 1.3 / X25519 / 合法证书 / 存活网络）
+// 一切主观偏好（CDN、热门大站、默认页面、特定状态码、握手延迟阈值等）均不在此阻断，
+// 而是作为元数据特征打标入库，由查询过滤（FilterTarget / QueryTargets）在消费侧决定。
 func (p *Pipeline) evaluateSuitability(result *types.DetectionResult) {
 	// 检查 GFW 静态黑名单 (仅当启用了 check_gfw 时拦截)
 	if p.config != nil && p.config.RealityFilter.CheckGFW && result.Blocked != nil && result.Blocked.IsBlocked {
@@ -322,7 +325,7 @@ func (p *Pipeline) evaluateSuitability(result *types.DetectionResult) {
 		return
 	}
 
-	// 检查状态码是否安全或被排除
+	// 维护状态码分类元数据（供资产特征记录与后续查询过滤使用，不作为落库硬性阻断项）
 	if result.Network != nil && result.Network.Accessible {
 		statusCode := result.Network.StatusCode
 		isExcluded := false
@@ -340,22 +343,9 @@ func (p *Pipeline) evaluateSuitability(result *types.DetectionResult) {
 
 		if isExcluded {
 			result.StatusCodeCategory = types.StatusCodeCategoryExcluded
-			result.Suitable = false
-			result.Error = fmt.Errorf("状态码不自然或已被排除: %d", statusCode)
-			return
+		} else {
+			result.StatusCodeCategory = types.StatusCodeCategorySafe
 		}
-		result.StatusCodeCategory = types.StatusCodeCategorySafe
-	}
-
-	// 检查是否为 Nginx 或 Web 服务器默认返回页
-	if p.config != nil && p.config.RealityFilter.RequireNoDefaultPage && result.Network != nil && result.Network.IsDefaultPage {
-		result.Suitable = false
-		typeName := result.Network.DefaultPageType
-		if typeName == "" {
-			typeName = "默认"
-		}
-		result.Error = fmt.Errorf("检测到%s默认页 (%s)", typeName, result.Network.DefaultPageReason)
-		return
 	}
 
 	if result.TLS != nil {
