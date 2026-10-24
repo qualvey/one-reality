@@ -7,12 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"RealityChecker/internal/data"
 	"RealityChecker/internal/logger"
 	"RealityChecker/internal/network"
 
@@ -30,14 +30,8 @@ func NewScanner(proxyURL ...string) *Scanner {
 	if len(proxyURL) > 0 && strings.TrimSpace(proxyURL[0]) != "" {
 		s.SetProxy(proxyURL[0])
 	}
-	paths := []string{"data/Country.mmdb", "Country.mmdb"}
-	for _, p := range paths {
-		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
-			if r, err := geoip2.Open(p); err == nil {
-				s.geoReader = r
-				break
-			}
-		}
+	if r, err := data.OpenGeoIPReader("data/Country.mmdb", "Country.mmdb"); err == nil {
+		s.geoReader = r
 	}
 	return s
 }

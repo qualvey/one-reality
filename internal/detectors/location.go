@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 
+	"RealityChecker/internal/data"
 	"RealityChecker/internal/types"
 
 	"github.com/oschwald/geoip2-golang"
@@ -92,9 +93,9 @@ func (ls *LocationStage) getLocation(ip string) (string, bool) {
 	return "未知", false
 }
 
-// loadGeoIPDatabase 加载GeoIP数据库
+// loadGeoIPDatabase 加载GeoIP数据库（优先外部 data/Country.mmdb，回退内置内嵌数据库）
 func (ls *LocationStage) loadGeoIPDatabase() {
-	db, err := geoip2.Open("data/Country.mmdb")
+	db, err := data.OpenGeoIPReader("data/Country.mmdb", "Country.mmdb")
 	if err != nil {
 		return
 	}

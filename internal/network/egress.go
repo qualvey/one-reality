@@ -197,7 +197,7 @@ func CheckEgressWithClient(ctx context.Context, client *http.Client, geoipPath s
 
 		info.Source = p.Name
 		// 结合本地 GeoIP mmdb 对归属地进行权威校验与补全
-		enrichWithGeoIP(info, geoipPath)
+		enrichWithGeoIP(info, geoipPath, nil)
 
 		return info, nil
 	}
@@ -213,19 +213,88 @@ func CheckEgress(ctx context.Context, geoipPath string) (*EgressInfo, error) {
 	return CheckEgressWithClient(ctx, client, geoipPath)
 }
 
-// enrichWithGeoIP 使用本地 Country.mmdb 补全与校验出口 IP 归属地
-func enrichWithGeoIP(info *EgressInfo, geoipPath string) {
-	if info == nil || info.IP == "" || geoipPath == "" {
+// CheckEgressWithReader 使用指定的 GeoIP Reader 检测本机公网出口网络
+func CheckEgressWithReader(ctx context.Context, reader *geoip2.Reader, providers ...EgressProvider) (*EgressInfo, error) {
+	client := &http.Client{
+		Timeout: 4 * time.Second,
+	}
+	if len(providers) == 0 {
+		providers = GetDefaultEgressProviders()
+	}
+
+	var lastErr error
+	for _, p := range providers {
+		providerCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		req, err := http.NewRequestWithContext(providerCtx, "GET", p.URL, nil)
+		if err != nil {
+			cancel()
+			lastErr = err
+			continue
+		}
+		req.Header.Set("User-Agent", "curl/8.0.0 (RealityChecker)")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			cancel()
+			lastErr = fmt.Errorf("[%s] 请求错误: %w", p.Name, err)
+			continue
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		cancel()
+
+		if err != nil {
+			lastErr = fmt.Errorf("[%s] 读取响应失败: %w", p.Name, err)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("[%s] 响应状态码异常: %d", p.Name, resp.StatusCode)
+			continue
+		}
+
+		info, err := p.Parse(body)
+		if err != nil {
+			lastErr = fmt.Errorf("[%s] 解析失败: %w", p.Name, err)
+			continue
+		}
+
+		info.Source = p.Name
+		enrichWithGeoIP(info, "", reader)
+
+		return info, nil
+	}
+
+	return nil, fmt.Errorf("所有出口网络探测源均失败，最后错误: %w", lastErr)
+}
+
+// enrichWithGeoIP 使用本地 Country.mmdb 或指定 Reader 补全与校验出口 IP 归属地
+func enrichWithGeoIP(info *EgressInfo, geoipPath string, reader *geoip2.Reader) {
+	if info == nil || info.IP == "" {
 		return
 	}
-	if _, err := os.Stat(geoipPath); err != nil {
+
+	var db *geoip2.Reader
+	var shouldClose bool
+
+	if reader != nil {
+		db = reader
+	} else if geoipPath != "" {
+		if _, err := os.Stat(geoipPath); err == nil {
+			if opened, err := geoip2.Open(geoipPath); err == nil {
+				db = opened
+				shouldClose = true
+			}
+		}
+	}
+
+	if db == nil {
 		return
 	}
-	db, err := geoip2.Open(geoipPath)
-	if err != nil {
-		return
+	if shouldClose {
+		defer db.Close()
 	}
-	defer db.Close()
 
 	parsedIP := net.ParseIP(info.IP)
 	if parsedIP == nil {

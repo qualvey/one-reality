@@ -19,13 +19,13 @@ import (
 	"RealityChecker/internal/asn"
 	"RealityChecker/internal/config"
 	"RealityChecker/internal/core"
+	"RealityChecker/internal/data"
 	"RealityChecker/internal/logger"
 	"RealityChecker/internal/scanner"
 	"RealityChecker/internal/storage"
 	"RealityChecker/internal/types"
 	"RealityChecker/internal/version"
 
-	"github.com/oschwald/geoip2-golang"
 	"github.com/schollz/progressbar/v3"
 )
 
@@ -329,7 +329,7 @@ func resolveAutoInput(ctx context.Context, targetInput string, inFile string, co
 		return resolveInputToCIDRs(targetInput, inFile, filter), "", "", nil
 	}
 
-	reader, err := geoip2.Open("data/Country.mmdb")
+	reader, err := data.OpenGeoIPReader("data/Country.mmdb", "Country.mmdb")
 	if err != nil {
 		logger.PrintTimestampedMessage("⚠️ GeoIP 数据库不可用 (%v)，跳过 ASN/国家过滤，直接扫描入口 IP 所在网段", err)
 		return resolveInputToCIDRs(targetInput, inFile, filter), "", "", nil

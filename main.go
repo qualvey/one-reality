@@ -85,7 +85,11 @@ func main() {
 	if !isVersionCmd {
 		// 校验出口 IP（须为中国大陆 CN 节点，非 CN 须通过 --force 强制拉起）
 		checkCtx, checkCancel := context.WithTimeout(context.Background(), 4*time.Second)
-		egressInfo, err := network.CheckEgress(checkCtx, "data/Country.mmdb")
+		geoReader, _ := data.OpenGeoIPReader("data/Country.mmdb", "Country.mmdb")
+		egressInfo, err := network.CheckEgressWithReader(checkCtx, geoReader)
+		if geoReader != nil {
+			geoReader.Close()
+		}
 		checkCancel()
 
 		if err != nil {

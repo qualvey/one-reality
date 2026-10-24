@@ -2,13 +2,13 @@ package app
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"RealityChecker/internal/asn"
 	"RealityChecker/internal/config"
+	"RealityChecker/internal/data"
 	"RealityChecker/internal/scanner"
 	"RealityChecker/internal/service"
 	"RealityChecker/internal/storage"
@@ -150,13 +150,9 @@ func (c *Container) GetGeoIP() *geoip2.Reader {
 		candidatePaths = append(candidatePaths, "data/Country.mmdb", "Country.mmdb")
 	}
 
-	for _, p := range candidatePaths {
-		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
-			if reader, err := geoip2.Open(p); err == nil {
-				c.geoipReader = reader
-				return c.geoipReader
-			}
-		}
+	if reader, err := data.OpenGeoIPReader(candidatePaths...); err == nil {
+		c.geoipReader = reader
+		return c.geoipReader
 	}
 
 	return nil
