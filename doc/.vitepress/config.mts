@@ -19,7 +19,8 @@ export default withMermaid(
           {
             text: '架构演进历史',
             items: [
-              { text: '证书到期时间与按需懒探测', link: '/evolution/2026-10-24-cert-expire-and-lazy-recheck' }
+              { text: '证书到期时间与按需懒探测', link: '/evolution/2026-10-24-cert-expire-and-lazy-recheck' },
+              { text: '故障复盘：智能推荐 CPU 卡死与 O(N²) 修复', link: '/evolution/2026-10-24-smart-api-cpu-freeze-incident' }
             ]
           }
         ],
@@ -36,7 +37,8 @@ export default withMermaid(
           {
             text: '演进历史',
             items: [
-              { text: '证书到期时间与按需懒探测', link: '/evolution/2026-10-24-cert-expire-and-lazy-recheck' }
+              { text: '证书到期时间与按需懒探测', link: '/evolution/2026-10-24-cert-expire-and-lazy-recheck' },
+              { text: '故障复盘：智能推荐 CPU 卡死与 O(N²) 修复', link: '/evolution/2026-10-24-smart-api-cpu-freeze-incident' }
             ]
           },
           {
