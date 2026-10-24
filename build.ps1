@@ -2,13 +2,14 @@ $ErrorActionPreference = "Stop"
 
 $RootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $DistDir = Join-Path $RootDir "dist"
+$AppName = if ($env:APP_NAME) { $env:APP_NAME } else { "reality-checker" }
 $Version = if ($env:VERSION) { $env:VERSION } else { (git -C $RootDir describe --tags --always --dirty 2>$null) }
 $Commit = if ($env:COMMIT) { $env:COMMIT } else { (git -C $RootDir rev-parse --short HEAD 2>$null) }
 $BuildTime = if ($env:BUILD_TIME) { $env:BUILD_TIME } else { (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ") }
 
 if (-not $Version) { $Version = "dev" }
 if (-not $Commit) { $Commit = "unknown" }
-$Ldflags = "-s -w -X RealityChecker/internal/version.Version=$Version -X RealityChecker/internal/version.Commit=$Commit -X RealityChecker/internal/version.BuildTime=$BuildTime"
+$Ldflags = "-s -w -X RealityChecker/internal/version.AppName=$AppName -X RealityChecker/internal/version.Version=$Version -X RealityChecker/internal/version.Commit=$Commit -X RealityChecker/internal/version.BuildTime=$BuildTime"
 
 if (-not (Test-Path $DistDir)) {
     New-Item -ItemType Directory -Path $DistDir | Out-Null
