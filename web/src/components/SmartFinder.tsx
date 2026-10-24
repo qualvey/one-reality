@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, Fragment } from 'react';
 import type {
   RankedTargetItem,
   TargetSummaryInfo,
@@ -7,6 +7,8 @@ import type {
   ScanProgressInfo,
 } from '../types';
 import { ConfigModal } from './ConfigModal';
+import { TargetDetailModal } from './TargetDetailModal';
+import { formatCertExpireDate } from '../format';
 import {
   Sparkles,
   Globe,
@@ -29,7 +31,14 @@ import {
   X,
   ChevronDown,
   ChevronUp,
+  ChevronRight,
   Clock,
+  Calendar,
+  FileText,
+  LayoutGrid,
+  List,
+  ExternalLink,
+  Info,
 } from 'lucide-react';
 
 const DEFAULT_FILTER: SmartFilterOptions = {
@@ -82,6 +91,40 @@ export const SmartFinder = () => {
 
   const [selectedTarget, setSelectedTarget] = useState<TargetItem | null>(null);
   const [copiedDomain, setCopiedDomain] = useState<string | null>(null);
+
+  // 布局视图模式：'grid' 为卡片网格，'list' 为列表视图
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>(() => {
+    return (localStorage.getItem('rc_targets_view_mode') as 'grid' | 'list') || 'grid';
+  });
+
+  // 详细信息弹窗选中的目标
+  const [selectedDetailTarget, setSelectedDetailTarget] = useState<RankedTargetItem | null>(null);
+
+  // 列表视图中行内折叠/展开的域名集合
+  const [expandedDomains, setExpandedDomains] = useState<Set<string>>(new Set());
+
+  const handleViewModeChange = (mode: 'grid' | 'list') => {
+    setViewMode(mode);
+    localStorage.setItem('rc_targets_view_mode', mode);
+  };
+
+  const toggleExpandDomain = (domain: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setExpandedDomains((prev) => {
+      const next = new Set(prev);
+      if (next.has(domain)) {
+        next.delete(domain);
+      } else {
+        next.add(domain);
+      }
+      return next;
+    });
+  };
+
+  const openDomainUrl = (domain: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    window.open(`https://${domain}`, '_blank', 'noopener,noreferrer');
+  };
 
   // Refs 维护实时最新的状态，避免闭包捕获陈旧值
   const esRef = useRef<EventSource | null>(null);
@@ -1436,155 +1479,543 @@ export const SmartFinder = () => {
         </div>
       )}
 
-      {/* 结果卡片网格 */}
-      <div className="targets-grid" style={{ marginTop: '24px' }}>
-        {displayedTargets.map((target) => {
-          const isSameASN = target.match_level === 'same_asn';
-          const isSameCountry = target.match_level === 'same_country';
-          const isFreshlyScanned = target.domain === latestDiscoveredDomain || target.is_new_scan;
+      {/* 结果区域工具栏与布局切换 */}
+      {displayedTargets.length > 0 && (
+        <div className="results-toolbar">
+          <div className="results-toolbar-left">
+            <div className="results-title-group">
+              <h3 className="results-title">匹配目标结果</h3>
+              <span className="badge badge-info" style={{ fontFamily: 'var(--font-mono)' }}>
+                {displayedTargets.length} 个目标
+              </span>
+            </div>
+          </div>
 
-          return (
-            <div
-              key={target.domain}
-              className={`target-card glass-panel ${isSameASN ? 'highlight-asn' : ''} ${isFreshlyScanned ? 'highlight-new' : ''}`}
-            >
-              <div>
-                <div className="card-top">
-                  <div className="card-title-group">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                      {isSameASN ? (
-                        <span className="badge badge-same-asn">
-                          <Flame size={12} />
-                          同 ASN 极速直连
+          {/* 右上角布局切换按钮 */}
+          <div className="results-toolbar-right">
+            <div className="layout-toggle-group">
+              <button
+                type="button"
+                className={`layout-toggle-btn ${viewMode === 'grid' ? 'active' : ''}`}
+                onClick={() => handleViewModeChange('grid')}
+                title="切换为卡片网格布局"
+              >
+                <LayoutGrid size={15} />
+                <span>网格</span>
+              </button>
+              <button
+                type="button"
+                className={`layout-toggle-btn ${viewMode === 'list' ? 'active' : ''}`}
+                onClick={() => handleViewModeChange('list')}
+                title="切换为紧凑列表布局"
+              >
+                <List size={15} />
+                <span>列表</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 结果视图：卡片网格模式 */}
+      {viewMode === 'grid' && displayedTargets.length > 0 && (
+        <div className="targets-grid">
+          {displayedTargets.map((target) => {
+            const isSameASN = target.match_level === 'same_asn';
+            const isSameCountry = target.match_level === 'same_country';
+            const isFreshlyScanned = target.domain === latestDiscoveredDomain || target.is_new_scan;
+
+            return (
+              <div
+                key={target.domain}
+                className={`target-card glass-panel ${isSameASN ? 'highlight-asn' : ''} ${isFreshlyScanned ? 'highlight-new' : ''}`}
+              >
+                <div>
+                  <div className="card-top">
+                    <div className="card-title-group">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        {isSameASN ? (
+                          <span className="badge badge-same-asn">
+                            <Flame size={12} />
+                            同 ASN 极速直连
+                          </span>
+                        ) : isSameCountry ? (
+                          <span className="badge badge-same-country">
+                            <Globe size={12} />
+                            同国家骨干
+                          </span>
+                        ) : (
+                          <span className="badge badge-global">全球精选</span>
+                        )}
+
+                        {isFreshlyScanned && (
+                          <span className="badge badge-live-scan" title="实时流水线刚探测发现的目标">
+                            现场即时新扫
+                          </span>
+                        )}
+
+                        <span className="star-rating">
+                          {'★'.repeat(target.stars)}
                         </span>
-                      ) : isSameCountry ? (
-                        <span className="badge badge-same-country">
-                          <Globe size={12} />
-                          同国家骨干
-                        </span>
-                      ) : (
-                        <span className="badge badge-global">全球精选</span>
+                      </div>
+
+                      <div
+                        className="card-domain"
+                        style={{ marginTop: '6px', cursor: 'pointer' }}
+                        onClick={() => setSelectedDetailTarget(target)}
+                        title="点击查看详细信息"
+                      >
+                        {target.domain}
+                      </div>
+
+                      {target.page_title && (
+                        <div className="card-title-text" title={target.page_title}>
+                          {target.page_title}
+                        </div>
                       )}
+                    </div>
 
-                      {isFreshlyScanned && (
-                        <span className="badge badge-live-scan" title="实时流水线刚探测发现的目标">
-                          现场即时新扫
-                        </span>
-                      )}
+                    <div className="score-badge">
+                      <span className="score-number">{target.score}</span>
+                      <span className="score-label">匹配权重分</span>
+                    </div>
+                  </div>
 
-                      <span className="star-rating">
-                        {'★'.repeat(target.stars)}
+                  <div className="card-specs">
+                    <div className="spec-item">
+                      <span className="spec-label">ASN 归属</span>
+                      <span className="spec-value" style={{ color: isSameASN ? 'var(--accent-fire)' : 'var(--text-main)' }}>
+                        {target.asn || '未知'} ({target.country || 'N/A'})
                       </span>
                     </div>
-
-                    <div className="card-domain" style={{ marginTop: '6px' }}>
-                      {target.domain}
+                    <div className="spec-item">
+                      <span className="spec-label">TLS 握手延时</span>
+                      <span
+                        className="spec-value"
+                        style={{
+                          color:
+                            target.handshake_ms < 60
+                              ? 'var(--accent-emerald)'
+                              : target.handshake_ms < 150
+                              ? 'var(--accent-cyan)'
+                              : target.handshake_ms < 250
+                              ? 'var(--accent-amber)'
+                              : 'var(--text-main)',
+                        }}
+                      >
+                        {target.handshake_ms} ms
+                      </span>
                     </div>
+                    <div className="spec-item">
+                      <span className="spec-label">证书有效期</span>
+                      <span
+                        className="spec-value"
+                        style={{
+                          color: target.cert_days <= 0 ? 'var(--accent-crimson)' : target.cert_days < 30 ? 'var(--accent-amber)' : 'inherit',
+                        }}
+                        title={target.cert_expire_at ? `到期时间: ${new Date(target.cert_expire_at).toLocaleString()}` : undefined}
+                      >
+                        {target.cert_days <= 0 ? '已过期' : `${target.cert_days} 天`}
+                      </span>
+                    </div>
+                    <div className="spec-item">
+                      <span className="spec-label">HTTP 状态</span>
+                      <span className="spec-value">
+                        {target.status_code > 0 ? (
+                          <span style={{ color: target.status_code < 400 ? 'var(--accent-emerald)' : 'var(--accent-amber)' }}>
+                            {target.status_code} OK
+                          </span>
+                        ) : (
+                          '443 直出'
+                        )}
+                      </span>
+                    </div>
+                  </div>
 
-                    {target.page_title && (
-                      <div className="card-title-text" title={target.page_title}>
-                        {target.page_title}
-                      </div>
+                  {/* 伪装特性标签 */}
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '14px' }}>
+                    <span className="badge badge-success">TLS 1.3</span>
+                    <span className="badge badge-success">X25519</span>
+                    <span className="badge badge-success">H2</span>
+                    {!target.is_cdn && <span className="badge badge-global">无 CDN (源站直连)</span>}
+                    {target.tags?.includes('cert_renew_delayed') && (
+                      <span className="badge badge-warning" title="证书剩余不足30天且尚未自动续期">
+                        疑似未自动续期
+                      </span>
+                    )}
+                    {target.is_default_page && (
+                      <span className="badge badge-warning">{target.default_page_type || 'Nginx'} 默认页</span>
                     )}
                   </div>
-
-                  <div className="score-badge">
-                    <span className="score-number">{target.score}</span>
-                    <span className="score-label">匹配权重分</span>
-                  </div>
                 </div>
 
-                <div className="card-specs">
-                  <div className="spec-item">
-                    <span className="spec-label">ASN 归属</span>
-                    <span className="spec-value" style={{ color: isSameASN ? 'var(--accent-fire)' : 'var(--text-main)' }}>
-                      {target.asn || '未知'} ({target.country || 'N/A'})
-                    </span>
-                  </div>
-                  <div className="spec-item">
-                    <span className="spec-label">TLS 握手延时</span>
-                    <span
-                      className="spec-value"
-                      style={{
-                        color:
-                          target.handshake_ms < 60
-                            ? 'var(--accent-emerald)'
-                            : target.handshake_ms < 150
-                            ? 'var(--accent-cyan)'
-                            : target.handshake_ms < 250
-                            ? 'var(--accent-amber)'
-                            : 'var(--text-main)',
-                      }}
+                <div className="card-footer">
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-open-web"
+                      style={{ padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '5px' }}
+                      onClick={(e) => openDomainUrl(target.domain, e)}
+                      title="在浏览器新标签页直接打开域名网页"
                     >
-                      {target.handshake_ms} ms
-                    </span>
-                  </div>
-                  <div className="spec-item">
-                    <span className="spec-label">证书有效期</span>
-                    <span
-                      className="spec-value"
-                      style={{
-                        color: target.cert_days <= 0 ? 'var(--accent-crimson)' : target.cert_days < 30 ? 'var(--accent-amber)' : 'inherit',
-                      }}
-                      title={target.cert_expire_at ? `到期时间: ${new Date(target.cert_expire_at).toLocaleString()}` : undefined}
+                      <ExternalLink size={13} />
+                      <span>打开网页</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ padding: '6px 10px', fontSize: '0.8rem' }}
+                      onClick={() => copyDomain(target.domain)}
+                      title="复制域名"
                     >
-                      {target.cert_days <= 0 ? '已过期' : `${target.cert_days} 天`}
-                    </span>
+                      {copiedDomain === target.domain ? <Check size={14} /> : <Copy size={14} />}
+                      <span>{copiedDomain === target.domain ? '已复制' : '复制'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      style={{ padding: '6px 10px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                      onClick={() => setSelectedDetailTarget(target)}
+                      title="查看目标完整详细信息"
+                    >
+                      <Info size={14} />
+                      <span>详情</span>
+                    </button>
                   </div>
-                  <div className="spec-item">
-                    <span className="spec-label">HTTP 状态</span>
-                    <span className="spec-value">
-                      {target.status_code > 0 ? (
-                        <span style={{ color: target.status_code < 400 ? 'var(--accent-emerald)' : 'var(--accent-amber)' }}>
-                          {target.status_code} OK
+
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    style={{ padding: '6px 14px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '5px' }}
+                    onClick={() => setSelectedTarget(target)}
+                  >
+                    <Zap size={14} />
+                    <span>一键生成配置</span>
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* 结果视图：紧凑列表模式 */}
+      {viewMode === 'list' && displayedTargets.length > 0 && (
+        <div className="targets-list-view">
+          <table className="targets-list-table">
+            <thead>
+              <tr>
+                <th style={{ width: '38px', textAlign: 'center' }}></th>
+                <th>伪装域名 / 网站标题</th>
+                <th>归属 ASN / 国家</th>
+                <th>握手延时</th>
+                <th>证书状态 / 有效期</th>
+                <th>HTTP 状态</th>
+                <th style={{ textAlign: 'right' }}>快捷操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {displayedTargets.map((target) => {
+                const isSameASN = target.match_level === 'same_asn';
+                const isSameCountry = target.match_level === 'same_country';
+                const isFreshlyScanned = target.domain === latestDiscoveredDomain || target.is_new_scan;
+                const isExpanded = expandedDomains.has(target.domain);
+
+                return (
+                  <Fragment key={target.domain}>
+                    <tr
+                      className={`list-row-item ${isSameASN ? 'highlight-asn' : ''} ${isExpanded ? 'is-expanded' : ''}`}
+                      onClick={() => setSelectedDetailTarget(target)}
+                      title="点击列表项显示详细信息"
+                    >
+                      {/* 展开/收起行内详情触发图标 */}
+                      <td
+                        style={{ textAlign: 'center', width: '38px' }}
+                        onClick={(e) => toggleExpandDomain(target.domain, e)}
+                      >
+                        <button
+                          type="button"
+                          className="btn-icon"
+                          style={{
+                            padding: '4px',
+                            background: 'transparent',
+                            border: 'none',
+                            color: isExpanded ? 'var(--accent-cyan)' : 'var(--text-sub)',
+                            cursor: 'pointer',
+                          }}
+                          title={isExpanded ? '收起行内详情' : '展开行内详情'}
+                        >
+                          {isExpanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                        </button>
+                      </td>
+
+                      {/* 域名与标题 */}
+                      <td>
+                        <div className="list-domain-cell">
+                          <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)', fontSize: '0.92rem' }}>
+                            {target.domain}
+                          </span>
+
+                          {isSameASN ? (
+                            <span className="badge badge-same-asn" style={{ fontSize: '0.68rem', padding: '1px 6px' }}>
+                              <Flame size={10} />
+                              同 ASN
+                            </span>
+                          ) : isSameCountry ? (
+                            <span className="badge badge-same-country" style={{ fontSize: '0.68rem', padding: '1px 6px' }}>
+                              <Globe size={10} />
+                              同国家
+                            </span>
+                          ) : (
+                            <span className="badge badge-global" style={{ fontSize: '0.68rem', padding: '1px 6px' }}>
+                              全球
+                            </span>
+                          )}
+
+                          {isFreshlyScanned && (
+                            <span className="badge badge-live-scan" style={{ fontSize: '0.68rem', padding: '1px 6px' }}>
+                              新扫
+                            </span>
+                          )}
+
+                          <span className="star-rating" style={{ fontSize: '0.78rem' }}>
+                            {'★'.repeat(target.stars)}
+                          </span>
+                        </div>
+
+                        {target.page_title && (
+                          <div className="list-domain-title" title={target.page_title}>
+                            {target.page_title}
+                          </div>
+                        )}
+                      </td>
+
+                      {/* ASN 与国家 */}
+                      <td>
+                        <span style={{ color: isSameASN ? 'var(--accent-fire)' : 'var(--text-main)', fontWeight: isSameASN ? 600 : 400 }}>
+                          {target.asn || '未知'} ({target.country || 'N/A'})
                         </span>
-                      ) : (
-                        '443 直出'
-                      )}
-                    </span>
-                  </div>
-                </div>
+                      </td>
 
-                {/* 伪装特性标签 */}
-                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '14px' }}>
-                  <span className="badge badge-success">TLS 1.3</span>
-                  <span className="badge badge-success">X25519</span>
-                  <span className="badge badge-success">H2</span>
-                  {!target.is_cdn && <span className="badge badge-global">无 CDN (源站直连)</span>}
-                  {target.tags?.includes('cert_renew_delayed') && (
-                    <span className="badge badge-warning" title="证书剩余不足30天且尚未自动续期">
-                      疑似未自动续期
-                    </span>
-                  )}
-                  {target.is_default_page && (
-                    <span className="badge badge-warning">{target.default_page_type || 'Nginx'} 默认页</span>
-                  )}
-                </div>
-              </div>
+                      {/* 握手延迟 */}
+                      <td>
+                        <span
+                          className="font-mono"
+                          style={{
+                            fontWeight: 600,
+                            color:
+                              target.handshake_ms < 60
+                                ? 'var(--accent-emerald)'
+                                : target.handshake_ms < 150
+                                ? 'var(--accent-cyan)'
+                                : target.handshake_ms < 250
+                                ? 'var(--accent-amber)'
+                                : 'var(--text-main)',
+                          }}
+                        >
+                          {target.handshake_ms} ms
+                        </span>
+                      </td>
 
-              <div className="card-footer">
-                <button
-                  className="btn btn-secondary"
-                  style={{ padding: '6px 12px', fontSize: '0.8rem' }}
-                  onClick={() => copyDomain(target.domain)}
-                >
-                  {copiedDomain === target.domain ? <Check size={14} /> : <Copy size={14} />}
-                  {copiedDomain === target.domain ? '已复制' : '复制域名'}
-                </button>
+                      {/* 证书天数与到期 */}
+                      <td>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span
+                            style={{
+                              fontWeight: 600,
+                              fontFamily: 'var(--font-mono)',
+                              color:
+                                target.cert_days <= 0
+                                  ? 'var(--accent-rose)'
+                                  : target.cert_days < 30
+                                  ? 'var(--accent-amber)'
+                                  : 'var(--accent-emerald)',
+                            }}
+                          >
+                            {target.cert_days <= 0 ? '已过期' : `${target.cert_days} 天`}
+                          </span>
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-sub)' }}>
+                            {formatCertExpireDate(target.cert_expire_at, target.cert_days)}
+                          </span>
+                        </div>
+                      </td>
 
-                <button
-                  className="btn btn-primary"
-                  style={{ padding: '6px 14px', fontSize: '0.8rem' }}
-                  onClick={() => setSelectedTarget(target)}
-                >
-                  <Zap size={14} />
-                  一键生成配置
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+                      {/* HTTP 状态 */}
+                      <td>
+                        {target.status_code > 0 ? (
+                          <span
+                            className="badge"
+                            style={{
+                              background: target.status_code < 400 ? 'rgba(16, 185, 129, 0.12)' : 'rgba(245, 158, 11, 0.12)',
+                              color: target.status_code < 400 ? 'var(--accent-emerald)' : 'var(--accent-amber)',
+                              border: `1px solid ${target.status_code < 400 ? 'rgba(16, 185, 129, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`,
+                              fontSize: '0.72rem',
+                            }}
+                          >
+                            {target.status_code} OK
+                          </span>
+                        ) : (
+                          <span className="badge badge-global" style={{ fontSize: '0.72rem' }}>443 直通</span>
+                        )}
+                      </td>
+
+                      {/* 列表行操作按钮组 */}
+                      <td>
+                        <div className="list-actions-cell">
+                          {/* 列表上的打开网页按钮：点击直接打开域名网页（新标签） */}
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm btn-open-web"
+                            onClick={(e) => openDomainUrl(target.domain, e)}
+                            title="在浏览器新标签页直接打开域名网页"
+                          >
+                            <ExternalLink size={13} />
+                            <span>打开网页</span>
+                          </button>
+
+                          {/* 一键配置按钮 */}
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedTarget(target);
+                            }}
+                            title="一键生成 REALITY 配置"
+                          >
+                            <Zap size={13} />
+                            <span>配置</span>
+                          </button>
+
+                          {/* 复制域名按钮 */}
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              copyDomain(target.domain);
+                            }}
+                            title="复制域名"
+                          >
+                            {copiedDomain === target.domain ? <Check size={13} style={{ color: 'var(--accent-emerald)' }} /> : <Copy size={13} />}
+                          </button>
+
+                          {/* 详情弹窗按钮 */}
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedDetailTarget(target);
+                            }}
+                            title="查看详细信息"
+                          >
+                            <Info size={13} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+
+                    {/* 行内可折叠展开的详细信息 */}
+                    {isExpanded && (
+                      <tr className="list-expanded-row">
+                        <td colSpan={7}>
+                          <div className="list-expanded-content">
+                            <div className="inline-detail-grid">
+                              {/* 1. 域名 */}
+                              <div className="inline-detail-item">
+                                <div className="inline-detail-label">
+                                  <Globe size={12} style={{ color: 'var(--accent-cyan)' }} />
+                                  <span>域名 (Domain)</span>
+                                </div>
+                                <div className="inline-detail-value font-mono">
+                                  {target.domain}
+                                </div>
+                              </div>
+
+                              {/* 2. 标题 */}
+                              <div className="inline-detail-item" style={{ gridColumn: 'span 2' }}>
+                                <div className="inline-detail-label">
+                                  <FileText size={12} style={{ color: 'var(--accent-amber)' }} />
+                                  <span>网站标题 (Title)</span>
+                                </div>
+                                <div className="inline-detail-value" style={{ fontWeight: 500, fontSize: '0.86rem' }}>
+                                  {target.page_title || '（未获取到标题 / 443 协议直通）'}
+                                </div>
+                              </div>
+
+                              {/* 3. 证书剩余时间 */}
+                              <div className="inline-detail-item">
+                                <div className="inline-detail-label">
+                                  <Clock size={12} style={{ color: 'var(--accent-emerald)' }} />
+                                  <span>证书剩余时间</span>
+                                </div>
+                                <div
+                                  className="inline-detail-value font-mono"
+                                  style={{
+                                    color:
+                                      target.cert_days <= 0
+                                        ? 'var(--accent-rose)'
+                                        : target.cert_days < 30
+                                        ? 'var(--accent-amber)'
+                                        : 'var(--accent-emerald)',
+                                  }}
+                                >
+                                  {target.cert_days <= 0 ? '已过期' : `${target.cert_days} 天`}
+                                </div>
+                              </div>
+
+                              {/* 4. 到期时间 */}
+                              <div className="inline-detail-item">
+                                <div className="inline-detail-label">
+                                  <Calendar size={12} style={{ color: 'var(--accent-fire)' }} />
+                                  <span>到期时间 (Expiration)</span>
+                                </div>
+                                <div className="inline-detail-value font-mono" style={{ fontSize: '0.84rem' }}>
+                                  {formatCertExpireDate(target.cert_expire_at, target.cert_days)}
+                                </div>
+                              </div>
+
+                              {/* 进阶指标: 握手延迟与 IP */}
+                              <div className="inline-detail-item">
+                                <div className="inline-detail-label">
+                                  <Clock size={12} />
+                                  <span>TLS 握手延时 / 解析 IP</span>
+                                </div>
+                                <div className="inline-detail-value font-mono" style={{ fontSize: '0.84rem' }}>
+                                  {target.handshake_ms} ms · {target.ip || '直连'}
+                                </div>
+                              </div>
+
+                              {/* 详情弹窗跳转 */}
+                              <div className="inline-detail-item" style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-end' }}>
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary btn-sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedDetailTarget(target);
+                                  }}
+                                  style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.78rem' }}
+                                >
+                                  <Info size={13} />
+                                  <span>打开完整详情弹窗</span>
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {!summary && rawTargets.length === 0 && !loading && (
         <div
@@ -1603,6 +2034,13 @@ export const SmartFinder = () => {
           </p>
         </div>
       )}
+
+      {/* 目标资产详细信息弹窗 */}
+      <TargetDetailModal
+        target={selectedDetailTarget}
+        onClose={() => setSelectedDetailTarget(null)}
+        onOpenConfig={(target) => setSelectedTarget(target)}
+      />
 
       {/* 导出配置弹窗 */}
       <ConfigModal
