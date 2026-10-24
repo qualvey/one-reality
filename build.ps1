@@ -17,6 +17,50 @@ if (-not (Test-Path $DistDir)) {
     Get-ChildItem -Path $DistDir -Filter "reality-checker*" | Remove-Item -Force -ErrorAction SilentlyContinue
 }
 
+# 准备编译时内置资产（Country.mmdb）
+$AssetsDir = Join-Path $RootDir "internal\data\assets"
+if (-not (Test-Path $AssetsDir)) {
+    New-Item -ItemType Directory -Path $AssetsDir | Out-Null
+}
+$MmdbTarget = Join-Path $AssetsDir "Country.mmdb"
+
+function Download-MMDB {
+    Write-Host "Checking and preparing Country.mmdb for embedding..."
+    $tmpFile = "$MmdbTarget.tmp"
+    $urls = @(
+        "https://raw.githubusercontent.com/Loyalsoldier/geoip/release/Country.mmdb",
+        "https://github.com/Loyalsoldier/geoip/releases/latest/download/Country.mmdb"
+    )
+
+    $downloaded = $false
+    foreach ($url in $urls) {
+        Write-Host "Downloading $url..."
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $tmpFile -TimeoutSec 30
+            Move-Item -Path $tmpFile -Destination $MmdbTarget -Force
+            Write-Host "Country.mmdb downloaded and updated successfully."
+            $downloaded = $true
+            break
+        } catch {
+            Write-Warning "Failed to download Country.mmdb from $url: $_"
+            if (Test-Path $tmpFile) { Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    if (-not $downloaded) {
+        if ((Test-Path $MmdbTarget) -and (Get-Item $MmdbTarget).Length -gt 0) {
+            Write-Warning "Download Country.mmdb failed, using existing embedded version at $MmdbTarget."
+        } elseif ((Test-Path (Join-Path $RootDir "data\Country.mmdb")) -and (Get-Item (Join-Path $RootDir "data\Country.mmdb")).Length -gt 0) {
+            Write-Warning "Download Country.mmdb failed, copying local data\Country.mmdb to $MmdbTarget."
+            Copy-Item (Join-Path $RootDir "data\Country.mmdb") $MmdbTarget -Force
+        } else {
+            throw "Cannot find or download Country.mmdb for embedding"
+        }
+    }
+}
+
+Download-MMDB
+
 function Build-Target([string]$GoOS, [string]$GoArch, [string]$Extension) {
     $baseName = "reality-checker-$GoOS-$GoArch"
     $name = "$baseName$Extension"
