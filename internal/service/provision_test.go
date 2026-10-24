@@ -212,3 +212,98 @@ func TestProvisionService_GetSmartTargetsSummary(t *testing.T) {
 	}
 }
 
+func TestProvisionService_CertRenewalLazyRecheck(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_cert_lazy.db")
+	store, err := storage.NewTargetStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewTargetStore failed: %v", err)
+	}
+	defer store.Close()
+
+	// 准备两个同 ASN (AS13335) 的资产:
+	// target1: 正常健康资产，证书充足 80 天
+	// target2: 证书临期（剩余 20 天），且带有 TagCertRenewDelayed 标签
+	expireNormal := time.Now().Add(80 * 24 * time.Hour).Truncate(time.Second)
+	expirePending := time.Now().Add(20 * 24 * time.Hour).Truncate(time.Second)
+
+	_ = store.UpsertTargets([]*types.TargetRecord{
+		{
+			Domain:        "healthy.cloudflare.com",
+			ASN:           "AS13335",
+			Country:       "US",
+			IP:            "1.1.1.1",
+			Port:          443,
+			HandshakeMS:   30,
+			CertDays:      80,
+			CertExpireAt:  expireNormal,
+			StatusCode:    200,
+			Stars:         5,
+			IsActive:      true,
+			LastCheckedAt: time.Now(),
+		},
+		{
+			Domain:        "risky.cloudflare.com",
+			ASN:           "AS13335",
+			Country:       "US",
+			IP:            "1.0.0.1",
+			Port:          443,
+			HandshakeMS:   30,
+			CertDays:      20,
+			CertExpireAt:  expirePending,
+			Tags:          []string{types.TagCertRenewDelayed},
+			StatusCode:    200,
+			Stars:         5,
+			IsActive:      true,
+			LastCheckedAt: time.Now(), // 刚刚检测过，测试冷却防抖下打分降权
+		},
+	})
+
+	mockASN := &mockASNResolver{
+		asn:      13335,
+		prefixes: []string{"1.1.1.0/24"},
+	}
+
+	svc := NewProvisionService(store, nil, mockASN, nil)
+
+	ranked, _, err := svc.GetSmartTargets(context.Background(), ProvisionRequest{
+		IP:      "1.1.1.1",
+		Country: "US",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("GetSmartTargets failed: %v", err)
+	}
+
+	if len(ranked) != 2 {
+		t.Fatalf("expected 2 ranked targets, got %d", len(ranked))
+	}
+
+	// 验证健康资产排在第一名 (得益于无 TagCertRenewDelayed 惩罚且有 >30 天奖励)
+	first := ranked[0]
+	if first.Domain != "healthy.cloudflare.com" {
+		t.Errorf("expected healthy.cloudflare.com to rank first, got %s", first.Domain)
+	}
+	if first.CertDays < 79 || first.CertDays > 81 {
+		t.Errorf("expected ~80 cert days, got %d", first.CertDays)
+	}
+	if first.CertExpireAt == nil {
+		t.Errorf("expected non-nil CertExpireAt")
+	}
+
+	// 验证临期未续期资产排在第二名，且扣除了对应分数
+	second := ranked[1]
+	if second.Domain != "risky.cloudflare.com" {
+		t.Errorf("expected risky.cloudflare.com to rank second, got %s", second.Domain)
+	}
+	if second.Score >= first.Score {
+		t.Errorf("expected risky target score (%d) to be strictly lower than healthy score (%d)", second.Score, first.Score)
+	}
+	if len(second.Tags) == 0 || second.Tags[0] != types.TagCertRenewDelayed {
+		t.Errorf("expected TagCertRenewDelayed tag on second target, got %v", second.Tags)
+	}
+	if second.CertDays < 19 || second.CertDays > 21 {
+		t.Errorf("expected ~20 cert days, got %d", second.CertDays)
+	}
+}
+

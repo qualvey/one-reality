@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
 	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -38,20 +40,22 @@ type ProvisionRequest struct {
 
 // TargetItem 标准化优质目标输出
 type TargetItem struct {
-	Source          string    `json:"source"` // "cache" 或 "scan"
-	Domain          string    `json:"domain"`
-	IP              string    `json:"ip"`
-	ASN             string    `json:"asn"`
-	Country         string    `json:"country"`
-	Stars           int       `json:"stars"`
-	HandshakeMS     int64     `json:"handshake_ms"`
-	CertDays        int       `json:"cert_days"`
-	StatusCode      int       `json:"status_code"`
-	PageTitle       string    `json:"page_title,omitempty"`
-	IsCDN           bool      `json:"is_cdn"`
-	IsDefaultPage   bool      `json:"is_default_page"`
-	DefaultPageType string    `json:"default_page_type,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
+	Source          string     `json:"source"` // "cache" 或 "scan"
+	Domain          string     `json:"domain"`
+	IP              string     `json:"ip"`
+	ASN             string     `json:"asn"`
+	Country         string     `json:"country"`
+	Stars           int        `json:"stars"`
+	HandshakeMS     int64      `json:"handshake_ms"`
+	CertDays        int        `json:"cert_days"`
+	CertExpireAt    *time.Time `json:"cert_expire_at,omitempty"`
+	Tags            []string   `json:"tags,omitempty"`
+	StatusCode      int        `json:"status_code"`
+	PageTitle       string     `json:"page_title,omitempty"`
+	IsCDN           bool       `json:"is_cdn"`
+	IsDefaultPage   bool       `json:"is_default_page"`
+	DefaultPageType string     `json:"default_page_type,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
 }
 
 // RankedTargetItem 经过智能动态加权评分的目标资产
@@ -299,6 +303,16 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 			seenDomains[rec.Domain] = true
 			fromCacheCount++
 
+			// 临期证书按需懒探测: 如果同 ASN 缓存记录证书剩余 < 30 天，且距离上次检测超过 10 分钟，执行即时复查
+			if rec.GetRemainingDays() < 30 && time.Since(rec.LastCheckedAt) > 10*time.Minute {
+				rec, _ = s.RecheckTargetCert(ctx, rec)
+			}
+
+			var certExpirePtr *time.Time
+			if !rec.CertExpireAt.IsZero() {
+				certExpirePtr = &rec.CertExpireAt
+			}
+
 			item := TargetItem{
 				Source:          "cache",
 				Domain:          rec.Domain,
@@ -307,7 +321,9 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 				Country:         rec.Country,
 				Stars:           rec.Stars,
 				HandshakeMS:     rec.HandshakeMS,
-				CertDays:        rec.CertDays,
+				CertDays:        rec.GetRemainingDays(),
+				CertExpireAt:    certExpirePtr,
+				Tags:            rec.Tags,
 				StatusCode:      rec.StatusCode,
 				PageTitle:       rec.PageTitle,
 				IsCDN:           rec.IsCDN,
@@ -403,6 +419,11 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 			fromScanCount++
 
 			rec := storage.DetectionResultToRecord(res, asnStr, country, ip, stars)
+			var certExpirePtr *time.Time
+			if !rec.CertExpireAt.IsZero() {
+				certExpirePtr = &rec.CertExpireAt
+			}
+
 			item := TargetItem{
 				Source:          "scan",
 				Domain:          rec.Domain,
@@ -411,7 +432,9 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 				Country:         rec.Country,
 				Stars:           rec.Stars,
 				HandshakeMS:     rec.HandshakeMS,
-				CertDays:        rec.CertDays,
+				CertDays:        rec.GetRemainingDays(),
+				CertExpireAt:    certExpirePtr,
+				Tags:            rec.Tags,
 				StatusCode:      rec.StatusCode,
 				PageTitle:       rec.PageTitle,
 				IsCDN:           rec.IsCDN,
@@ -608,6 +631,21 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 			continue
 		}
 
+		recASNNorm := strings.ToUpper(strings.TrimPrefix(rec.ASN, "AS"))
+		isSameASN := (targetASNNorm != "" && recASNNorm != "" && targetASNNorm == recASNNorm)
+		isSameCountry := (targetCountry != "" && strings.EqualFold(rec.Country, targetCountry))
+
+		// 同 ASN 临期证书按需懒探测:
+		// 当查询结果中包含同 ASN 记录，且证书剩余时间 < 30 天，且冷却防抖时间已过，发起探测并刷新状态
+		if isSameASN && rec.GetRemainingDays() < 30 && time.Since(rec.LastCheckedAt) > 10*time.Minute {
+			rec, _ = s.RecheckTargetCert(ctx, rec)
+		}
+
+		var certExpirePtr *time.Time
+		if !rec.CertExpireAt.IsZero() {
+			certExpirePtr = &rec.CertExpireAt
+		}
+
 		item := TargetItem{
 			Source:          "cache",
 			Domain:          rec.Domain,
@@ -616,7 +654,9 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 			Country:         rec.Country,
 			Stars:           rec.Stars,
 			HandshakeMS:     rec.HandshakeMS,
-			CertDays:        rec.CertDays,
+			CertDays:        rec.GetRemainingDays(),
+			CertExpireAt:    certExpirePtr,
+			Tags:            rec.Tags,
 			StatusCode:      rec.StatusCode,
 			PageTitle:       rec.PageTitle,
 			IsCDN:           rec.IsCDN,
@@ -628,10 +668,6 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 		// 3. 动态智能加权打分模型
 		score := 0
 		matchLevel := "global"
-
-		recASNNorm := strings.ToUpper(strings.TrimPrefix(rec.ASN, "AS"))
-		isSameASN := (targetASNNorm != "" && recASNNorm != "" && targetASNNorm == recASNNorm)
-		isSameCountry := (targetCountry != "" && strings.EqualFold(rec.Country, targetCountry))
 
 		if isSameASN {
 			matchLevel = "same_asn"
@@ -658,8 +694,13 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 		}
 
 		// 证书充足度奖励 (>30天 +20分)
-		if rec.CertDays >= 30 {
+		if rec.GetRemainingDays() >= 30 {
 			score += 20
+		}
+
+		// 疑似未自动续期惩罚 (若进入30天续期窗口但仍未自动续期，扣除推荐权重，避免高危临期域名置顶)
+		if rec.HasTag(types.TagCertRenewDelayed) {
+			score -= 100
 		}
 
 		// 避免非安全状态码
@@ -691,6 +732,91 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 	}
 
 	return ranked, summary, nil
+}
+
+// RecheckTargetCert 对目标资产执行快速 TLS 握手复查证书有效性与续期状态
+// 返回更新后的 TargetRecord 以及是否发生了实质性状态变化 (renewed/flagged)
+func (s *ProvisionService) RecheckTargetCert(ctx context.Context, target *types.TargetRecord) (*types.TargetRecord, bool) {
+	if target == nil || target.Domain == "" {
+		return target, false
+	}
+
+	port := target.Port
+	if port <= 0 {
+		port = 443
+	}
+	host := target.IP
+	if host == "" {
+		host = target.Domain
+	}
+	address := net.JoinHostPort(host, strconv.Itoa(port))
+
+	// 设置快速超时的独立探测 Context (最长 2 秒，避免阻塞外部请求)
+	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	dialer := &net.Dialer{Timeout: 1500 * time.Millisecond}
+	tcpConn, err := dialer.DialContext(probeCtx, "tcp", address)
+	if err != nil {
+		return target, false
+	}
+	if tc, ok := tcpConn.(*net.TCPConn); ok {
+		_ = tc.SetLinger(0)
+	}
+
+	tlsCfg := &tls.Config{
+		ServerName:         target.Domain,
+		InsecureSkipVerify: true,
+		NextProtos:         []string{"h2", "http/1.1"},
+		CurvePreferences:   []tls.CurveID{tls.X25519, tls.CurveP256},
+	}
+	tlsConn := tls.Client(tcpConn, tlsCfg)
+	defer tlsConn.Close()
+
+	start := time.Now()
+	if err := tlsConn.HandshakeContext(probeCtx); err != nil {
+		return target, false
+	}
+	handshakeMS := time.Since(start).Milliseconds()
+
+	state := tlsConn.ConnectionState()
+	if len(state.PeerCertificates) == 0 {
+		return target, false
+	}
+
+	leaf := state.PeerCertificates[0]
+	remoteExpire := leaf.NotAfter
+	remoteDays := int(time.Until(remoteExpire).Hours() / 24)
+	if remoteDays < 0 {
+		remoteDays = 0
+	}
+
+	now := time.Now()
+	target.LastCheckedAt = now
+	target.HandshakeMS = handshakeMS
+
+	// 分支判断:
+	// 1. 如果远端证书已续订 (到期时间比原有记录更晚，或剩余天数恢复至 30 天以上)
+	if (!target.CertExpireAt.IsZero() && remoteExpire.After(target.CertExpireAt.Add(24*time.Hour))) || remoteDays >= 30 {
+		target.CertExpireAt = remoteExpire
+		target.CertDays = remoteDays
+		target.RemoveTag(types.TagCertRenewDelayed)
+		if s.store != nil {
+			_ = s.store.UpdateTargetCertRenewal(target.Domain, remoteExpire, remoteDays, target.Tags, handshakeMS)
+		}
+		logger.Info("🔄 [证书续期检测] 目标 %s 证书已成功续期！剩余天数: %d天", target.Domain, remoteDays)
+		return target, true
+	}
+
+	// 2. 远端证书未变，且剩余天数依然 < 30 天 (疑似未自动续期)
+	target.CertExpireAt = remoteExpire
+	target.CertDays = remoteDays
+	target.AddTag(types.TagCertRenewDelayed)
+	if s.store != nil {
+		_ = s.store.UpdateTargetCertRenewal(target.Domain, remoteExpire, remoteDays, target.Tags, handshakeMS)
+	}
+	logger.Warn("⚠️ [证书续期检测] 目标 %s 处于临期窗口 (<30天)，且远端尚未自动续期 (剩余 %d天)，已标记", target.Domain, remoteDays)
+	return target, true
 }
 
 // CheckSingleDomain 在线即时检测单个域名/IP 并持久化至资产库
