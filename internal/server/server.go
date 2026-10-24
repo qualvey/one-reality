@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"RealityChecker/internal/logger"
 	"RealityChecker/internal/service"
 	"RealityChecker/internal/types"
+	"RealityChecker/web"
 )
 
 
@@ -70,22 +72,50 @@ func NewTargetServer(cfg ServerConfig, svc *service.ProvisionService) *TargetSer
 	mux.HandleFunc("/api/targets/", ts.handleTargetItemAction)
 	mux.HandleFunc("/api/asns", ts.handleASNs)
 
-	// 静态文件支持 (如果存在 web/dist 前端静态产物，直接托管)
+	// 静态文件支持 (优先本地磁盘 web/dist 便于开发，回退至内嵌 go:embed 静态资源实现单二进制独立分发)
 	webDistPath := "web/dist"
+	var staticFS http.FileSystem
+	var indexData []byte
+
 	if fi, err := os.Stat(webDistPath); err == nil && fi.IsDir() {
-		fs := http.FileServer(http.Dir(webDistPath))
+		staticFS = http.Dir(webDistPath)
+		indexData, _ = os.ReadFile(filepath.Join(webDistPath, "index.html"))
+	} else if web.HasDist() {
+		staticFS = http.FS(web.DistFS())
+		if f, err := web.DistFS().Open("index.html"); err == nil {
+			indexData, _ = io.ReadAll(f)
+			_ = f.Close()
+		}
+	}
+
+	if staticFS != nil {
+		fileServer := http.FileServer(staticFS)
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			if strings.HasPrefix(r.URL.Path, "/api/") {
 				http.NotFound(w, r)
 				return
 			}
-			// 单页应用 SPA 路由回退
-			filePath := filepath.Join(webDistPath, filepath.Clean(r.URL.Path))
-			if _, err := os.Stat(filePath); os.IsNotExist(err) {
-				http.ServeFile(w, r, filepath.Join(webDistPath, "index.html"))
+
+			// SPA 单页路由支持: 检查文件是否存在
+			cleanPath := strings.TrimPrefix(filepath.Clean(r.URL.Path), "/")
+			if cleanPath == "" || cleanPath == "." {
+				cleanPath = "index.html"
+			}
+
+			f, err := staticFS.Open(cleanPath)
+			if err != nil {
+				if len(indexData) > 0 {
+					w.Header().Set("Content-Type", "text/html; charset=utf-8")
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write(indexData)
+					return
+				}
+				http.NotFound(w, r)
 				return
 			}
-			fs.ServeHTTP(w, r)
+			_ = f.Close()
+
+			fileServer.ServeHTTP(w, r)
 		})
 	}
 

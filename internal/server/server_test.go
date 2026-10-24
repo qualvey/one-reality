@@ -313,3 +313,31 @@ func TestServer_AuthMiddleware(t *testing.T) {
 	}
 }
 
+func TestServer_StaticAssetFallback(t *testing.T) {
+	ts, _ := setupTestServer(t)
+
+	// 1. GET / 访问主页应返回 200 OK
+	reqRoot := httptest.NewRequest(http.MethodGet, "/", nil)
+	wRoot := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(wRoot, reqRoot)
+	if wRoot.Code != http.StatusOK {
+		t.Errorf("expected 200 for root index, got %d", wRoot.Code)
+	}
+
+	// 2. GET /spa-route SPA 路由回退应返回 200 OK
+	reqSPA := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	wSPA := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(wSPA, reqSPA)
+	if wSPA.Code != http.StatusOK {
+		t.Errorf("expected 200 for SPA route fallback, got %d", wSPA.Code)
+	}
+
+	// 3. GET /api/nonexistent API 路由不应回退到 index.html，而应返回 404
+	reqAPI := httptest.NewRequest(http.MethodGet, "/api/nonexistent", nil)
+	wAPI := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(wAPI, reqAPI)
+	if wAPI.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for nonexistent API route, got %d", wAPI.Code)
+	}
+}
+
