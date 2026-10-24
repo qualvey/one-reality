@@ -498,5 +498,161 @@ func TestTargetStore_CertExpireAtAndTags(t *testing.T) {
 	}
 }
 
+func TestQueryTargets_FilterConditions(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test_filter_query.db")
+	store, err := NewTargetStore(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	boolTrue := true
+	boolFalse := false
+
+	targets := []*types.TargetRecord{
+		{
+			Domain:        "clean.example.com",
+			ASN:           "AS100",
+			Country:       "US",
+			IP:            "1.1.1.1",
+			HandshakeMS:   45,
+			CertDays:      30,
+			StatusCode:    200,
+			IsCDN:         false,
+			IsHot:         false,
+			IsDefaultPage: false,
+			Stars:         4,
+			IsActive:      true,
+		},
+		{
+			Domain:        "cdn.example.com",
+			ASN:           "AS100",
+			Country:       "US",
+			IP:            "1.1.1.2",
+			HandshakeMS:   30,
+			CertDays:      60,
+			StatusCode:    200,
+			IsCDN:         true,
+			IsHot:         false,
+			IsDefaultPage: false,
+			Stars:         3,
+			IsActive:      true,
+		},
+		{
+			Domain:        "default.example.com",
+			ASN:           "AS100",
+			Country:       "US",
+			IP:            "1.1.1.3",
+			HandshakeMS:   60,
+			CertDays:      20,
+			StatusCode:    200,
+			IsCDN:         false,
+			IsHot:         false,
+			IsDefaultPage: true,
+			Stars:         3,
+			IsActive:      true,
+		},
+		{
+			Domain:        "forbidden.example.com",
+			ASN:           "AS100",
+			Country:       "US",
+			IP:            "1.1.1.4",
+			HandshakeMS:   80,
+			CertDays:      15,
+			StatusCode:    403,
+			IsCDN:         false,
+			IsHot:         false,
+			IsDefaultPage: false,
+			Stars:         3,
+			IsActive:      true,
+		},
+		{
+			Domain:        "slow.example.com",
+			ASN:           "AS100",
+			Country:       "US",
+			IP:            "1.1.1.5",
+			HandshakeMS:   600,
+			CertDays:      40,
+			StatusCode:    200,
+			IsCDN:         false,
+			IsHot:         false,
+			IsDefaultPage: false,
+			Stars:         2,
+			IsActive:      true,
+		},
+	}
+
+	for _, tr := range targets {
+		if err := store.UpsertTarget(tr); err != nil {
+			t.Fatalf("failed to insert %s: %v", tr.Domain, err)
+		}
+	}
+
+	// 1. 测试 RequireNoCDN
+	resNoCDN, totalNoCDN, err := store.QueryTargets(types.TargetQueryOptions{
+		RequireNoCDN: &boolTrue,
+	})
+	if err != nil {
+		t.Fatalf("QueryTargets with RequireNoCDN failed: %v", err)
+	}
+	if totalNoCDN != 4 {
+		t.Errorf("expected 4 non-CDN targets, got %d", totalNoCDN)
+	}
+	for _, item := range resNoCDN {
+		if item.IsCDN {
+			t.Errorf("unexpected CDN target in resNoCDN: %s", item.Domain)
+		}
+	}
+
+	// 2. 测试 RequireNoDefaultPage
+	_, totalNoDefault, err := store.QueryTargets(types.TargetQueryOptions{
+		RequireNoDefaultPage: &boolTrue,
+	})
+	if err != nil {
+		t.Fatalf("QueryTargets with RequireNoDefaultPage failed: %v", err)
+	}
+	if totalNoDefault != 4 {
+		t.Errorf("expected 4 non-default targets, got %d", totalNoDefault)
+	}
+
+	// 3. 测试 MaxHandshakeMS (<= 100ms)
+	_, totalFast, err := store.QueryTargets(types.TargetQueryOptions{
+		MaxHandshakeMS: 100,
+	})
+	if err != nil {
+		t.Fatalf("QueryTargets with MaxHandshakeMS failed: %v", err)
+	}
+	if totalFast != 4 {
+		t.Errorf("expected 4 fast targets (<=100ms), got %d", totalFast)
+	}
+
+	// 4. 测试 ExcludeStatus ([403])
+	_, totalNo403, err := store.QueryTargets(types.TargetQueryOptions{
+		ExcludeStatus: []int{403},
+	})
+	if err != nil {
+		t.Fatalf("QueryTargets with ExcludeStatus failed: %v", err)
+	}
+	if totalNo403 != 4 {
+		t.Errorf("expected 4 targets excluding 403, got %d", totalNo403)
+	}
+
+	// 5. 组合过滤: non-CDN + non-default + status != 403 + handshake <= 100
+	resCombined, totalCombined, err := store.QueryTargets(types.TargetQueryOptions{
+		RequireNoCDN:         &boolTrue,
+		RequireNoDefaultPage: &boolTrue,
+		ExcludeStatus:        []int{403},
+		MaxHandshakeMS:       100,
+	})
+	if err != nil {
+		t.Fatalf("QueryTargets combined failed: %v", err)
+	}
+	if totalCombined != 1 || len(resCombined) != 1 || resCombined[0].Domain != "clean.example.com" {
+		t.Errorf("expected exactly clean.example.com, got %d targets", totalCombined)
+	}
+
+	_ = boolFalse
+}
+
 
 

@@ -517,6 +517,58 @@ func (s *PostgresStore) QueryTargets(opts types.TargetQueryOptions) ([]*types.Ta
 		idx++
 	}
 
+	if opts.RequireNoCDN != nil {
+		cdnVal := 0
+		if !*opts.RequireNoCDN {
+			cdnVal = 1
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("is_cdn = $%d", idx))
+		args = append(args, cdnVal)
+		idx++
+	}
+
+	if opts.RequireNoHot != nil {
+		hotVal := 0
+		if !*opts.RequireNoHot {
+			hotVal = 1
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("is_hot = $%d", idx))
+		args = append(args, hotVal)
+		idx++
+	}
+
+	if opts.RequireNoDefaultPage != nil {
+		defaultVal := 0
+		if !*opts.RequireNoDefaultPage {
+			defaultVal = 1
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("is_default_page = $%d", idx))
+		args = append(args, defaultVal)
+		idx++
+	}
+
+	if opts.MaxHandshakeMS > 0 {
+		whereClauses = append(whereClauses, fmt.Sprintf("handshake_ms > 0 AND handshake_ms <= $%d", idx))
+		args = append(args, opts.MaxHandshakeMS)
+		idx++
+	}
+
+	if opts.MinCertDays > 0 {
+		whereClauses = append(whereClauses, fmt.Sprintf("cert_days >= $%d", idx))
+		args = append(args, opts.MinCertDays)
+		idx++
+	}
+
+	if len(opts.ExcludeStatus) > 0 {
+		placeholders := make([]string, len(opts.ExcludeStatus))
+		for i, code := range opts.ExcludeStatus {
+			placeholders[i] = fmt.Sprintf("$%d", idx)
+			args = append(args, code)
+			idx++
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("status_code NOT IN (%s)", strings.Join(placeholders, ",")))
+	}
+
 	whereSQL := strings.Join(whereClauses, " AND ")
 
 	countQuery := "SELECT COUNT(*) FROM reality_targets WHERE " + whereSQL

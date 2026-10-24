@@ -1172,6 +1172,52 @@ func (s *TargetStore) QueryTargets(opts types.TargetQueryOptions) ([]*types.Targ
 		args = append(args, activeInt)
 	}
 
+	if opts.RequireNoCDN != nil {
+		cdnVal := 0
+		if !*opts.RequireNoCDN {
+			cdnVal = 1
+		}
+		whereClauses = append(whereClauses, "is_cdn = ?")
+		args = append(args, cdnVal)
+	}
+
+	if opts.RequireNoHot != nil {
+		hotVal := 0
+		if !*opts.RequireNoHot {
+			hotVal = 1
+		}
+		whereClauses = append(whereClauses, "is_hot = ?")
+		args = append(args, hotVal)
+	}
+
+	if opts.RequireNoDefaultPage != nil {
+		defaultVal := 0
+		if !*opts.RequireNoDefaultPage {
+			defaultVal = 1
+		}
+		whereClauses = append(whereClauses, "is_default_page = ?")
+		args = append(args, defaultVal)
+	}
+
+	if opts.MaxHandshakeMS > 0 {
+		whereClauses = append(whereClauses, "handshake_ms > 0 AND handshake_ms <= ?")
+		args = append(args, opts.MaxHandshakeMS)
+	}
+
+	if opts.MinCertDays > 0 {
+		whereClauses = append(whereClauses, "cert_days >= ?")
+		args = append(args, opts.MinCertDays)
+	}
+
+	if len(opts.ExcludeStatus) > 0 {
+		placeholders := make([]string, len(opts.ExcludeStatus))
+		for i, code := range opts.ExcludeStatus {
+			placeholders[i] = "?"
+			args = append(args, code)
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("status_code NOT IN (%s)", strings.Join(placeholders, ",")))
+	}
+
 	whereSQL := strings.Join(whereClauses, " AND ")
 
 	// 1. 查询符合条件的总数

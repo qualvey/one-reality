@@ -676,14 +676,20 @@ type CacheStats struct {
 
 // TargetQueryOptions 资产查询过滤条件
 type TargetQueryOptions struct {
-	Keyword  string `json:"keyword"`
-	ASN      string `json:"asn"`
-	Country  string `json:"country"`
-	MinStars int    `json:"min_stars"`
-	IsActive *bool  `json:"is_active"`
-	SortBy   string `json:"sort_by"` // "stars_desc", "handshake_asc", "recent_desc"
-	Page     int    `json:"page"`
-	PageSize int    `json:"page_size"`
+	Keyword              string `json:"keyword"`
+	ASN                  string `json:"asn"`
+	Country              string `json:"country"`
+	MinStars             int    `json:"min_stars"`
+	IsActive             *bool  `json:"is_active"`
+	RequireNoCDN         *bool  `json:"require_no_cdn"`          // 排除 CDN (true: is_cdn=0)
+	RequireNoHot         *bool  `json:"require_no_hot"`          // 排除超级大站 (true: is_hot=0)
+	RequireNoDefaultPage *bool  `json:"require_no_default_page"` // 排除默认返回页 (true: is_default_page=0)
+	MaxHandshakeMS       int64  `json:"max_handshake_ms"`        // 握手延迟上限 (ms)
+	MinCertDays          int    `json:"min_cert_days"`           // 证书剩余天数下限
+	ExcludeStatus        []int  `json:"exclude_status"`          // 排除的 HTTP 状态码
+	SortBy               string `json:"sort_by"`                 // "stars_desc", "handshake_asc", "recent_desc"
+	Page                 int    `json:"page"`
+	PageSize             int    `json:"page_size"`
 }
 
 // TargetStats 资产多维汇总统计
