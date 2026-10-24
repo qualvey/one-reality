@@ -40,6 +40,31 @@
   - **高并发 CLI & 管道流式处理**：原生支持 `reality-checker pipe` 管道批量验证与 `Ctrl+C` 平滑中断输出。
 ---
 
+## ⚡ 一键安装与 Systemd 守护进程部署 (NanoPi / VPS)
+
+支持所有主流 Linux 发行版以及 **NanoPi / 树莓派 / Armbian 嵌入式盒子** 与云服务器：
+
+```bash
+# 在线一键极速安装 (自动识别 CPU 架构，嵌入式设备自适应并发限流)
+curl -fsSL https://raw.githubusercontent.com/qualvey/one-reality/main/scripts/install.sh | bash
+
+# 自定义 Token 与并发参数安装 (例如软路由/单板盒子建议 -t 150)
+curl -fsSL https://raw.githubusercontent.com/qualvey/one-reality/main/scripts/install.sh | bash -s -- --token my-secret-token -t 150
+```
+
+> 💡 **单板电脑 / NanoPi 优化提示**：安装脚本会自动读取设备特征（NanoPi / Armbian / 内存 < 2GB），默认将并发协程数优化为 `-t 150`，避免并发 TCP 探测占满家用路由器的 NAT 连接表（Conntrack）。详细调优策略请参阅 [Systemd 守护进程部署运维文档](doc/deploy/systemd-daemon.md)。
+
+安装后可通过内置管理工具轻松运维：
+```bash
+reasni-service status   # 查看守护进程运行状态
+reasni-service log      # 查看实时追踪扫描日志
+reasni-service restart  # 重启服务
+reasni-service config   # 快捷修改启动参数与 Token (/etc/default/reasni)
+reasni-service update   # 一键热升级至最新版本
+```
+
+---
+
 ## 🚀 使用方式
 
 ### 网络环境

@@ -10,11 +10,20 @@ export default withMermaid(
     themeConfig: {
       nav: [
         { text: '首页', link: '/' },
+        { text: '部署运维', link: '/deploy/systemd-daemon' },
         { text: '演进历史', link: '/evolution/2026-10-24-cert-expire-and-lazy-recheck' },
         { text: '开发计划', link: '/dev/asn-24h-scanner' },
         { text: '维护手册', link: '/version_management' }
       ],
       sidebar: {
+        '/deploy/': [
+          {
+            text: '部署与服务化运维',
+            items: [
+              { text: 'Systemd 守护进程与极速分发', link: '/deploy/systemd-daemon' }
+            ]
+          }
+        ],
         '/evolution/': [
           {
             text: '架构演进历史',
@@ -35,6 +44,14 @@ export default withMermaid(
         ],
         '/': [
           {
+            text: '部署与服务化运维',
+            items: [
+              { text: 'Systemd 守护进程与极速分发', link: '/deploy/systemd-daemon' },
+              { text: '版本发布规范', link: '/version_management' },
+              { text: '并发与卡死问题排查', link: '/卡死' }
+            ]
+          },
+          {
             text: '演进历史',
             items: [
               { text: '证书到期时间与按需懒探测', link: '/evolution/2026-10-24-cert-expire-and-lazy-recheck' },
@@ -46,13 +63,6 @@ export default withMermaid(
             items: [
               { text: '24小时 ASN 全网扫描架构', link: '/dev/asn-24h-scanner' },
               { text: '数据库模型与生命周期', link: '/dev/database-and-lifecycle' }
-            ]
-          },
-          {
-            text: '系统运维与问题排查',
-            items: [
-              { text: '版本发布规范', link: '/version_management' },
-              { text: '并发与卡死问题排查', link: '/卡死' }
             ]
           }
         ]

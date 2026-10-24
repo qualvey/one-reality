@@ -53,7 +53,7 @@ func PrintUsage() {
 	fmt.Println("用法:")
 	fmt.Printf("  %s get <ip> [-n 5] [-s 3]  以指定IP极速获取优质伪装目标 (缓存优先+流式现扫)\n", appName)
 	fmt.Printf("  %s serve [--port 8881]     启动Headless REST/SSE服务 (供WebUI/面板调用)\n", appName)
-	fmt.Printf("  %s daemon [--threads 500]  启动24小时全天候全网ASN自动化扫描守护进程\n", appName)
+	fmt.Printf("  %s daemon [--threads 500]  启动24小时全天候全网ASN自动化扫描守护进程 (一键部署见 install.sh)\n", appName)
 	fmt.Printf("  %s patrol [--daemon]       对本地库历史资产执行健康巡检复测与生命周期维护\n", appName)
 	fmt.Printf("  %s auto <ip/cidr> [-v]     自动查ASN并并发扫描入库 (-v 输出每一条详细扫描记录)\n", appName)
 	fmt.Printf("  %s asn <ASN> <国家>        查询ASN前缀并按国家过滤 (支持 --stats/--seed)\n", appName)
@@ -69,6 +69,7 @@ func PrintUsage() {
 	fmt.Printf("  %s get 85.155.184.100 -n 5 -s 4\n", appName)
 	fmt.Printf("  %s get 85.155.184.100 --json\n", appName)
 	fmt.Printf("  %s serve --port 8881\n", appName)
+	fmt.Printf("  %s daemon -t 150 --interval 10 --token mytoken\n", appName)
 	fmt.Printf("  %s auto 85.155.184.100 --limit 5\n", appName)
 	fmt.Printf("  cat domains.txt | %s pipe\n", appName)
 }
