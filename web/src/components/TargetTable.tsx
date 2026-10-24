@@ -31,6 +31,14 @@ export const TargetTable = () => {
   const [isActive, setIsActive] = useState<string>('all');
   const [sortBy, setSortBy] = useState('stars_desc');
 
+  // 进阶选型偏好过滤 (Filter 策略)
+  const [requireNoCDN, setRequireNoCDN] = useState(false);
+  const [requireNoDefaultPage, setRequireNoDefaultPage] = useState(false);
+  const [requireNoHot, setRequireNoHot] = useState(false);
+  const [maxHandshakeMS, setMaxHandshakeMS] = useState(0);
+  const [minCertDays, setMinCertDays] = useState(0);
+  const [excludeStatus403, setExcludeStatus403] = useState(false);
+
   const [selectedTarget, setSelectedTarget] = useState<TargetItem | null>(null);
   const [showCheckModal, setShowCheckModal] = useState(false);
   const [copiedDomain, setCopiedDomain] = useState<string | null>(null);
@@ -51,6 +59,14 @@ export const TargetTable = () => {
       if (isActive === 'active') params.append('is_active', '1');
       if (isActive === 'inactive') params.append('is_active', '0');
 
+      // 选型偏好过滤参数下推
+      if (requireNoCDN) params.append('require_no_cdn', '1');
+      if (requireNoDefaultPage) params.append('require_no_default_page', '1');
+      if (requireNoHot) params.append('require_no_hot', '1');
+      if (maxHandshakeMS > 0) params.append('max_handshake_ms', maxHandshakeMS.toString());
+      if (minCertDays > 0) params.append('min_cert_days', minCertDays.toString());
+      if (excludeStatus403) params.append('exclude_status', '400,401,403,404,429,500,502,503');
+
       const res = await fetch(`/api/targets?${params.toString()}`);
       const data = await res.json();
       if (res.ok && data.code === 200) {
@@ -66,7 +82,43 @@ export const TargetTable = () => {
 
   useEffect(() => {
     fetchTargets();
-  }, [page, sortBy, minStars, isActive]);
+  }, [page, sortBy, minStars, isActive, requireNoCDN, requireNoDefaultPage, requireNoHot, maxHandshakeMS, minCertDays, excludeStatus403]);
+
+  const applyDefaultFilter = async () => {
+    try {
+      const res = await fetch('/api/filter/default');
+      const data = await res.json();
+      if (res.ok && data.code === 200 && data.data) {
+        const def = data.data;
+        setRequireNoCDN(!!def.require_no_cdn);
+        setRequireNoDefaultPage(!!def.require_no_default_page);
+        setRequireNoHot(!!def.require_no_hot);
+        setMaxHandshakeMS(def.max_handshake_ms || 0);
+        setMinCertDays(def.min_cert_days || 0);
+        setMinStars(def.min_stars || 0);
+        setExcludeStatus403(Array.isArray(def.exclude_status) && def.exclude_status.length > 0);
+        setPage(1);
+      }
+    } catch (err) {
+      console.error('Failed to load default filter:', err);
+    }
+  };
+
+  const resetAllFilters = () => {
+    setKeyword('');
+    setASN('');
+    setCountry('');
+    setMinStars(0);
+    setIsActive('all');
+    setSortBy('stars_desc');
+    setRequireNoCDN(false);
+    setRequireNoDefaultPage(false);
+    setRequireNoHot(false);
+    setMaxHandshakeMS(0);
+    setMinCertDays(0);
+    setExcludeStatus403(false);
+    setPage(1);
+  };
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -225,6 +277,148 @@ export const TargetTable = () => {
             <Filter size={14} />
             筛选
           </button>
+
+          {/* 选型偏好过滤快捷开关栏 (Filter Strategies) */}
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', width: '100%', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--border-subtle)' }}>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px', marginRight: '4px' }}>
+              <Filter size={13} /> 选型偏好:
+            </span>
+
+            <button
+              type="button"
+              style={{
+                fontSize: '0.75rem',
+                padding: '4px 10px',
+                borderRadius: '12px',
+                cursor: 'pointer',
+                border: '1px solid',
+                borderColor: requireNoCDN ? 'var(--primary)' : 'var(--border-subtle)',
+                background: requireNoCDN ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-input)',
+                color: requireNoCDN ? 'var(--primary)' : 'var(--text-sub)',
+                fontWeight: requireNoCDN ? 600 : 400,
+                transition: 'all 0.15s ease',
+              }}
+              onClick={() => { setRequireNoCDN(!requireNoCDN); setPage(1); }}
+            >
+              {requireNoCDN ? '✓ 排除 CDN' : '+ 排除 CDN'}
+            </button>
+
+            <button
+              type="button"
+              style={{
+                fontSize: '0.75rem',
+                padding: '4px 10px',
+                borderRadius: '12px',
+                cursor: 'pointer',
+                border: '1px solid',
+                borderColor: requireNoDefaultPage ? 'var(--primary)' : 'var(--border-subtle)',
+                background: requireNoDefaultPage ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-input)',
+                color: requireNoDefaultPage ? 'var(--primary)' : 'var(--text-sub)',
+                fontWeight: requireNoDefaultPage ? 600 : 400,
+                transition: 'all 0.15s ease',
+              }}
+              onClick={() => { setRequireNoDefaultPage(!requireNoDefaultPage); setPage(1); }}
+            >
+              {requireNoDefaultPage ? '✓ 排除默认页' : '+ 排除默认页'}
+            </button>
+
+            <button
+              type="button"
+              style={{
+                fontSize: '0.75rem',
+                padding: '4px 10px',
+                borderRadius: '12px',
+                cursor: 'pointer',
+                border: '1px solid',
+                borderColor: requireNoHot ? 'var(--primary)' : 'var(--border-subtle)',
+                background: requireNoHot ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-input)',
+                color: requireNoHot ? 'var(--primary)' : 'var(--text-sub)',
+                fontWeight: requireNoHot ? 600 : 400,
+                transition: 'all 0.15s ease',
+              }}
+              onClick={() => { setRequireNoHot(!requireNoHot); setPage(1); }}
+            >
+              {requireNoHot ? '✓ 排除热门大站' : '+ 排除热门大站'}
+            </button>
+
+            <button
+              type="button"
+              style={{
+                fontSize: '0.75rem',
+                padding: '4px 10px',
+                borderRadius: '12px',
+                cursor: 'pointer',
+                border: '1px solid',
+                borderColor: excludeStatus403 ? 'var(--primary)' : 'var(--border-subtle)',
+                background: excludeStatus403 ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-input)',
+                color: excludeStatus403 ? 'var(--primary)' : 'var(--text-sub)',
+                fontWeight: excludeStatus403 ? 600 : 400,
+                transition: 'all 0.15s ease',
+              }}
+              onClick={() => { setExcludeStatus403(!excludeStatus403); setPage(1); }}
+            >
+              {excludeStatus403 ? '✓ 排除异常/403状态码' : '+ 排除异常/403状态码'}
+            </button>
+
+            <select
+              style={{
+                fontSize: '0.75rem',
+                padding: '4px 8px',
+                borderRadius: '12px',
+                border: '1px solid var(--border-subtle)',
+                background: maxHandshakeMS > 0 ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-input)',
+                color: maxHandshakeMS > 0 ? 'var(--primary)' : 'var(--text-sub)',
+              }}
+              value={maxHandshakeMS}
+              onChange={(e) => { setMaxHandshakeMS(Number(e.target.value)); setPage(1); }}
+            >
+              <option value={0}>延迟不限</option>
+              <option value={150}>延迟 ≤ 150ms</option>
+              <option value={300}>延迟 ≤ 300ms</option>
+              <option value={500}>延迟 ≤ 500ms</option>
+              <option value={800}>延迟 ≤ 800ms</option>
+            </select>
+
+            <select
+              style={{
+                fontSize: '0.75rem',
+                padding: '4px 8px',
+                borderRadius: '12px',
+                border: '1px solid var(--border-subtle)',
+                background: minCertDays > 0 ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-input)',
+                color: minCertDays > 0 ? 'var(--primary)' : 'var(--text-sub)',
+              }}
+              value={minCertDays}
+              onChange={(e) => { setMinCertDays(Number(e.target.value)); setPage(1); }}
+            >
+              <option value={0}>证书天数不限</option>
+              <option value={7}>证书剩余 ≥ 7天</option>
+              <option value={15}>证书剩余 ≥ 15天</option>
+              <option value={30}>证书剩余 ≥ 30天</option>
+              <option value={60}>证书剩余 ≥ 60天</option>
+            </select>
+
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ fontSize: '0.75rem', padding: '3px 8px', height: '26px' }}
+                onClick={applyDefaultFilter}
+                title="载入 config.yaml 中的默认选型策略"
+              >
+                载入配置偏好
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ fontSize: '0.75rem', padding: '3px 8px', height: '26px' }}
+                onClick={resetAllFilters}
+                title="清空所有过滤条件"
+              >
+                重置
+              </button>
+            </div>
+          </div>
         </form>
       </div>
 

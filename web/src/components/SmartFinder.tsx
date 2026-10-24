@@ -42,6 +42,16 @@ export const SmartFinder = () => {
   const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
+    fetch('/api/filter/default')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.code === 200 && data.data) {
+          if (data.data.min_stars !== undefined && data.data.min_stars > 0) setMinStars(data.data.min_stars);
+          if (data.data.require_no_cn !== undefined) setRequireNoCN(data.data.require_no_cn);
+        }
+      })
+      .catch(() => {});
+
     return () => {
       if (esRef.current) {
         esRef.current.close();
