@@ -64,6 +64,8 @@ func (s *TargetStore) initSchema() error {
 		port INTEGER NOT NULL DEFAULT 443,
 		handshake_ms INTEGER NOT NULL,
 		cert_days INTEGER NOT NULL,
+		cert_expire_at DATETIME,
+		tags TEXT NOT NULL DEFAULT '',
 		status_code INTEGER NOT NULL,
 		page_title TEXT,
 		is_cdn INTEGER NOT NULL DEFAULT 0,
@@ -110,6 +112,13 @@ func (s *TargetStore) initSchema() error {
 	if !targetCols["first_seen_at"] {
 		_, _ = s.db.Exec("ALTER TABLE reality_targets ADD COLUMN first_seen_at DATETIME")
 		_, _ = s.db.Exec("UPDATE reality_targets SET first_seen_at = last_checked_at WHERE first_seen_at IS NULL")
+	}
+	if !targetCols["cert_expire_at"] {
+		_, _ = s.db.Exec("ALTER TABLE reality_targets ADD COLUMN cert_expire_at DATETIME")
+		_, _ = s.db.Exec("UPDATE reality_targets SET cert_expire_at = datetime(last_checked_at, '+' || cert_days || ' days') WHERE cert_expire_at IS NULL")
+	}
+	if !targetCols["tags"] {
+		_, _ = s.db.Exec("ALTER TABLE reality_targets ADD COLUMN tags TEXT NOT NULL DEFAULT ''")
 	}
 
 	// 创建依赖新列的索引
@@ -222,10 +231,10 @@ func (s *TargetStore) UpsertTargets(records []*types.TargetRecord) error {
 
 	stmt, err := tx.Prepare(`
 		INSERT INTO reality_targets (
-			domain, asn, country, ip, port, handshake_ms, cert_days, status_code,
+			domain, asn, country, ip, port, handshake_ms, cert_days, cert_expire_at, tags, status_code,
 			page_title, is_cdn, is_hot, is_default_page, default_page_type,
 			stars, is_active, check_fail_count, first_seen_at, last_checked_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(domain) DO UPDATE SET
 			asn = excluded.asn,
 			country = excluded.country,
@@ -233,6 +242,8 @@ func (s *TargetStore) UpsertTargets(records []*types.TargetRecord) error {
 			port = excluded.port,
 			handshake_ms = excluded.handshake_ms,
 			cert_days = excluded.cert_days,
+			cert_expire_at = CASE WHEN excluded.cert_expire_at IS NOT NULL THEN excluded.cert_expire_at ELSE reality_targets.cert_expire_at END,
+			tags = CASE WHEN excluded.tags != '' THEN excluded.tags ELSE reality_targets.tags END,
 			status_code = excluded.status_code,
 			page_title = excluded.page_title,
 			is_cdn = excluded.is_cdn,
@@ -285,6 +296,14 @@ func (s *TargetStore) UpsertTargets(records []*types.TargetRecord) error {
 			isActive = 0
 		}
 
+		var certExpireAtAny any = nil
+		if !rec.CertExpireAt.IsZero() {
+			certExpireAtAny = rec.CertExpireAt
+		} else if rec.CertDays > 0 {
+			certExpireAtAny = lastChecked.Add(time.Duration(rec.CertDays) * 24 * time.Hour)
+		}
+		tagsJoined := strings.Join(rec.Tags, ",")
+
 		_, err := stmt.Exec(
 			domainKey,
 			strings.ToUpper(strings.TrimSpace(rec.ASN)),
@@ -293,6 +312,8 @@ func (s *TargetStore) UpsertTargets(records []*types.TargetRecord) error {
 			port,
 			rec.HandshakeMS,
 			rec.CertDays,
+			certExpireAtAny,
+			tagsJoined,
 			rec.StatusCode,
 			rec.PageTitle,
 			isCDN,
@@ -316,8 +337,8 @@ func (s *TargetStore) UpsertTargets(records []*types.TargetRecord) error {
 func scanTargetRecord(scanner interface{ Scan(dest ...any) error }) (*types.TargetRecord, error) {
 	var rec types.TargetRecord
 	var port, isCDN, isHot, isDefault, isActive, checkFailCount int
-	var pageTitle, defaultPageType sql.NullString
-	var firstSeenAt sql.NullTime
+	var pageTitle, defaultPageType, tagsStr sql.NullString
+	var firstSeenAt, certExpireAt sql.NullTime
 
 	err := scanner.Scan(
 		&rec.Domain,
@@ -327,6 +348,8 @@ func scanTargetRecord(scanner interface{ Scan(dest ...any) error }) (*types.Targ
 		&port,
 		&rec.HandshakeMS,
 		&rec.CertDays,
+		&certExpireAt,
+		&tagsStr,
 		&rec.StatusCode,
 		&pageTitle,
 		&isCDN,
@@ -357,6 +380,18 @@ func scanTargetRecord(scanner interface{ Scan(dest ...any) error }) (*types.Targ
 	} else {
 		rec.FirstSeenAt = rec.LastCheckedAt
 	}
+	if certExpireAt.Valid {
+		rec.CertExpireAt = certExpireAt.Time
+		rec.CertDays = rec.GetRemainingDays()
+	}
+	if tagsStr.Valid && strings.TrimSpace(tagsStr.String) != "" {
+		for _, t := range strings.Split(tagsStr.String, ",") {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				rec.Tags = append(rec.Tags, t)
+			}
+		}
+	}
 	if pageTitle.Valid {
 		rec.PageTitle = pageTitle.String
 	}
@@ -382,7 +417,7 @@ func (s *TargetStore) GetTargetsByASN(asn, country string, maxAge time.Duration)
 	asnWithoutPrefix := strings.TrimPrefix(asnNorm, "AS")
 
 	query := `
-		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, status_code,
+		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, cert_expire_at, tags, status_code,
 		       page_title, is_cdn, is_hot, is_default_page, default_page_type,
 		       stars, is_active, check_fail_count, first_seen_at, last_checked_at
 		FROM reality_targets
@@ -427,7 +462,7 @@ func (s *TargetStore) GetAllTargets() ([]*types.TargetRecord, error) {
 	defer s.mu.RUnlock()
 
 	query := `
-		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, status_code,
+		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, cert_expire_at, tags, status_code,
 		       page_title, is_cdn, is_hot, is_default_page, default_page_type,
 		       stars, is_active, check_fail_count, first_seen_at, last_checked_at
 		FROM reality_targets
@@ -524,6 +559,7 @@ func DetectionResultToRecord(res *types.DetectionResult, asn, country, ip string
 
 	if res.Certificate != nil {
 		rec.CertDays = res.Certificate.DaysUntilExpiry
+		rec.CertExpireAt = res.Certificate.NotAfter
 	}
 
 	if res.Network != nil {
@@ -565,7 +601,8 @@ func RecordToDetectionResult(rec *types.TargetRecord) *types.DetectionResult {
 		},
 		Certificate: &types.CertificateResult{
 			Valid:           true,
-			DaysUntilExpiry: rec.CertDays,
+			DaysUntilExpiry: rec.GetRemainingDays(),
+			NotAfter:        rec.CertExpireAt,
 		},
 		CDN: &types.CDNResult{
 			IsCDN:        rec.IsCDN,
@@ -1038,7 +1075,7 @@ func (s *TargetStore) GetTargetsForPatrol(minStars int, olderThan time.Duration,
 
 	cutoff := time.Now().Add(-olderThan)
 	query := `
-		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, status_code,
+		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, cert_expire_at, tags, status_code,
 		       page_title, is_cdn, is_hot, is_default_page, default_page_type,
 		       stars, is_active, check_fail_count, first_seen_at, last_checked_at
 		FROM reality_targets
@@ -1167,7 +1204,7 @@ func (s *TargetStore) QueryTargets(opts types.TargetQueryOptions) ([]*types.Targ
 	offset := (page - 1) * limit
 
 	dataQuery := fmt.Sprintf(`
-		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, status_code,
+		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, cert_expire_at, tags, status_code,
 		       page_title, is_cdn, is_hot, is_default_page, default_page_type,
 		       stars, is_active, check_fail_count, first_seen_at, last_checked_at
 		FROM reality_targets
@@ -1265,6 +1302,31 @@ func (s *TargetStore) GetStats() (*types.TargetStats, error) {
 	}
 
 	return stats, nil
+}
+
+// UpdateTargetCertRenewal 更新目标资产的证书续期探测状态与标签
+func (s *TargetStore) UpdateTargetCertRenewal(domain string, certExpireAt time.Time, certDays int, tags []string, handshakeMS int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	tagsStr := strings.Join(tags, ",")
+
+	var expireVal any = nil
+	if !certExpireAt.IsZero() {
+		expireVal = certExpireAt
+	}
+
+	_, err := s.db.Exec(`
+		UPDATE reality_targets
+		SET cert_expire_at = ?,
+		    cert_days = ?,
+		    tags = ?,
+		    handshake_ms = CASE WHEN ? > 0 THEN ? ELSE handshake_ms END,
+		    last_checked_at = ?
+		WHERE domain = ?
+	`, expireVal, certDays, tagsStr, handshakeMS, handshakeMS, now, strings.ToLower(strings.TrimSpace(domain)))
+	return err
 }
 
 

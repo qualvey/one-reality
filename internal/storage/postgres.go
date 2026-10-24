@@ -127,6 +127,8 @@ func (s *PostgresStore) initSchema(ctx context.Context) error {
 		port INTEGER NOT NULL DEFAULT 443,
 		handshake_ms INTEGER NOT NULL,
 		cert_days INTEGER NOT NULL,
+		cert_expire_at TIMESTAMPTZ,
+		tags TEXT NOT NULL DEFAULT '',
 		status_code INTEGER NOT NULL,
 		page_title TEXT,
 		is_cdn BOOLEAN NOT NULL DEFAULT FALSE,
@@ -184,8 +186,14 @@ func (s *PostgresStore) initSchema(ctx context.Context) error {
 
 	CREATE INDEX IF NOT EXISTS idx_patrol_domain_checked ON target_patrol_logs (domain, checked_at DESC);
 	`
-	_, err := s.pool.Exec(ctx, schema)
-	return err
+	if _, err := s.pool.Exec(ctx, schema); err != nil {
+		return err
+	}
+	_, _ = s.pool.Exec(ctx, `
+		ALTER TABLE reality_targets ADD COLUMN IF NOT EXISTS cert_expire_at TIMESTAMPTZ;
+		ALTER TABLE reality_targets ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '';
+	`)
+	return nil
 }
 
 // Close 关闭 PostgreSQL 连接池
@@ -212,10 +220,10 @@ func (s *PostgresStore) UpsertTargets(records []*types.TargetRecord) error {
 
 	query := `
 		INSERT INTO reality_targets (
-			domain, asn, country, ip, port, handshake_ms, cert_days, status_code,
+			domain, asn, country, ip, port, handshake_ms, cert_days, cert_expire_at, tags, status_code,
 			page_title, is_cdn, is_hot, is_default_page, default_page_type,
 			stars, is_active, check_fail_count, first_seen_at, last_checked_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 		ON CONFLICT (domain) DO UPDATE SET
 			asn = EXCLUDED.asn,
 			country = EXCLUDED.country,
@@ -223,6 +231,8 @@ func (s *PostgresStore) UpsertTargets(records []*types.TargetRecord) error {
 			port = EXCLUDED.port,
 			handshake_ms = EXCLUDED.handshake_ms,
 			cert_days = EXCLUDED.cert_days,
+			cert_expire_at = CASE WHEN EXCLUDED.cert_expire_at IS NOT NULL THEN EXCLUDED.cert_expire_at ELSE reality_targets.cert_expire_at END,
+			tags = CASE WHEN EXCLUDED.tags != '' THEN EXCLUDED.tags ELSE reality_targets.tags END,
 			status_code = EXCLUDED.status_code,
 			page_title = EXCLUDED.page_title,
 			is_cdn = EXCLUDED.is_cdn,
@@ -264,6 +274,14 @@ func (s *PostgresStore) UpsertTargets(records []*types.TargetRecord) error {
 			isActive = false
 		}
 
+		var certExpireAtAny any = nil
+		if !rec.CertExpireAt.IsZero() {
+			certExpireAtAny = rec.CertExpireAt
+		} else if rec.CertDays > 0 {
+			certExpireAtAny = lastChecked.Add(time.Duration(rec.CertDays) * 24 * time.Hour)
+		}
+		tagsJoined := strings.Join(rec.Tags, ",")
+
 		batch.Queue(query,
 			sanitizeUTF8(domainKey),
 			sanitizeUTF8(strings.ToUpper(strings.TrimSpace(rec.ASN))),
@@ -272,6 +290,8 @@ func (s *PostgresStore) UpsertTargets(records []*types.TargetRecord) error {
 			port,
 			rec.HandshakeMS,
 			rec.CertDays,
+			certExpireAtAny,
+			sanitizeUTF8(tagsJoined),
 			rec.StatusCode,
 			sanitizeUTF8(rec.PageTitle),
 			rec.IsCDN,
@@ -305,8 +325,9 @@ func (s *PostgresStore) UpsertTargets(records []*types.TargetRecord) error {
 
 func scanPostgresTargetRecord(row pgx.Row) (*types.TargetRecord, error) {
 	var rec types.TargetRecord
-	var pageTitle, defaultPageType *string
+	var pageTitle, defaultPageType, tagsStr *string
 	var firstSeenAt, lastCheckedAt time.Time
+	var certExpireAt *time.Time
 
 	err := row.Scan(
 		&rec.Domain,
@@ -316,6 +337,8 @@ func scanPostgresTargetRecord(row pgx.Row) (*types.TargetRecord, error) {
 		&rec.Port,
 		&rec.HandshakeMS,
 		&rec.CertDays,
+		&certExpireAt,
+		&tagsStr,
 		&rec.StatusCode,
 		&pageTitle,
 		&rec.IsCDN,
@@ -341,6 +364,18 @@ func scanPostgresTargetRecord(row pgx.Row) (*types.TargetRecord, error) {
 	if defaultPageType != nil {
 		rec.DefaultPageType = *defaultPageType
 	}
+	if certExpireAt != nil && !certExpireAt.IsZero() {
+		rec.CertExpireAt = *certExpireAt
+		rec.CertDays = rec.GetRemainingDays()
+	}
+	if tagsStr != nil && strings.TrimSpace(*tagsStr) != "" {
+		for _, t := range strings.Split(*tagsStr, ",") {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				rec.Tags = append(rec.Tags, t)
+			}
+		}
+	}
 	rec.FirstSeenAt = firstSeenAt
 	rec.LastCheckedAt = lastCheckedAt
 
@@ -362,7 +397,7 @@ func (s *PostgresStore) GetTargetsByASN(asn, country string, maxAge time.Duratio
 	withoutAS := strings.TrimPrefix(asnNorm, "AS")
 
 	query := `
-		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, status_code,
+		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, cert_expire_at, tags, status_code,
 		       page_title, is_cdn, is_hot, is_default_page, default_page_type,
 		       stars, is_active, check_fail_count, first_seen_at, last_checked_at
 		FROM reality_targets
@@ -412,7 +447,7 @@ func (s *PostgresStore) GetAllTargets() ([]*types.TargetRecord, error) {
 	defer cancel()
 
 	query := `
-		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, status_code,
+		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, cert_expire_at, tags, status_code,
 		       page_title, is_cdn, is_hot, is_default_page, default_page_type,
 		       stars, is_active, check_fail_count, first_seen_at, last_checked_at
 		FROM reality_targets
@@ -511,7 +546,7 @@ func (s *PostgresStore) QueryTargets(opts types.TargetQueryOptions) ([]*types.Ta
 	offset := (page - 1) * limit
 
 	dataQuery := fmt.Sprintf(`
-		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, status_code,
+		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, cert_expire_at, tags, status_code,
 		       page_title, is_cdn, is_hot, is_default_page, default_page_type,
 		       stars, is_active, check_fail_count, first_seen_at, last_checked_at
 		FROM reality_targets
@@ -1104,7 +1139,7 @@ func (s *PostgresStore) GetTargetsForPatrol(minStars int, olderThan time.Duratio
 	}
 
 	query := `
-		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, status_code,
+		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, cert_expire_at, tags, status_code,
 		       page_title, is_cdn, is_hot, is_default_page, default_page_type,
 		       stars, is_active, check_fail_count, first_seen_at, last_checked_at
 		FROM reality_targets
@@ -1166,6 +1201,36 @@ func IsPostgresError(err error) bool {
 	return err != nil && (strings.Contains(err.Error(), "pgx") || strings.Contains(err.Error(), "postgres")) || (func() bool {
 		return fmt.Errorf("%w", err) == pgErr
 	})()
+}
+
+// UpdateTargetCertRenewal 更新目标资产的证书续期探测状态与标签
+func (s *PostgresStore) UpdateTargetCertRenewal(domain string, certExpireAt time.Time, certDays int, tags []string, handshakeMS int64) error {
+	domainKey := strings.ToLower(strings.TrimSpace(domain))
+	if domainKey == "" {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	now := time.Now().UTC()
+	tagsStr := strings.Join(tags, ",")
+
+	var expireVal any = nil
+	if !certExpireAt.IsZero() {
+		expireVal = certExpireAt
+	}
+
+	_, err := s.pool.Exec(ctx, `
+		UPDATE reality_targets
+		SET cert_expire_at = $1,
+		    cert_days = $2,
+		    tags = $3,
+		    handshake_ms = CASE WHEN $4 > 0 THEN $4 ELSE handshake_ms END,
+		    last_checked_at = $5
+		WHERE domain = $6
+	`, expireVal, certDays, sanitizeUTF8(tagsStr), handshakeMS, now, sanitizeUTF8(domainKey))
+	return err
 }
 
 // sanitizeUTF8 清洗非合法 UTF-8 字节与 NUL 字符，确保符合 PostgreSQL 文本存储规范 (防御 SQLSTATE 22021)

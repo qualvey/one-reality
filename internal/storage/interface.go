@@ -44,6 +44,7 @@ type Store interface {
 	InsertPatrolLog(log *types.PatrolLogRecord) error
 	CleanExpiredPatrolLogs(retention time.Duration) (int64, error)
 	UpdateTargetPatrolResult(domain, ip string, handshakeMS int64, certDays int, success bool, errStr string) error
+	UpdateTargetCertRenewal(domain string, certExpireAt time.Time, certDays int, tags []string, handshakeMS int64) error
 	GetTargetsForPatrol(minStars int, olderThan time.Duration, limit int) ([]*types.TargetRecord, error)
 	DeleteExpiredInactiveTargets(inactiveDuration time.Duration) (int64, error)
 

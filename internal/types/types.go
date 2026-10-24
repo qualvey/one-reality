@@ -378,6 +378,8 @@ type TargetRecord struct {
 	Port            int       `json:"port"`
 	HandshakeMS     int64     `json:"handshake_ms"`
 	CertDays        int       `json:"cert_days"`
+	CertExpireAt    time.Time `json:"cert_expire_at,omitempty"` // 证书实际到期时间戳
+	Tags            []string  `json:"tags,omitempty"`           // 业务与风险标签 (例如 cert_renew_delayed)
 	StatusCode      int       `json:"status_code"`
 	PageTitle       string    `json:"page_title,omitempty"`
 	IsCDN           bool      `json:"is_cdn"`
@@ -389,6 +391,61 @@ type TargetRecord struct {
 	CheckFailCount  int       `json:"check_fail_count"`
 	FirstSeenAt     time.Time `json:"first_seen_at"`
 	LastCheckedAt   time.Time `json:"last_checked_at"`
+}
+
+const (
+	// TagCertRenewDelayed 证书疑似未自动续期标签 (临近30天到期但未见更新)
+	TagCertRenewDelayed = "cert_renew_delayed"
+)
+
+// GetRemainingDays 获取证书当前剩余有效天数 (基于 CertExpireAt 动态计算)
+func (r *TargetRecord) GetRemainingDays() int {
+	if r == nil {
+		return 0
+	}
+	if !r.CertExpireAt.IsZero() {
+		days := int(time.Until(r.CertExpireAt).Hours() / 24)
+		if days < 0 {
+			return 0
+		}
+		return days
+	}
+	return r.CertDays
+}
+
+// HasTag 检查是否包含指定标签
+func (r *TargetRecord) HasTag(tag string) bool {
+	if r == nil || tag == "" {
+		return false
+	}
+	for _, t := range r.Tags {
+		if strings.EqualFold(t, tag) {
+			return true
+		}
+	}
+	return false
+}
+
+// AddTag 添加标签
+func (r *TargetRecord) AddTag(tag string) {
+	if r == nil || tag == "" || r.HasTag(tag) {
+		return
+	}
+	r.Tags = append(r.Tags, tag)
+}
+
+// RemoveTag 移除指定标签
+func (r *TargetRecord) RemoveTag(tag string) {
+	if r == nil || tag == "" {
+		return
+	}
+	var filtered []string
+	for _, t := range r.Tags {
+		if !strings.EqualFold(t, tag) {
+			filtered = append(filtered, t)
+		}
+	}
+	r.Tags = filtered
 }
 
 // ASNRecord 自治系统任务与元数据记录

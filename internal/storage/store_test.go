@@ -432,5 +432,71 @@ func TestSanitizeUTF8(t *testing.T) {
 	}
 }
 
+func TestTargetStore_CertExpireAtAndTags(t *testing.T) {
+	tempDB := filepath.Join(t.TempDir(), "test_cert_tags.db")
+	store, err := NewTargetStore(tempDB)
+	if err != nil {
+		t.Fatalf("NewTargetStore failed: %v", err)
+	}
+	defer store.Close()
+
+	expireTime := time.Now().Add(25 * 24 * time.Hour).Truncate(time.Second)
+	rec := &types.TargetRecord{
+		Domain:        "cert-test.org",
+		ASN:           "AS13335",
+		Country:       "US",
+		IP:            "1.1.1.1",
+		Port:          443,
+		HandshakeMS:   50,
+		CertDays:      25,
+		CertExpireAt:  expireTime,
+		Tags:          []string{"test_tag", types.TagCertRenewDelayed},
+		StatusCode:    200,
+		Stars:         5,
+		IsActive:      true,
+		LastCheckedAt: time.Now(),
+	}
+
+	if err := store.UpsertTarget(rec); err != nil {
+		t.Fatalf("UpsertTarget failed: %v", err)
+	}
+
+	targets, err := store.GetTargetsByASN("AS13335", "US", 0)
+	if err != nil || len(targets) == 0 {
+		t.Fatalf("GetTargetsByASN failed: %v", err)
+	}
+
+	got := targets[0]
+	if !got.HasTag(types.TagCertRenewDelayed) {
+		t.Fatalf("expected tag %s, got tags: %v", types.TagCertRenewDelayed, got.Tags)
+	}
+	if got.GetRemainingDays() < 24 || got.GetRemainingDays() > 26 {
+		t.Fatalf("expected around 25 days, got %d", got.GetRemainingDays())
+	}
+
+	// 测试 UpdateTargetCertRenewal: 模拟远端证书续签成功到 90 天
+	newExpire := time.Now().Add(90 * 24 * time.Hour).Truncate(time.Second)
+	got.RemoveTag(types.TagCertRenewDelayed)
+	if err := store.UpdateTargetCertRenewal("cert-test.org", newExpire, 90, got.Tags, 45); err != nil {
+		t.Fatalf("UpdateTargetCertRenewal failed: %v", err)
+	}
+
+	refreshed, err := store.GetTargetsByASN("AS13335", "US", 0)
+	if err != nil || len(refreshed) == 0 {
+		t.Fatalf("GetTargetsByASN after renewal failed: %v", err)
+	}
+
+	updated := refreshed[0]
+	if updated.HasTag(types.TagCertRenewDelayed) {
+		t.Fatalf("expected tag removed after renewal, got %v", updated.Tags)
+	}
+	if updated.GetRemainingDays() < 89 || updated.GetRemainingDays() > 91 {
+		t.Fatalf("expected around 90 days, got %d", updated.GetRemainingDays())
+	}
+	if updated.HandshakeMS != 45 {
+		t.Fatalf("expected updated handshakeMS 45, got %d", updated.HandshakeMS)
+	}
+}
+
 
 
