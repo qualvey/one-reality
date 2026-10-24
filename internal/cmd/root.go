@@ -130,8 +130,8 @@ func (r *RootCmd) Execute(customArgs ...[]string) {
 		if len(subArgs) < 1 {
 			logger.PrintErrorWithDetails(
 				"错误：缺少域名参数",
-				"用法: reality-checker check <domain>",
-				"示例: reality-checker check apple.com",
+				fmt.Sprintf("用法: %s check <domain>", version.GetAppName()),
+				fmt.Sprintf("示例: %s check apple.com", version.GetAppName()),
 			)
 			os.Exit(1)
 		}
@@ -140,8 +140,8 @@ func (r *RootCmd) Execute(customArgs ...[]string) {
 		if len(subArgs) < 1 {
 			logger.PrintErrorWithDetails(
 				"错误：缺少域名参数",
-				"用法: reality-checker batch <domain1> <domain2> <domain3> ...",
-				"示例: reality-checker batch apple.com google.com microsoft.com",
+				fmt.Sprintf("用法: %s batch <domain1> <domain2> <domain3> ...", version.GetAppName()),
+				fmt.Sprintf("示例: %s batch apple.com google.com microsoft.com", version.GetAppName()),
 			)
 			os.Exit(1)
 		}
@@ -151,10 +151,10 @@ func (r *RootCmd) Execute(customArgs ...[]string) {
 		logger.PrintErrorWithDetails(
 			"提示：'csv' 命令已废弃并整合",
 			"请直接使用更为高效的流式管道命令：",
-			"  cat file.csv | reality-checker pipe  (Linux/macOS)",
-			"  Get-Content file.csv | reality-checker pipe  (Windows PowerShell)",
+			fmt.Sprintf("  cat file.csv | %s pipe  (Linux/macOS)", version.GetAppName()),
+			fmt.Sprintf("  Get-Content file.csv | %s pipe  (Windows PowerShell)", version.GetAppName()),
 			"或者使用全自动内嵌扫描检测命令：",
-			"  reality-checker auto <ip/cidr>",
+			fmt.Sprintf("  %s auto <ip/cidr>", version.GetAppName()),
 		)
 		os.Exit(1)
 	case "version", "-v", "--version":

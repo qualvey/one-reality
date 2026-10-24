@@ -41,8 +41,8 @@ func (r *RootCmd) executeGet(args []string) {
 	if flags.NArg() < 1 {
 		logger.PrintErrorWithDetails(
 			"错误：缺少目标 IP 地址",
-			"用法: reality-checker get <ip> [--limit 5] [--stars 3] [--fresh] [--json]",
-			"示例: reality-checker get 85.155.184.100 -n 5 -s 4",
+			fmt.Sprintf("用法: %s get <ip> [--limit 5] [--stars 3] [--fresh] [--json]", version.GetAppName()),
+			fmt.Sprintf("示例: %s get 85.155.184.100 -n 5 -s 4", version.GetAppName()),
 		)
 		return
 	}

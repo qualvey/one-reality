@@ -11,6 +11,7 @@ import (
 	"RealityChecker/internal/logger"
 	"RealityChecker/internal/storage"
 	"RealityChecker/internal/types"
+	"RealityChecker/internal/version"
 )
 
 // executeMigrate 执行数据库存储引擎间的数据平滑迁移 (如 SQLite -> PostgreSQL)
@@ -140,12 +141,13 @@ func (r *RootCmd) executeMigrate(args []string) {
 	dstStore, err := storage.NewStore(dstCfg)
 	if err != nil {
 		if dstCfg.Driver == "postgres" {
+			appName := version.GetAppName()
 			logger.PrintErrorWithDetails(
 				fmt.Sprintf("连接目标数据库失败: %v", err),
 				"💡 排查建议:",
 				"  1. 确认当前目录下是否存在未修改的 config.yaml (系统默认 config.yaml 优先级高于 config.yml)",
-				"  2. 可使用 -c 指定配置文件: ./reality-checker -c config.yml migrate",
-				"  3. 或直接通过 --to 指定完整 DSN: ./reality-checker migrate --to \"postgres://rchecker:passwd@127.0.0.1:5432/reality?sslmode=disable\"",
+				fmt.Sprintf("  2. 可使用 -c 指定配置文件: ./%s -c config.yml migrate", appName),
+				fmt.Sprintf("  3. 或直接通过 --to 指定完整 DSN: ./%s migrate --to \"postgres://rchecker:passwd@127.0.0.1:5432/reality?sslmode=disable\"", appName),
 				"  4. 检查 PostgreSQL 的 pg_hba.conf 是否放通本地或对应用户的 md5/scram-sha-256 密码认证",
 			)
 		} else {

@@ -10,6 +10,7 @@ import (
 	"RealityChecker/internal/app"
 	asnclient "RealityChecker/internal/asn"
 	"RealityChecker/internal/config"
+	"RealityChecker/internal/version"
 )
 
 func executeASN(args []string) {
@@ -115,8 +116,8 @@ func executeASN(args []string) {
 	// 2. 原有的 ASN CIDR 网段查询与国家过滤
 	if flags.NArg() < 1 {
 		fmt.Fprintln(os.Stderr, "用法:")
-		fmt.Fprintln(os.Stderr, "  1. 查询网段: reality-checker asn [--db Country.mmdb] [-4] [-6] <ASN> <国家>")
-		fmt.Fprintln(os.Stderr, "  2. 注册表管理: reality-checker asn [--store db] [--seed] [--stats] [--list] [--sync <url>]")
+		fmt.Fprintf(os.Stderr, "  1. 查询网段: %s asn [--db Country.mmdb] [-4] [-6] <ASN> <国家>\n", version.GetAppName())
+		fmt.Fprintf(os.Stderr, "  2. 注册表管理: %s asn [--store db] [--seed] [--stats] [--list] [--sync <url>]\n", version.GetAppName())
 		return
 	}
 	country := *countryFlag

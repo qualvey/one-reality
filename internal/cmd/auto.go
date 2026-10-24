@@ -23,6 +23,7 @@ import (
 	"RealityChecker/internal/scanner"
 	"RealityChecker/internal/storage"
 	"RealityChecker/internal/types"
+	"RealityChecker/internal/version"
 
 	"github.com/oschwald/geoip2-golang"
 	"github.com/schollz/progressbar/v3"
@@ -443,11 +444,12 @@ func appendCIDR(list []string, input string, filter types.RealityFilterConfig) [
 // parseAndExecuteAuto 解析命令行参数并应用 YAML 策略与 CLI 参数覆盖
 func (r *RootCmd) parseAndExecuteAuto(args []string) {
 	if len(args) == 0 {
+		appName := version.GetAppName()
 		logger.PrintErrorWithDetails(
 			"错误：缺少目标 IP / CIDR 参数或 --in 文件参数",
 			"用法:",
-			"  reality-checker auto <ip_or_cidr> [选项]",
-			"  reality-checker auto --in <cidr_file> [选项]",
+			fmt.Sprintf("  %s auto <ip_or_cidr> [选项]", appName),
+			fmt.Sprintf("  %s auto --in <cidr_file> [选项]", appName),
 			"选项:",
 			"  --in FILE            从文件中批量读取 CIDR/IP 列表 (每行一个)",
 			"  --country CODE       按两位 ISO 国家代码过滤（默认使用入口 IP 国家）",
@@ -471,11 +473,11 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 			"  --min-stars STARS    最低推荐星级 1-5 (默认 3)",
 			"  -v / --verbose       详细模式，输出每一条被探测 IP 的扫描与判定记录到 stdout (关闭进度条)",
 			"示例:",
-			"  reality-checker auto 85.155.184.100 --limit 5",
-			"  reality-checker auto 85.155.184.100 --check-all --export all.json",
-			"  reality-checker auto 59.110.190.69 --check-all --threads 500 --timeout 2",
-			"  reality-checker auto 5.45.102.0/24 --limit 2",
-			"  reality-checker auto --in cidrs.txt --limit 5",
+			fmt.Sprintf("  %s auto 85.155.184.100 --limit 5", appName),
+			fmt.Sprintf("  %s auto 85.155.184.100 --check-all --export all.json", appName),
+			fmt.Sprintf("  %s auto 59.110.190.69 --check-all --threads 500 --timeout 2", appName),
+			fmt.Sprintf("  %s auto 5.45.102.0/24 --limit 2", appName),
+			fmt.Sprintf("  %s auto --in cidrs.txt --limit 5", appName),
 		)
 		os.Exit(1)
 	}
