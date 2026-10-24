@@ -9,6 +9,8 @@ export interface TargetItem {
   stars: number;
   handshake_ms: number;
   cert_days: number;
+  cert_expire_at?: string;
+  tags?: string[];
   status_code: number;
   page_title?: string;
   is_cdn: boolean;
@@ -47,6 +49,8 @@ export interface TargetRecord {
   port: number;
   handshake_ms: number;
   cert_days: number;
+  cert_expire_at?: string;
+  tags?: string[];
   status_code: number;
   page_title?: string;
   is_cdn: boolean;

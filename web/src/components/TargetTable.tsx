@@ -291,9 +291,28 @@ export const TargetTable = () => {
                   </span>
                 </td>
                 <td>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.82rem' }}>
-                    {row.cert_days > 0 ? `${row.cert_days} 天` : '未知'}
-                  </span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                    <span
+                      style={{
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: '0.82rem',
+                        fontWeight: 600,
+                        color: row.cert_days <= 0 ? 'var(--accent-crimson)' : row.cert_days < 30 ? 'var(--accent-amber)' : 'inherit',
+                      }}
+                      title={row.cert_expire_at ? `证书到期时间: ${new Date(row.cert_expire_at).toLocaleString()}` : undefined}
+                    >
+                      {row.cert_days <= 0 ? '已过期' : `${row.cert_days} 天`}
+                    </span>
+                    {row.tags?.includes('cert_renew_delayed') && (
+                      <span
+                        className="badge badge-warning"
+                        style={{ fontSize: '0.65rem', padding: '1px 5px', width: 'fit-content', whiteSpace: 'nowrap' }}
+                        title="证书剩余不足30天且尚未见自动续期，存在失效风险"
+                      >
+                        疑似未自动续期
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td>
                   <span className={`badge ${row.is_active ? 'badge-success' : 'badge-danger'}`}>

@@ -124,8 +124,16 @@ export const QuickCheckModal = ({ onClose, onSuccess }: QuickCheckModalProps) =>
                 <span className="spec-value">{result.asn || '未知'}</span>
               </div>
               <div className="spec-item">
-                <span className="spec-label">证书天数</span>
-                <span className="spec-value">{result.cert_days} 天</span>
+                <span className="spec-label">证书有效期</span>
+                <span
+                  className="spec-value"
+                  style={{
+                    color: result.cert_days <= 0 ? 'var(--accent-crimson)' : result.cert_days < 30 ? 'var(--accent-amber)' : 'inherit',
+                  }}
+                  title={result.cert_expire_at ? `到期时间: ${new Date(result.cert_expire_at).toLocaleString()}` : undefined}
+                >
+                  {result.cert_days <= 0 ? '已过期' : `${result.cert_days} 天`}
+                </span>
               </div>
             </div>
           </div>

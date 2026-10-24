@@ -638,7 +638,15 @@ export const SmartFinder = () => {
                   </div>
                   <div className="spec-item">
                     <span className="spec-label">证书有效期</span>
-                    <span className="spec-value">{target.cert_days} 天</span>
+                    <span
+                      className="spec-value"
+                      style={{
+                        color: target.cert_days <= 0 ? 'var(--accent-crimson)' : target.cert_days < 30 ? 'var(--accent-amber)' : 'inherit',
+                      }}
+                      title={target.cert_expire_at ? `到期时间: ${new Date(target.cert_expire_at).toLocaleString()}` : undefined}
+                    >
+                      {target.cert_days <= 0 ? '已过期' : `${target.cert_days} 天`}
+                    </span>
                   </div>
                   <div className="spec-item">
                     <span className="spec-label">HTTP 状态</span>
@@ -658,6 +666,11 @@ export const SmartFinder = () => {
                   <span className="badge badge-success">X25519</span>
                   <span className="badge badge-success">H2</span>
                   {!target.is_cdn && <span className="badge badge-global">无 CDN (源站直连)</span>}
+                  {target.tags?.includes('cert_renew_delayed') && (
+                    <span className="badge badge-warning" title="证书剩余不足30天且尚未自动续期">
+                      疑似未自动续期
+                    </span>
+                  )}
                   {target.is_default_page && (
                     <span className="badge badge-warning">{target.default_page_type || 'Nginx'} 默认页</span>
                   )}
