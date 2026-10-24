@@ -10,10 +10,19 @@ export default withMermaid(
     themeConfig: {
       nav: [
         { text: '首页', link: '/' },
+        { text: '演进历史', link: '/evolution/2026-10-24-cert-expire-and-lazy-recheck' },
         { text: '开发计划', link: '/dev/asn-24h-scanner' },
         { text: '维护手册', link: '/version_management' }
       ],
       sidebar: {
+        '/evolution/': [
+          {
+            text: '架构演进历史',
+            items: [
+              { text: '证书到期时间与按需懒探测', link: '/evolution/2026-10-24-cert-expire-and-lazy-recheck' }
+            ]
+          }
+        ],
         '/dev/': [
           {
             text: '系统演进与开发计划',
@@ -24,6 +33,12 @@ export default withMermaid(
           }
         ],
         '/': [
+          {
+            text: '演进历史',
+            items: [
+              { text: '证书到期时间与按需懒探测', link: '/evolution/2026-10-24-cert-expire-and-lazy-recheck' }
+            ]
+          },
           {
             text: '开发与演进',
             items: [
