@@ -307,3 +307,92 @@ func TestProvisionService_CertRenewalLazyRecheck(t *testing.T) {
 	}
 }
 
+func TestProvisionService_GetSmartTargetsTieredRecall(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_tiered.db")
+	store, err := storage.NewTargetStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewTargetStore failed: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now()
+	// 插入三类资产：同ASN资产、同国家资产、全球优质资产
+	_ = store.UpsertTargets([]*types.TargetRecord{
+		{
+			Domain:        "asn-match.example.com",
+			ASN:           "AS61112",
+			Country:       "JP",
+			IP:            "154.83.93.1",
+			Port:          443,
+			HandshakeMS:   50,
+			CertDays:      60,
+			StatusCode:    200,
+			Stars:         5,
+			IsActive:      true,
+			LastCheckedAt: now,
+		},
+		{
+			Domain:        "country-match.example.com",
+			ASN:           "AS2514",
+			Country:       "JP",
+			IP:            "203.0.113.1",
+			Port:          443,
+			HandshakeMS:   60,
+			CertDays:      60,
+			StatusCode:    200,
+			Stars:         5,
+			IsActive:      true,
+			LastCheckedAt: now,
+		},
+		{
+			Domain:        "global-match.example.com",
+			ASN:           "AS15169",
+			Country:       "US",
+			IP:            "8.8.8.8",
+			Port:          443,
+			HandshakeMS:   70,
+			CertDays:      60,
+			StatusCode:    200,
+			Stars:         5,
+			IsActive:      true,
+			LastCheckedAt: now,
+		},
+	})
+
+	mockASN := &mockASNResolver{
+		asn:      61112,
+		prefixes: []string{"154.83.93.0/24"},
+	}
+
+	svc := NewProvisionService(store, nil, mockASN, nil)
+
+	ranked, summary, err := svc.GetSmartTargets(context.Background(), ProvisionRequest{
+		IP:          "154.83.93.117",
+		Country:     "JP",
+		Limit:       2,
+		MinStars:    3,
+		RequireNoCN: true,
+	})
+	if err != nil {
+		t.Fatalf("GetSmartTargets failed: %v", err)
+	}
+
+	if summary == nil {
+		t.Fatalf("expected non-nil summary")
+	}
+	if summary.SameASNHits != 1 {
+		t.Errorf("expected 1 same ASN hit, got %d", summary.SameASNHits)
+	}
+	if len(ranked) != 2 {
+		t.Fatalf("expected 2 ranked items due to limit=2, got %d", len(ranked))
+	}
+	if ranked[0].Domain != "asn-match.example.com" || ranked[0].MatchLevel != "same_asn" {
+		t.Errorf("expected first to be same_asn, got %s (%s)", ranked[0].Domain, ranked[0].MatchLevel)
+	}
+	if ranked[1].Domain != "country-match.example.com" || ranked[1].MatchLevel != "same_country" {
+		t.Errorf("expected second to be same_country, got %s (%s)", ranked[1].Domain, ranked[1].MatchLevel)
+	}
+}
+
+

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -594,10 +595,59 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 		req.Limit = 100
 	}
 
-	// 2. 从持久化资产库拉取所有活跃资产
-	allTargets, err := s.store.GetAllTargets()
-	if err != nil {
-		return nil, nil, err
+	// 2. 多级候选集智能召回 (同 ASN -> 同国家 -> 全球高星)，避免大表全量加载与内存爆满
+	candidateMap := make(map[string]*types.TargetRecord)
+	var candidateList []*types.TargetRecord
+
+	addCandidate := func(rec *types.TargetRecord) {
+		if rec == nil || rec.Domain == "" || !rec.IsActive {
+			return
+		}
+		if _, exists := candidateMap[rec.Domain]; !exists {
+			candidateMap[rec.Domain] = rec
+			candidateList = append(candidateList, rec)
+		}
+	}
+
+	// 2.1 同 ASN 候选优先召回 (最高置顶优先级)
+	if targetASN != "" {
+		if asnRecords, err := s.store.GetTargetsByASN(targetASN, "", 0); err == nil {
+			for _, rec := range asnRecords {
+				addCandidate(rec)
+			}
+		}
+	}
+
+	// 2.2 同国家优质候选召回 (次高优先级)
+	isActive := true
+	if targetCountry != "" {
+		countryOpts := types.TargetQueryOptions{
+			Country:  targetCountry,
+			MinStars: req.MinStars,
+			IsActive: &isActive,
+			SortBy:   "stars_desc",
+			Page:     1,
+			PageSize: 100,
+		}
+		if countryRecords, _, err := s.store.QueryTargets(countryOpts); err == nil {
+			for _, rec := range countryRecords {
+				addCandidate(rec)
+			}
+		}
+	}
+
+	// 2.3 全球高星优质候选底池
+	globalOpts := types.TargetQueryOptions{
+		MinStars: req.MinStars,
+		IsActive: &isActive,
+		SortBy:   "stars_desc",
+		Page:     1,
+		PageSize: 100,
+	}
+	if globalRecords, _, err := s.store.QueryTargets(globalOpts); err == nil {
+		for _, rec := range globalRecords {
+			addCandidate(rec)
+		}
 	}
 
 	summary := &TargetSummaryInfo{
@@ -618,10 +668,7 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 	var ranked []RankedTargetItem
 	targetASNNorm := strings.ToUpper(strings.TrimPrefix(targetASN, "AS"))
 
-	for _, rec := range allTargets {
-		if rec == nil || rec.Domain == "" || !rec.IsActive {
-			continue
-		}
+	for _, rec := range candidateList {
 		if req.MinStars > 0 && rec.Stars < req.MinStars {
 			continue
 		}
@@ -634,12 +681,6 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 		recASNNorm := strings.ToUpper(strings.TrimPrefix(rec.ASN, "AS"))
 		isSameASN := (targetASNNorm != "" && recASNNorm != "" && targetASNNorm == recASNNorm)
 		isSameCountry := (targetCountry != "" && strings.EqualFold(rec.Country, targetCountry))
-
-		// 同 ASN 临期证书按需懒探测:
-		// 当查询结果中包含同 ASN 记录，且证书剩余时间 < 30 天，且冷却防抖时间已过，发起探测并刷新状态
-		if isSameASN && rec.GetRemainingDays() < 30 && time.Since(rec.LastCheckedAt) > 10*time.Minute {
-			rec, _ = s.RecheckTargetCert(ctx, rec)
-		}
 
 		var certExpirePtr *time.Time
 		if !rec.CertExpireAt.IsZero() {
@@ -717,16 +758,76 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 
 	summary.TotalHits = len(ranked)
 
-	// 4. 严格按照加权得分从高到低排序
-	for i := 0; i < len(ranked); i++ {
-		for j := i + 1; j < len(ranked); j++ {
-			if ranked[j].Score > ranked[i].Score {
-				ranked[i], ranked[j] = ranked[j], ranked[i]
-			}
-		}
+	// 4. 高效 O(N log N) 排序
+	sort.Slice(ranked, func(i, j int) bool {
+		return ranked[i].Score > ranked[j].Score
+	})
+
+	// 5. 对最具潜力的前 N 个同 ASN 临期候选资产执行按需懒探测（并发复核，限制最长耗时）
+	topCheckCount := req.Limit
+	if topCheckCount > len(ranked) {
+		topCheckCount = len(ranked)
 	}
 
-	// 5. 截取 limit 条数
+	var recheckWg sync.WaitGroup
+	var recheckMu sync.Mutex
+	recheckedAny := false
+
+	for i := 0; i < topCheckCount; i++ {
+		rItem := &ranked[i]
+		if rItem.MatchLevel == "same_asn" && rItem.CertDays < 30 && time.Since(rItem.CreatedAt) > 10*time.Minute {
+			recheckWg.Add(1)
+			go func(itemPtr *RankedTargetItem) {
+				defer recheckWg.Done()
+				targetRec := &types.TargetRecord{
+					Domain:        itemPtr.Domain,
+					IP:            itemPtr.IP,
+					ASN:           itemPtr.ASN,
+					Country:       itemPtr.Country,
+					Port:          443,
+					HandshakeMS:   itemPtr.HandshakeMS,
+					CertDays:      itemPtr.CertDays,
+					Tags:          itemPtr.Tags,
+					LastCheckedAt: itemPtr.CreatedAt,
+				}
+				if itemPtr.CertExpireAt != nil {
+					targetRec.CertExpireAt = *itemPtr.CertExpireAt
+				}
+
+				updatedRec, changed := s.RecheckTargetCert(ctx, targetRec)
+				if changed && updatedRec != nil {
+					recheckMu.Lock()
+					defer recheckMu.Unlock()
+					recheckedAny = true
+
+					itemPtr.CertDays = updatedRec.GetRemainingDays()
+					if !updatedRec.CertExpireAt.IsZero() {
+						itemPtr.CertExpireAt = &updatedRec.CertExpireAt
+					}
+					itemPtr.Tags = updatedRec.Tags
+					itemPtr.HandshakeMS = updatedRec.HandshakeMS
+
+					if updatedRec.HasTag(types.TagCertRenewDelayed) && !targetRec.HasTag(types.TagCertRenewDelayed) {
+						itemPtr.Score -= 100
+					} else if !updatedRec.HasTag(types.TagCertRenewDelayed) && targetRec.HasTag(types.TagCertRenewDelayed) {
+						itemPtr.Score += 100
+					}
+					if itemPtr.CertDays >= 30 && targetRec.CertDays < 30 {
+						itemPtr.Score += 20
+					}
+				}
+			}(rItem)
+		}
+	}
+	recheckWg.Wait()
+
+	if recheckedAny {
+		sort.Slice(ranked, func(i, j int) bool {
+			return ranked[i].Score > ranked[j].Score
+		})
+	}
+
+	// 6. 截取 limit 条数
 	if len(ranked) > req.Limit {
 		ranked = ranked[:req.Limit]
 	}
