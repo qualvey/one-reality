@@ -35,6 +35,7 @@ export interface SmartFilterOptions {
   matchScope: 'all' | 'same_asn' | 'same_country';
   statusFilter: 'all' | 'success_only';
   keyword: string;
+  domainSuffixes: string; // 域名后缀过滤，支持多个以逗号分隔，如 ".com, .net"
 }
 
 export interface ScanProgressInfo {

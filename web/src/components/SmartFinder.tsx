@@ -42,6 +42,7 @@ const DEFAULT_FILTER: SmartFilterOptions = {
   matchScope: 'all',
   statusFilter: 'all',
   keyword: '',
+  domainSuffixes: '',
 };
 
 export const SmartFinder = () => {
@@ -196,6 +197,20 @@ export const SmartFinder = () => {
       if (!inDomain && !inTitle && !inASN) return false;
     }
 
+    // 10. 域名后缀过滤 (支持逗号分隔多个，如 .com, .net, .org)
+    if (f.domainSuffixes && f.domainSuffixes.trim()) {
+      const suffixes = f.domainSuffixes
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean)
+        .map((s) => (s.startsWith('.') ? s : `.${s}`));
+      if (suffixes.length > 0) {
+        const domainLower = item.domain.toLowerCase();
+        const matchAny = suffixes.some((sfx) => domainLower.endsWith(sfx));
+        if (!matchAny) return false;
+      }
+    }
+
     return true;
   };
 
@@ -216,8 +231,44 @@ export const SmartFinder = () => {
     if (filter.matchScope !== 'all') count++;
     if (filter.statusFilter !== 'all') count++;
     if (filter.keyword.trim()) count++;
+    if (filter.domainSuffixes && filter.domainSuffixes.trim()) count++;
     return count;
   }, [filter]);
+
+  // 检查某个域名后缀是否已在当前筛选列表中
+  const isSuffixSelected = (sfx: string): boolean => {
+    if (!filter.domainSuffixes || !filter.domainSuffixes.trim()) return false;
+    const clean = sfx.trim().toLowerCase().startsWith('.') ? sfx.trim().toLowerCase() : `.${sfx.trim().toLowerCase()}`;
+    const list = filter.domainSuffixes
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean)
+      .map((s) => (s.startsWith('.') ? s : `.${s}`));
+    return list.includes(clean);
+  };
+
+  // 快速切换 / 添加 / 移除域名后缀
+  const toggleSuffix = (sfx: string) => {
+    setFilter((prev) => {
+      const clean = sfx.trim().toLowerCase().startsWith('.') ? sfx.trim().toLowerCase() : `.${sfx.trim().toLowerCase()}`;
+      const list = prev.domainSuffixes
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean)
+        .map((s) => (s.startsWith('.') ? s : `.${s}`));
+
+      let newList: string[];
+      if (list.includes(clean)) {
+        newList = list.filter((item) => item !== clean);
+      } else {
+        newList = [...list, clean];
+      }
+      return {
+        ...prev,
+        domainSuffixes: newList.join(', '),
+      };
+    });
+  };
 
   // 重置所有过滤器
   const resetFilters = () => {
@@ -231,6 +282,7 @@ export const SmartFinder = () => {
       matchScope: 'all',
       statusFilter: 'all',
       keyword: '',
+      domainSuffixes: '',
     });
   };
 
@@ -246,6 +298,7 @@ export const SmartFinder = () => {
       matchScope: 'all',
       statusFilter: 'all',
       keyword: '',
+      domainSuffixes: '.com',
     });
   };
 
@@ -701,6 +754,79 @@ export const SmartFinder = () => {
               </div>
             </div>
 
+            {/* 域名后缀快捷过滤行 (支持多后缀逗号分隔，默认快捷 .com) */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid rgba(255, 255, 255, 0.05)', flexWrap: 'wrap', gap: '8px' }}>
+              <div className="filter-chips-group">
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-sub)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <Globe size={13} style={{ color: 'var(--accent-cyan)' }} />
+                  <span>域名后缀:</span>
+                </span>
+
+                <button
+                  type="button"
+                  className={`filter-chip ${!filter.domainSuffixes ? 'active' : ''}`}
+                  onClick={() => setFilter((f) => ({ ...f, domainSuffixes: '' }))}
+                >
+                  全部后缀
+                </button>
+
+                <button
+                  type="button"
+                  className={`filter-chip ${isSuffixSelected('.com') ? 'active' : ''}`}
+                  onClick={() => toggleSuffix('.com')}
+                  title="默认快捷选项：快速筛选 / 切换 .com 顶级域名"
+                >
+                  ⭐️ .com (默认快捷)
+                </button>
+
+                <button
+                  type="button"
+                  className={`filter-chip ${isSuffixSelected('.net') ? 'active' : ''}`}
+                  onClick={() => toggleSuffix('.net')}
+                >
+                  .net
+                </button>
+
+                <button
+                  type="button"
+                  className={`filter-chip ${isSuffixSelected('.org') ? 'active' : ''}`}
+                  onClick={() => toggleSuffix('.org')}
+                >
+                  .org
+                </button>
+
+                <button
+                  type="button"
+                  className={`filter-chip ${isSuffixSelected('.io') ? 'active' : ''}`}
+                  onClick={() => toggleSuffix('.io')}
+                >
+                  .io
+                </button>
+
+                <button
+                  type="button"
+                  className={`filter-chip ${isSuffixSelected('.xyz') ? 'active' : ''}`}
+                  onClick={() => toggleSuffix('.xyz')}
+                >
+                  .xyz
+                </button>
+
+                {filter.domainSuffixes && !['.com', '.net', '.org', '.io', '.xyz'].includes(filter.domainSuffixes.trim()) && (
+                  <span className="badge badge-info" style={{ fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    已自定义: {filter.domainSuffixes}
+                    <button
+                      type="button"
+                      onClick={() => setFilter((f) => ({ ...f, domainSuffixes: '' }))}
+                      style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}
+                      title="清除后缀"
+                    >
+                      <X size={11} />
+                    </button>
+                  </span>
+                )}
+              </div>
+            </div>
+
             {/* 第二行：高级抽屉折叠面板 */}
             {showAdvancedFilter && (
               <div className="filter-drawer">
@@ -769,6 +895,95 @@ export const SmartFinder = () => {
                     <option value="all">全部 (包含 443 协议直通)</option>
                     <option value="success_only">仅 200 OK / 正常直通 (排除 4xx/5xx)</option>
                   </select>
+                </div>
+
+                {/* 域名后缀输入与快捷多选 */}
+                <div className="filter-field" style={{ gridColumn: 'span 2' }}>
+                  <label className="filter-field-label">
+                    <Globe size={13} style={{ color: 'var(--accent-cyan)' }} />
+                    <span>指定域名后缀 (支持多个以逗号 `,` 分开，默认快捷 .com)</span>
+                  </label>
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type="text"
+                      placeholder="例如: .com, .net, .org (支持以逗号分隔输入多个后缀)"
+                      value={filter.domainSuffixes}
+                      onChange={(e) => setFilter((f) => ({ ...f, domainSuffixes: e.target.value }))}
+                      style={{ width: '100%', paddingRight: '28px' }}
+                    />
+                    {filter.domainSuffixes && (
+                      <button
+                        type="button"
+                        onClick={() => setFilter((f) => ({ ...f, domainSuffixes: '' }))}
+                        style={{
+                          position: 'absolute',
+                          right: '8px',
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--text-sub)',
+                          cursor: 'pointer',
+                        }}
+                        title="清空后缀"
+                      >
+                        <X size={13} />
+                      </button>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', gap: '6px', marginTop: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-sub)' }}>快捷选填:</span>
+                    <button
+                      type="button"
+                      className={`badge ${isSuffixSelected('.com') ? 'badge-same-asn' : 'badge-global'}`}
+                      style={{ cursor: 'pointer', border: '1px solid var(--border-subtle)' }}
+                      onClick={() => toggleSuffix('.com')}
+                    >
+                      ⭐️ .com
+                    </button>
+                    <button
+                      type="button"
+                      className={`badge ${isSuffixSelected('.net') ? 'badge-same-asn' : 'badge-global'}`}
+                      style={{ cursor: 'pointer', border: '1px solid var(--border-subtle)' }}
+                      onClick={() => toggleSuffix('.net')}
+                    >
+                      .net
+                    </button>
+                    <button
+                      type="button"
+                      className={`badge ${isSuffixSelected('.org') ? 'badge-same-asn' : 'badge-global'}`}
+                      style={{ cursor: 'pointer', border: '1px solid var(--border-subtle)' }}
+                      onClick={() => toggleSuffix('.org')}
+                    >
+                      .org
+                    </button>
+                    <button
+                      type="button"
+                      className="badge badge-global"
+                      style={{ cursor: 'pointer', border: '1px solid var(--border-subtle)' }}
+                      onClick={() => setFilter((f) => ({ ...f, domainSuffixes: '.com, .net' }))}
+                    >
+                      组合: .com, .net
+                    </button>
+                    <button
+                      type="button"
+                      className="badge badge-global"
+                      style={{ cursor: 'pointer', border: '1px solid var(--border-subtle)' }}
+                      onClick={() => setFilter((f) => ({ ...f, domainSuffixes: '.com, .net, .org' }))}
+                    >
+                      组合: .com, .net, .org
+                    </button>
+                    {filter.domainSuffixes && (
+                      <button
+                        type="button"
+                        className="badge badge-global"
+                        style={{ cursor: 'pointer', border: '1px solid var(--border-subtle)', color: 'var(--accent-rose)' }}
+                        onClick={() => setFilter((f) => ({ ...f, domainSuffixes: '' }))}
+                      >
+                        清除后缀限制
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* 关键词快速筛选 */}
@@ -889,6 +1104,19 @@ export const SmartFinder = () => {
                 {filter.keyword && (
                   <span className="badge badge-info" style={{ fontSize: '0.72rem' }}>
                     词: {filter.keyword}
+                  </span>
+                )}
+                {filter.domainSuffixes.trim() && (
+                  <span className="badge badge-info" style={{ fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    后缀: {filter.domainSuffixes}
+                    <button
+                      type="button"
+                      onClick={() => setFilter((f) => ({ ...f, domainSuffixes: '' }))}
+                      style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}
+                      title="清除后缀限制"
+                    >
+                      <X size={10} />
+                    </button>
                   </span>
                 )}
                 {activeFilterCount > 0 && (
