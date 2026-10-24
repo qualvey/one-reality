@@ -1,87 +1,74 @@
-# RealityChecker
-
-RealityChecker 是一个用于自动发现、深度检测与智能筛选 Xray Reality SNI 目标的网站检测与资产管理引擎。它整合了 ASN 网段智能发现、内置原生并发 TLS 扫描器、密码学协议检验、两阶段极速过滤体系以及 SQLite 资产数据库，帮助你从入口 VPS 的 IP 出发，一键找到符合最佳实践的高质量 Reality 真实目标。
+# 项目介绍
 
 > 本项目仅用于网络技术研究与学习。请遵守当地法律法规，合理使用网络资源。
 
----
+叫什么名字没想好，one-reality or reasni？
+是一个用于针对特定ip扫描和匹配reality目标的引擎。
+因为reality 目标域名的最佳实践是
 
-## 🌟 Reality 目标选型最佳实践
-
-- **与入口 VPS 同 ASN / 同机房**：流量特征自然，阻断率最低；
+- **与入口 VPS 同 ASN / 同机房**：流量特征自然，延迟一致；
 - **不使用公共 CDN**：防止 VPS 变成公网免费反代，避免 CDN 封锁；
 - **非热门大厂网站**：避开 Google、Apple 等流量异常显眼的超大站点；
 - **TLS 握手延迟尽量低**：确保科学出海连接体验极速流畅；
-- **真实运营的业务网站**：排除 Nginx/OpenResty/Apache/Caddy 默认欢迎页、Tunnel 占位页或短回显服务。
+- **真实运营的业务网站**：真实运营的网站跑路风险低，demo网站跑路了还要再换
 
 ---
 
 ## ✨ 核心特性
 
-- **两阶段过滤架构 (Two-Stage Filtering)**：
-  - **阶段一（网络扫描与硬性技术底线）**：只执行一次真实的 TLS 握手与技术底线检验（TLS 1.3、X25519 密钥交换、HTTP/2、SNI 匹配、证书未过期、非国内保留地址、排除默认页与 Dummy 占位等），生成候选资产池；
-  - **阶段二（纯内存进阶偏好过滤）**：纯内存 0 耗时即时计算，支持白名单后缀 (`include_suffixes`)、黑名单后缀 (`exclude_suffixes`)、延迟阈值 (`max_handshake_ms`)、状态码排除 (`exclude_status`)、星级门槛等。
-- **本地 SQLite 资产库与 Cache-First 秒级直出**：
-  - 自动持久化存储于 `data/reality_targets.db`（SQLite WAL 模式，带 ASN/国家复合索引）；
-  - **默认 0 网络请求极速直出**：同机房/同 ASN + 国家 IP 二次查询时直接复用本地历史参数秒出结果；
-  - **按需在线复核 (`--recheck`)**：如需对缓存资产进行在线连通性与握手延迟重新复核，传入 `--recheck` 或 `--verify-cache` 即可触发安全并发检测。
-- **全量摸底扫描 (`--check-all`) 与资产导出 (`--export`)**：
-  - 支持全量网段摸排模式（不提前终止），摸清并沉淀该 ASN 下所有合规资产入库，并可导出为标准化 JSON 文件。
-- **Tunnel 占位与微型回显服务识别 (Anti-Dummy / Anti-Tunnel)**：
-  - 智能识别并剔除 `tuwunel`、`boringproxy`、`default backend`、`<150字节` 极短无 HTML 结构回显以及 Nginx / OpenResty / Apache / Caddy / Microsoft IIS 等默认欢迎页与错误页。
-- **网络环境策略化配置**：
-  - `require_no_cn`：默认 `true`（排除国内站点），海外回国翻墙用户可设为 `false`；
-  - `check_gfw`：默认 `false`（本地家宽直连模式依靠真实网络握手连通性自然淘汰，避免静态规则误杀）。
-- **灵活规则引擎**：支持白名单后缀 (`include_suffixes`) 与外部规则文件 (`data/exclude_rules.txt`)。
-- **优雅信号中断 (Ctrl+C Graceful Exit)**：
-  - 单击 `Ctrl+C` 立即停止网络扫描并格式化输出当前已发现的可用目标表格；双击即刻强制终止。
-- **标准输入流式检测**：支持 `cat domains.txt | reality-checker pipe` 管道极速并发检测。
+- **24 小时全网 ASN 自适应扫描守护引擎 (Daemon Mode)**：
+  - **全球 ASN 状态机调度**：支持全网/指定国家/单个 ASN 循环轮转，内置热门高优池倾斜调度（默认 70% 倾斜）；
+  - **网段级断点续传 (Checkpoints)**：毫秒级记录 CIDR 网段扫描游标，支持进程异常重启或平滑中断后无缝恢复；
+  - **网络画像与自适应探测**：智能识别目标机房 (Datacenter) 与住宅宽带 (Residential) 属性，自动避免对家宽网段进行无意义扫描。
 
+- **硬核深度探测与反假冒识别 (Anti-Dummy / Anti-Tunnel)**：
+  - **硬性技术底线**：一次握手完成 TLS 1.3、X25519 椭圆曲线、HTTP/2、严格 SNI 匹配、证书有效性及真实延迟检验；
+  - **微型隧道与回显过滤**：深度特征识别并自动剔除 `tuwunel`、`boringproxy`、`default backend`、`<150 字节` 极简无结构回显以及 Nginx / OpenResty / Apache / Caddy / IIS 等默认欢迎页与错误页。
+
+- **三阶梯候选召回与智能多维打分引擎 (Smart Recommendation)**：
+  - **索引下推三阶召回**：Tier 1 (同 ASN 极速直连) $\rightarrow$ Tier 2 (同国家骨干) $\rightarrow$ Tier 3 (全球高星底池)，物理截断候选规模，十万级大表请求响应 $<10\text{ms}$；
+  - **多维动态加权评分**：融合 ASN 亲和度、物理延迟、证书寿命、状态码及标签权重，经 $O(N \log N)$ 快速排序输出最优伪装资产；
+  - **ACME 30 天自动续期感知与按需懒探测 (Lazy Recheck)**：结合绝对到期时间戳 `cert_expire_at`，自动识别证书进入 30 天续期窗口未换新的高危僵尸站点并降权，API 命中时触发防抖按需外呼更新。
+
+- **双模企业级存储架构 (Dual-Store Architecture)**：
+  - **双引擎统一抽象**：轻量单机开箱即用 **SQLite (WAL 模式)**，大规模分布式生产无缝切换 **PostgreSQL (`pgxpool`)**，单库稳定承载 10万+ 活跃伪装资产池；
+  - **存量健康巡检与自愈 (Patrol & Auto-Purge)**：后台自动化资产巡检体系，周期性淘汰失效域名，支持全量合规资产导出与导入。
+
+- **多形态接入服务体系**：
+  - **RESTful API & SSE 流式长连接**：提供 `/api/targets/smart`、`/api/targets/stream`、`/api/targets/check` 标准接口，完美契合中间件与控制面板集成；
+  - **嵌入式可视化控制台 (Web UI)**：基于 React + TypeScript 构建，支持单二进制内嵌分发（`go:embed`），可视化管理资产、ASN 队列与即时测算；
+  - **高并发 CLI & 管道流式处理**：原生支持 `reality-checker pipe` 管道批量验证与 `Ctrl+C` 平滑中断输出。
 ---
 
 ## 🚀 使用方式
 
-### NOTICE
+### 网络环境
 
-本项目建议在本地运行而非 VPS。为了保证测速与握手延迟的真实性，扫描器默认直连。
-由于初次启动会自动连接 GitHub 下载必要的规则库与 GeoIP 数据库，您可直接在 `config.yaml` 中配置代理：
+如果使用透明代理，请配置本程序走直连规则。
+推荐使用单独socks入站-> direct。
+由于初次启动会自动连接 GitHub 下载必要的规则库与 GeoIP 数据库，您可直接在 `config.yaml` 中配置分流：
 
 ```yaml
 proxy:
-  url: "http://127.0.0.1:7890"  # 支持 http://, https://, socks5://
-  download: true                # GitHub 资源下载与外部 API 查询走代理
-  scanner: false                # 目标扫描探测保持直连（测速更准）
+  url: "http://127.0.0.1:7890"  # 支持 http://, https://, socks5://,此处填直连出口对应的入站
+  download: false               # 下载不走改入站（就是不走直连，流向透明代理）
+  scanner: true                 # 走直连出站
 ```
 
-若您在客户端（如 sing-box / clash）统一分流，亦可配置规则如下：
-```json
-  "route": {
-    "rules": [
-      {
-        "domain_suffix": "github.com",
-        "outbound": "Proxy"
-      },
-      {
-        "process_path_regex": "(?i)(^|[/\\\\])[^/\\\\]*reality[^/\\\\]*$",
-        "action": "bypass",
-        "outbound": "direct"
-      }
-    ]
-  }
-```
+### 工作流一：根据 VPS IP 扫描和筛选（推荐）
 
-### 工作流一：根据 VPS IP 自动全流程筛选（最推荐）
-
-输入一个 VPS IP 后，程序会：
+输入 VPS IP 后，程序会：
 1. 查询该 IP 所属 ASN 及已宣布网段；
 2. 依据入口 IP 的国家（或 `--country` 指定国家）智能过滤网段；
-3. 优先检查本地 SQLite 资产库（**Cache-First**），命中则秒级直出；
-4. 未命中时自动启动原生并发扫描，执行两阶段过滤并按推荐星级输出结果。
+3. 优先检查本地 数据库（**Cache-First**），命中直接返回；
+4. 未命中时自动启动并发扫描，根据过滤条件筛选结果
 比如
 
 ```bash
-./reality-checker auto 85.155.184.100 --limit 5
+./reasni auto 85.155.184.100 --limit 5
 ```
+
+命中5个符合筛选的结果后退出
 
 ### 工作流二：全量摸底扫描并导出 JSON 数据集
 
@@ -91,20 +78,6 @@ proxy:
 ./reality-checker auto 85.155.184.100 --check-all --export targets.json
 ```
 
-### 工作流三：查询 ASN 网段，再自定义扫描
-
-只想获取某个 ASN 在指定国家的 CIDR 时：
-
-```bash
-./reality-checker asn AS15169 US > as15169-us.txt
-```
-
-然后扫描文件中的网段（每行一个 CIDR 或 IP）：
-
-```bash
-./reality-checker auto --in ./as15169-us.txt --limit 10
-```
-
 ---
 
 ## 🔍 检测内容与指标
@@ -112,9 +85,7 @@ proxy:
 只有通过硬性技术底线的结果才会被纳入资产池并参与星级评定：
 
 - **密码学与协议**：TLS 1.3、X25519 密钥交换和 HTTP/2 支持；
-- **握手延迟**：真实 TLS 密码学握手往返延迟 (RTT)；
 - **证书有效性**：证书剩余有效天数（默认 >= 10天）和 SNI 匹配度；
-- **页面状态与默认页**：HTTP 状态码（支持自定义 `exclude_status` 排除 301/302/404 等）、Nginx/Apache/Caddy 默认欢迎页及 Tunnel/回显服务识别；
 - **CDN 与热门站点**：智能识别 CDN 厂商及 Alexa/Tranco 热门大站；
 - **地理位置**：目标 IP 的 GeoIP 归属地判定。
 
@@ -273,17 +244,12 @@ concurrency:
 .\build.ps1
 ```
 
-### 3. 数据文件与内置资源
+### 3. 数据文件与内置资产
 
-程序采用 **“静态内置 + 外部优先覆盖”** 策略：
-- **静态规则内置（零外部依赖开箱即用）**：
-  - `cdn_keywords.txt`（CDN 识别特征库，已内置）
-  - `hot_websites.txt`（热门大站过滤库，已内置）
-  - `exclude_rules.txt`（排除规则库，已内置）
-  - *支持自定义覆盖*：如需扩充特征，只需在执行目录放置 `data/` 下对应文件即可优先加载。
-- **动态数据库**：
-  - `Country.mmdb`（MaxMind GeoIP 国家数据库）：程序启动时会自动检测并更新（检查周期 15 天），若离线可手动放入 `data/Country.mmdb`。
-  - `reality_targets.db`（SQLite 资产持久化数据库，自动生成）。
+为保证开箱即用与跨网络环境的稳定性，程序内置了完整的静态规则与 GeoIP 离线库：
+- **静态规则库**（`cdn_keywords.txt`、`hot_websites.txt`、`exclude_rules.txt`）：已全部通过 `go:embed` 内嵌在可执行文件中，无需额外下载。如需自定义，可在 `data/` 目录下放置同名文件实现优先覆盖。
+- **GeoIP 国家数据库**（`Country.mmdb`）：编译构建时会自动联网拉取最新数据库并内置嵌入（`go:embed`）。运行时程序会定期检测更新（15 天周期）；若在弱网或离线环境下下载失败，将**自动无缝回退至内置版本**，无需人工干预即可完整运行。
+- `reality_targets.db`：SQLite 资产与扫描持久化数据库（程序运行自动创建与维护）。
 
 ---
 
