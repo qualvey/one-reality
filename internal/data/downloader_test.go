@@ -41,3 +41,40 @@ func TestNeedsUpdate(t *testing.T) {
 		t.Errorf("超过 15 天的文件应该需要更新")
 	}
 }
+
+func TestEnsureFileFallbackToEmbedded(t *testing.T) {
+	tempDir := t.TempDir()
+	targetPath := filepath.Join(tempDir, "fallback", "Country.mmdb")
+
+	d := NewDownloader()
+	d.retries = 1
+	d.retryDelay = 0
+	d.timeout = 500 * time.Millisecond
+
+	// 使用必定失败的 URL
+	file := DataFile{
+		Name:      "Country.mmdb",
+		URL:       "http://127.0.0.1:0/unreachable/Country.mmdb",
+		LocalPath: targetPath,
+	}
+
+	err := d.ensureFile(file)
+	if err != nil {
+		t.Fatalf("ensureFile 期望回退内置版本成功，但返回错误: %v", err)
+	}
+
+	fi, err := os.Stat(targetPath)
+	if err != nil {
+		t.Fatalf("回退写入的本地文件不存在: %v", err)
+	}
+	if fi.Size() == 0 {
+		t.Errorf("回退写入的文件大小为 0")
+	}
+
+	// 验证生成的文件能被 OpenGeoIPReader 打开并正常解析
+	reader, err := OpenGeoIPReader(targetPath)
+	if err != nil {
+		t.Fatalf("无法加载回退释放的 GeoIP 数据库: %v", err)
+	}
+	defer reader.Close()
+}

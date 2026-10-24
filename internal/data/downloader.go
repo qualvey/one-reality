@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -85,19 +86,40 @@ func (d *Downloader) EnsureDataFiles() error {
 
 // ensureFile 确保单个文件存在且最新
 func (d *Downloader) ensureFile(file DataFile) error {
+	// 确保父目录存在
+	if dir := filepath.Dir(file.LocalPath); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("创建目录 %s 失败: %w", dir, err)
+		}
+	}
+
 	// 检查文件是否存在
 	exists, err := d.fileExists(file.LocalPath)
 	if err != nil {
 		return fmt.Errorf("检查文件 %s 失败: %v", file.Name, err)
 	}
 
-	// 如果文件不存在，直接下载
+	// 如果文件不存在，直接下载；下载失败则尝试回退内置版本
 	if !exists {
 		printTimestampedMessage("下载 %s...", file.Name)
-		return d.downloadWithRetry(file)
+		if err := d.downloadWithRetry(file); err != nil {
+			if file.Name == "Country.mmdb" {
+				if embData, embErr := GetEmbeddedCountryMMDB(); embErr == nil && len(embData) > 0 {
+					printTimestampedMessage("⚠️ 下载 %s 失败，回退释放并使用内置版本至 %s", file.Name, file.LocalPath)
+					writeErr := os.WriteFile(file.LocalPath, embData, 0644)
+					if writeErr == nil {
+						return nil
+					}
+					printTimestampedMessage("⚠️ 写入内置 %s 到 %s 失败: %v，将继续在内存中直接使用内置版本", file.Name, file.LocalPath, writeErr)
+					return nil
+				}
+			}
+			return err
+		}
+		return nil
 	}
 
-	// 检查文件是否需要更新（3天）
+	// 检查文件是否需要更新（超过15天）
 	needsUpdate, err := d.needsUpdate(file.LocalPath)
 	if err != nil {
 		return fmt.Errorf("检查文件 %s 更新时间失败: %v", file.Name, err)
@@ -106,16 +128,22 @@ func (d *Downloader) ensureFile(file DataFile) error {
 	// 如果需要更新，下载新文件
 	if needsUpdate {
 		printTimestampedMessage("更新 %s...", file.Name)
-		return d.downloadWithRetry(file)
+		if err := d.downloadWithRetry(file); err != nil {
+			printTimestampedMessage("⚠️ 更新 %s 失败 (%v)，继续沿用现有本地版本", file.Name, err)
+			return nil
+		}
 	}
 
 	return nil
 }
 
-// fileExists 检查文件是否存在
+// fileExists 检查文件是否存在且非空
 func (d *Downloader) fileExists(path string) (bool, error) {
-	_, err := os.Stat(path)
+	fi, err := os.Stat(path)
 	if err == nil {
+		if fi.Size() == 0 {
+			return false, nil
+		}
 		return true, nil
 	}
 	if os.IsNotExist(err) {
@@ -155,7 +183,12 @@ func (d *Downloader) downloadWithRetry(file DataFile) error {
 		}
 	}
 
-	// 所有重试都失败了，显示手动下载说明
+	// 如果有内置版本可回退，则不在此打印手动下载说明（由调用方回退内置版本并提示）
+	if file.Name == "Country.mmdb" && HasEmbeddedCountryMMDB() {
+		return fmt.Errorf("下载 %s 失败，已重试 %d 次", file.Name, d.retries)
+	}
+
+	// 所有重试都失败了且无内置回退，显示手动下载说明
 	d.showManualDownloadInstructions()
 	return fmt.Errorf("下载 %s 失败，已重试 %d 次", file.Name, d.retries)
 }
