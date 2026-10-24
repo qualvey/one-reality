@@ -2,9 +2,9 @@ package detectors
 
 import (
 	"bufio"
-	"os"
 	"strings"
 
+	"RealityChecker/internal/data"
 	"RealityChecker/internal/types"
 )
 
@@ -118,15 +118,15 @@ func (hws *HotWebsiteStage) isSubdomain(domain, baseDomain string) bool {
 	return strings.HasSuffix(domain, suffix)
 }
 
-// loadHotWebsites 加载热门网站列表
+// loadHotWebsites 加载热门网站列表（优先本地文件，回退内置资产）
 func (hws *HotWebsiteStage) loadHotWebsites() {
-	file, err := os.Open("data/hot_websites.txt")
+	reader, err := data.OpenRuleReader("data/hot_websites.txt", "hot_websites.txt")
 	if err != nil {
 		return
 	}
-	defer file.Close()
+	defer reader.Close()
 
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line != "" && !strings.HasPrefix(line, "#") {

@@ -5,11 +5,11 @@ import (
 	"crypto/x509"
 	"fmt"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
 
+	"RealityChecker/internal/data"
 	"RealityChecker/internal/types"
 )
 
@@ -231,15 +231,15 @@ func (d *CDNDetector) initBuiltinFingerprints() {
 	}
 }
 
-// loadExternalFile 从外部配置文件合并规则
+// loadExternalFile 从外部配置文件或内置资源合并规则
 func (d *CDNDetector) loadExternalFile(filePath string) {
-	file, err := os.Open(filePath)
+	reader, err := data.OpenRuleReader(filePath, "cdn_keywords.txt")
 	if err != nil {
 		return
 	}
-	defer file.Close()
+	defer reader.Close()
 
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(reader)
 	currentSection := ""
 
 	for scanner.Scan() {

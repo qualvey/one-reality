@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"RealityChecker/internal/data"
 	"RealityChecker/internal/types"
 
 	"gopkg.in/yaml.v3"
@@ -492,32 +493,30 @@ func validateAndSetDefaults(config *types.Config) {
 		config.Batch.Timeout = 60 * time.Second
 	}
 
-	// 尝试加载外部排除规则文件
+	// 尝试加载排除规则（优先用户配置路径/本地文件，若不存在自动回退至内置规则）
 	rulesPath := config.RealityFilter.ExcludeRulesFile
 	if rulesPath == "" {
 		rulesPath = "data/exclude_rules.txt"
 	}
-	if _, err := os.Stat(rulesPath); err == nil {
-		domains, suffixes, patterns, statusCodes, incSuffixes, err := LoadExcludeRulesFromFile(rulesPath)
-		if err == nil {
-			config.RealityFilter.IncludeSuffixes = mergeUniqueStrings(config.RealityFilter.IncludeSuffixes, incSuffixes)
-			config.RealityFilter.ExcludeDomains = mergeUniqueStrings(config.RealityFilter.ExcludeDomains, domains)
-			config.RealityFilter.ExcludeSuffixes = mergeUniqueStrings(config.RealityFilter.ExcludeSuffixes, suffixes)
-			config.RealityFilter.ExcludePatterns = mergeUniqueStrings(config.RealityFilter.ExcludePatterns, patterns)
-			config.RealityFilter.ExcludeStatus = mergeUniqueInts(config.RealityFilter.ExcludeStatus, statusCodes)
-		}
+	domains, suffixes, patterns, statusCodes, incSuffixes, err := LoadExcludeRulesFromFile(rulesPath)
+	if err == nil {
+		config.RealityFilter.IncludeSuffixes = mergeUniqueStrings(config.RealityFilter.IncludeSuffixes, incSuffixes)
+		config.RealityFilter.ExcludeDomains = mergeUniqueStrings(config.RealityFilter.ExcludeDomains, domains)
+		config.RealityFilter.ExcludeSuffixes = mergeUniqueStrings(config.RealityFilter.ExcludeSuffixes, suffixes)
+		config.RealityFilter.ExcludePatterns = mergeUniqueStrings(config.RealityFilter.ExcludePatterns, patterns)
+		config.RealityFilter.ExcludeStatus = mergeUniqueInts(config.RealityFilter.ExcludeStatus, statusCodes)
 	}
 }
 
-// LoadExcludeRulesFromFile 从外部规则文件加载排除规则
+// LoadExcludeRulesFromFile 从外部规则文件或内置资源加载排除规则
 func LoadExcludeRulesFromFile(filePath string) (domains, suffixes, patterns []string, statusCodes []int, includeSuffixes []string, err error) {
-	file, err := os.Open(filePath)
+	reader, err := data.OpenRuleReader(filePath, "exclude_rules.txt")
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
-	defer file.Close()
+	defer reader.Close()
 
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(reader)
 	currentSection := ""
 
 	for scanner.Scan() {
