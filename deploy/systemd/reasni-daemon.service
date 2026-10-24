@@ -1,0 +1,21 @@
+[Unit]
+Description=RealityChecker ASN Scanner Daemon
+Documentation=https://github.com/qualvey/one-reality
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/lib/reasni
+Environment="REALITY_CONFIG=/etc/reasni/config.yaml"
+EnvironmentFile=-/etc/default/reasni
+EnvironmentFile=-/etc/reasni/daemon.env
+# 注意：在 Armbian / NanoPi 等嵌入式盒子上，建议通过 -t 适当调低并发（如 100~150），避免占满路由器 NAT 连接表
+ExecStart=/usr/local/bin/reasni daemon $DAEMON_OPTS
+Restart=on-failure
+RestartSec=10s
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
