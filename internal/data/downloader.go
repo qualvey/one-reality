@@ -13,9 +13,10 @@ import (
 
 // DataFile 数据文件配置
 type DataFile struct {
-	Name      string
-	URL       string
-	LocalPath string
+	Name         string
+	URL          string
+	FallbackURLs []string
+	LocalPath    string
 }
 
 // Downloader 数据文件下载器
@@ -54,26 +55,14 @@ func (d *Downloader) EnsureDataFiles() error {
 		printTimestampedMessage("使用网络代理进行数据文件下载: %s", d.proxyURL)
 	}
 
-	// 定义需要下载的文件
+	// 定义需要下载的数据文件（静态规则 cdn_keywords/hot_websites/exclude_rules 已通过 go:embed 内置，无需远程下载）
 	files := []DataFile{
 		{
-			Name:      "cdn_keywords.txt",
-			URL:       "https://raw.githubusercontent.com/V2RaySSR/RealityChecker/main/data/cdn_keywords.txt",
-			LocalPath: "data/cdn_keywords.txt",
-		},
-		{
-			Name:      "hot_websites.txt",
-			URL:       "https://raw.githubusercontent.com/V2RaySSR/RealityChecker/main/data/hot_websites.txt",
-			LocalPath: "data/hot_websites.txt",
-		},
-		{
-			Name:      "gfwlist.conf",
-			URL:       "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/gfw.txt",
-			LocalPath: "data/gfwlist.conf",
-		},
-		{
-			Name:      "Country.mmdb",
-			URL:       "https://raw.githubusercontent.com/Loyalsoldier/geoip/release/Country.mmdb",
+			Name: "Country.mmdb",
+			URL:  "https://raw.githubusercontent.com/Loyalsoldier/geoip/release/Country.mmdb",
+			FallbackURLs: []string{
+				"https://github.com/Loyalsoldier/geoip/releases/latest/download/Country.mmdb",
+			},
 			LocalPath: "data/Country.mmdb",
 		},
 	}
@@ -135,42 +124,45 @@ func (d *Downloader) fileExists(path string) (bool, error) {
 	return false, err
 }
 
-// needsUpdate 检查文件是否需要更新（超过3天）
+// needsUpdate 检查文件是否需要更新（超过15天）
 func (d *Downloader) needsUpdate(path string) (bool, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return false, err
 	}
 
-	// 检查文件修改时间是否超过3天
-	threeDaysAgo := time.Now().Add(-3 * 24 * time.Hour)
-	return info.ModTime().Before(threeDaysAgo), nil
+	// 检查文件修改时间是否超过15天（GeoIP 数据库建议半月或月度更新，降低频繁下载开销）
+	fifteenDaysAgo := time.Now().Add(-15 * 24 * time.Hour)
+	return info.ModTime().Before(fifteenDaysAgo), nil
 }
 
-// downloadWithRetry 带重试的下载
+// downloadWithRetry 带重试与备用源的下载
 func (d *Downloader) downloadWithRetry(file DataFile) error {
+	urls := append([]string{file.URL}, file.FallbackURLs...)
+
 	for i := 0; i < d.retries; i++ {
 		if i > 0 {
 			fmt.Printf("重试中... (%d/%d)\n", i, d.retries)
 			time.Sleep(d.retryDelay)
 		}
 
-		err := d.downloadFile(file)
-		if err == nil {
-			return nil // 成功
+		for _, targetURL := range urls {
+			err := d.downloadFileFromURL(file, targetURL)
+			if err == nil {
+				return nil // 成功
+			}
+			fmt.Printf("警告：从 %s 下载 %s 失败: %v\n", targetURL, file.Name, err)
 		}
-
-		fmt.Printf("错误：下载 %s 失败 - %s %v\n", file.Name, file.URL, err)
 	}
 
 	// 所有重试都失败了，显示手动下载说明
 	d.showManualDownloadInstructions()
-	return fmt.Errorf("下载失败，已重试 %d 次", d.retries)
+	return fmt.Errorf("下载 %s 失败，已重试 %d 次", file.Name, d.retries)
 }
 
-// downloadFile 下载单个文件
-func (d *Downloader) downloadFile(file DataFile) error {
-	logger.Info("downloading file %s", file.URL)
+// downloadFileFromURL 从指定 URL 下载单个文件
+func (d *Downloader) downloadFileFromURL(file DataFile, downloadURL string) error {
+	logger.Info("downloading file %s from %s", file.Name, downloadURL)
 	tr, err := network.MakeHTTPTransport(d.proxyURL, d.timeout)
 	if err != nil {
 		return fmt.Errorf("配置下载传输失败: %w", err)
@@ -183,7 +175,7 @@ func (d *Downloader) downloadFile(file DataFile) error {
 	}
 
 	// 构造 Request 并注入常见 User-Agent
-	req, err := http.NewRequest("GET", file.URL, nil)
+	req, err := http.NewRequest("GET", downloadURL, nil)
 	if err != nil {
 		return err
 	}
@@ -229,13 +221,11 @@ func (d *Downloader) downloadFile(file DataFile) error {
 
 // showManualDownloadInstructions 显示手动下载说明
 func (d *Downloader) showManualDownloadInstructions() {
-	fmt.Println("数据文件暂不可用，相关检测将使用降级模式")
+	fmt.Println("GeoIP 数据库暂不可用，归属地检测将使用降级模式。")
+	fmt.Println("（注：CDN 特征库、热门大站与排除规则已内置，无需额外下载）")
 	fmt.Println()
-	fmt.Println("如需补齐数据，可手动下载以下文件到 data/ 目录：")
-	fmt.Println("1. cdn_keywords.txt: https://raw.githubusercontent.com/V2RaySSR/RealityChecker/main/data/cdn_keywords.txt")
-	fmt.Println("2. hot_websites.txt: https://raw.githubusercontent.com/V2RaySSR/RealityChecker/main/data/hot_websites.txt")
-	fmt.Println("3. gfwlist.conf: https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/gfw.txt")
-	fmt.Println("4. Country.mmdb: https://github.com/Loyalsoldier/geoip/releases/latest/download/Country.mmdb")
+	fmt.Println("如需补齐 GeoIP 数据库，可手动下载 Country.mmdb 到 data/ 目录：")
+	fmt.Println("  https://github.com/Loyalsoldier/geoip/releases/latest/download/Country.mmdb")
 	fmt.Println()
-	fmt.Println("补齐后下次运行时将自动复用这些文件。")
+	fmt.Println("补齐后下次运行时将自动加载。")
 }
