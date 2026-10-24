@@ -273,15 +273,17 @@ concurrency:
 .\build.ps1
 ```
 
-### 3. 数据文件
+### 3. 数据文件与内置资源
 
-程序首次运行会自动初始化 `data/` 目录并准备检测所需数据。若离线部署，请确保 `data/` 包含：
-- `Country.mmdb`（MaxMind GeoIP 国家数据库）
-- `gfwlist.conf`（GFWList 规则）
-- `cdn_keywords.txt`（CDN 识别特征库）
-- `hot_websites.txt`（热门大站特征库）
-- `exclude_rules.txt`（排除规则库）
-- `reality_targets.db`（SQLite 资产持久化数据库，自动生成）
+程序采用 **“静态内置 + 外部优先覆盖”** 策略：
+- **静态规则内置（零外部依赖开箱即用）**：
+  - `cdn_keywords.txt`（CDN 识别特征库，已内置）
+  - `hot_websites.txt`（热门大站过滤库，已内置）
+  - `exclude_rules.txt`（排除规则库，已内置）
+  - *支持自定义覆盖*：如需扩充特征，只需在执行目录放置 `data/` 下对应文件即可优先加载。
+- **动态数据库**：
+  - `Country.mmdb`（MaxMind GeoIP 国家数据库）：程序启动时会自动检测并更新（检查周期 15 天），若离线可手动放入 `data/Country.mmdb`。
+  - `reality_targets.db`（SQLite 资产持久化数据库，自动生成）。
 
 ---
 
