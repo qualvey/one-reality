@@ -90,5 +90,9 @@ build_target linux amd64
 build_target linux arm64
 build_target windows amd64
 
+echo "Copying deployment assets to ${DIST_DIR}..."
+cp -f "${ROOT_DIR}/scripts/install.sh" "${DIST_DIR}/install.sh"
+cp -f "${ROOT_DIR}/deploy/systemd/reasni-daemon.service" "${DIST_DIR}/reasni-daemon.service"
+
 echo "Build artifacts: ${DIST_DIR}"
 ls -lh "${DIST_DIR}"

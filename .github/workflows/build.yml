@@ -57,6 +57,9 @@ jobs:
 
           ### 本次更新
 
+          - 新增 Systemd 守护进程服务单元与 `install.sh` 极速安装运维脚本
+          - 针对 NanoPi / 树莓派 / Armbian 嵌入式设备优化并发限流，防 NAT 表溢出
+          - 新增 `reasni-service` 统一运维快捷命令（start/stop/restart/log/status/config）
           - 新增 `serve` 和 `get` 子命令，支持 HTTP API 与 CLI 目标发现/查询能力
           - 新增 HTTP 服务端支持：CORS、SSE 流式输出、批量 REST API
           - 新增 `ProvisionService`，支持 cache-first 与 streaming target discovery
