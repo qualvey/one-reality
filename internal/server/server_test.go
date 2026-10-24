@@ -341,3 +341,58 @@ func TestServer_StaticAssetFallback(t *testing.T) {
 	}
 }
 
+func TestServer_DefaultFilterAndPreferenceQuery(t *testing.T) {
+	ts, store := setupTestServer(t)
+	defer store.Close()
+
+	// 1. 测试 GET /api/filter/default
+	reqFilter := httptest.NewRequest(http.MethodGet, "/api/filter/default", nil)
+	wFilter := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(wFilter, reqFilter)
+
+	if wFilter.Code != http.StatusOK {
+		t.Fatalf("expected 200 for /api/filter/default, got %d", wFilter.Code)
+	}
+	var filterResp map[string]any
+	if err := json.Unmarshal(wFilter.Body.Bytes(), &filterResp); err != nil {
+		t.Fatalf("failed to decode filter json: %v", err)
+	}
+	if filterResp["code"] != float64(200) {
+		t.Fatalf("expected code 200, got %v", filterResp["code"])
+	}
+
+	// 2. 插入测试数据测试偏好过滤
+	_ = store.UpsertTargets([]*types.TargetRecord{
+		{
+			Domain:        "cdn.example.org",
+			ASN:           "AS12345",
+			Country:       "US",
+			IP:            "1.2.3.5",
+			HandshakeMS:   35,
+			CertDays:      80,
+			StatusCode:    200,
+			IsCDN:         true,
+			Stars:         3,
+			LastCheckedAt: time.Now(),
+		},
+	})
+
+	// 查询 require_no_cdn=1
+	reqTargets := httptest.NewRequest(http.MethodGet, "/api/targets?require_no_cdn=1", nil)
+	wTargets := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(wTargets, reqTargets)
+
+	if wTargets.Code != http.StatusOK {
+		t.Fatalf("expected 200 for /api/targets, got %d", wTargets.Code)
+	}
+	var targetsResp map[string]any
+	if err := json.Unmarshal(wTargets.Body.Bytes(), &targetsResp); err != nil {
+		t.Fatalf("failed to decode targets json: %v", err)
+	}
+	dataMap := targetsResp["data"].(map[string]any)
+	total := int(dataMap["total"].(float64))
+	if total != 1 {
+		t.Errorf("expected 1 non-CDN target, got %d", total)
+	}
+}
+

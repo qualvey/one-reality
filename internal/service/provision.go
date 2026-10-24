@@ -156,6 +156,14 @@ func NewProvisionService(
 	}
 }
 
+// GetDefaultFilter 获取默认的资产过滤偏好
+func (s *ProvisionService) GetDefaultFilter() types.FilterConfig {
+	if s.appConfig != nil {
+		return s.appConfig.GetFilter()
+	}
+	return config.GetDefaultConfig().GetFilter()
+}
+
 // StreamTargets 执行渐进式目标发现：优先本地有效缓存，不足时触发实时扫描补齐
 func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionRequest, emit func(evt ProvisionEvent) error) error {
 	// 1. 参数校验与补齐默认值

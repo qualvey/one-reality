@@ -65,6 +65,7 @@ func NewTargetServer(cfg ServerConfig, svc *service.ProvisionService) *TargetSer
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", ts.handleHealth)
 	mux.HandleFunc("/api/stats", ts.handleStats)
+	mux.HandleFunc("/api/filter/default", ts.handleDefaultFilter)
 	mux.HandleFunc("/api/targets/smart", ts.handleTargetsSmart)
 	mux.HandleFunc("/api/targets/stream", ts.handleTargetsStream)
 	mux.HandleFunc("/api/targets/check", ts.handleTargetsCheck)
@@ -420,6 +421,21 @@ func (s *TargetServer) handleTargetsCheck(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// handleDefaultFilter 返回系统全局默认过滤与选型偏好配置
+func (s *TargetServer) handleDefaultFilter(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"code": 405, "error": "Method Not Allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	filter := s.service.GetDefaultFilter()
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"code": 200,
+		"data": filter,
+	})
+}
+
 // handleTargetsManage 资产库管理接口 (GET 分页检索)
 func (s *TargetServer) handleTargetsManage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -433,6 +449,47 @@ func (s *TargetServer) handleTargetsManage(w http.ResponseWriter, r *http.Reques
 			isActive = &b
 		}
 
+		var requireNoCDN *bool
+		if val := q.Get("require_no_cdn"); val != "" {
+			b := parseBool(val)
+			requireNoCDN = &b
+		}
+
+		var requireNoHot *bool
+		if val := q.Get("require_no_hot"); val != "" {
+			b := parseBool(val)
+			requireNoHot = &b
+		}
+
+		var requireNoDefaultPage *bool
+		if val := q.Get("require_no_default_page"); val != "" {
+			b := parseBool(val)
+			requireNoDefaultPage = &b
+		}
+
+		var maxHandshakeMS int64
+		if val := q.Get("max_handshake_ms"); val != "" {
+			if ms, err := strconv.ParseInt(val, 10, 64); err == nil && ms > 0 {
+				maxHandshakeMS = ms
+			}
+		}
+
+		var minCertDays int
+		if val := q.Get("min_cert_days"); val != "" {
+			if days, err := strconv.Atoi(val); err == nil && days > 0 {
+				minCertDays = days
+			}
+		}
+
+		var excludeStatus []int
+		if val := q.Get("exclude_status"); val != "" {
+			for _, part := range strings.Split(val, ",") {
+				if code, err := strconv.Atoi(strings.TrimSpace(part)); err == nil {
+					excludeStatus = append(excludeStatus, code)
+				}
+			}
+		}
+
 		page, _ := strconv.Atoi(q.Get("page"))
 		if page <= 0 {
 			page = 1
@@ -444,14 +501,20 @@ func (s *TargetServer) handleTargetsManage(w http.ResponseWriter, r *http.Reques
 		minStars, _ := strconv.Atoi(q.Get("min_stars"))
 
 		opts := types.TargetQueryOptions{
-			Keyword:  q.Get("keyword"),
-			ASN:      q.Get("asn"),
-			Country:  q.Get("country"),
-			MinStars: minStars,
-			IsActive: isActive,
-			SortBy:   q.Get("sort_by"),
-			Page:     page,
-			PageSize: pageSize,
+			Keyword:              q.Get("keyword"),
+			ASN:                  q.Get("asn"),
+			Country:              q.Get("country"),
+			MinStars:             minStars,
+			IsActive:             isActive,
+			RequireNoCDN:         requireNoCDN,
+			RequireNoHot:         requireNoHot,
+			RequireNoDefaultPage: requireNoDefaultPage,
+			MaxHandshakeMS:       maxHandshakeMS,
+			MinCertDays:          minCertDays,
+			ExcludeStatus:        excludeStatus,
+			SortBy:               q.Get("sort_by"),
+			Page:                 page,
+			PageSize:             pageSize,
 		}
 
 		items, total, err := s.service.QueryTargets(opts)
