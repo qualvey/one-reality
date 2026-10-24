@@ -22,6 +22,32 @@ export interface TargetItem {
 export interface RankedTargetItem extends TargetItem {
   match_level: MatchLevel;
   score: number;
+  is_new_scan?: boolean;
+}
+
+export interface SmartFilterOptions {
+  minStars: number;
+  maxHandshakeMS: number;
+  requireNoCDN: boolean;
+  requireNoDefaultPage: boolean;
+  requireNoCN: boolean;
+  minCertDays: number;
+  matchScope: 'all' | 'same_asn' | 'same_country';
+  statusFilter: 'all' | 'success_only';
+  keyword: string;
+}
+
+export interface ScanProgressInfo {
+  isScanning: boolean;
+  scannedIPs: number;
+  totalIPs: number;
+  currentCIDR: string;
+  currentIP: string;
+  speed: number;
+  percent: number;
+  foundCount: number;
+  matchedCount: number;
+  message: string;
 }
 
 export interface TargetSummaryInfo {

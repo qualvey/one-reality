@@ -1,5 +1,11 @@
-import { useState, useRef, useEffect } from 'react';
-import type { RankedTargetItem, TargetSummaryInfo, TargetItem } from '../types';
+import { useState, useRef, useEffect, useMemo } from 'react';
+import type {
+  RankedTargetItem,
+  TargetSummaryInfo,
+  TargetItem,
+  SmartFilterOptions,
+  ScanProgressInfo,
+} from '../types';
 import { ConfigModal } from './ConfigModal';
 import {
   Sparkles,
@@ -16,38 +22,99 @@ import {
   Home,
   Server,
   AlertTriangle,
+  Filter,
+  SlidersHorizontal,
+  RotateCcw,
+  Search,
+  X,
+  ChevronDown,
+  ChevronUp,
+  Clock,
 } from 'lucide-react';
+
+const DEFAULT_FILTER: SmartFilterOptions = {
+  minStars: 3,
+  maxHandshakeMS: 0,
+  requireNoCDN: true,
+  requireNoDefaultPage: false,
+  requireNoCN: true,
+  minCertDays: 0,
+  matchScope: 'all',
+  statusFilter: 'all',
+  keyword: '',
+};
 
 export const SmartFinder = () => {
   const [ip, setIP] = useState('');
-  const [limit] = useState(12);
-  const [minStars, setMinStars] = useState(3);
-  const [requireNoCN, setRequireNoCN] = useState(true);
+
+  // 过滤器状态（完全由前端控制，支持即时响应与热切换）
+  const [filter, setFilter] = useState<SmartFilterOptions>(DEFAULT_FILTER);
+  const [showAdvancedFilter, setShowAdvancedFilter] = useState(false);
 
   // 鉴权 Token
   const [apiToken, setApiToken] = useState(() => localStorage.getItem('rc_api_token') || '');
   const [showTokenSettings, setShowTokenSettings] = useState(false);
 
   const [loading, setLoading] = useState(false);
-  const [isScanning, setIsScanning] = useState(false);
   const [error, setError] = useState('');
   const [summary, setSummary] = useState<TargetSummaryInfo | null>(null);
-  const [targets, setTargets] = useState<RankedTargetItem[]>([]);
-  const [streamProgress, setStreamProgress] = useState<string>('');
+
+  // 原始所有召回目标资产池 (数据库返回 + 实时扫描推流)，前端按过滤器纯函数派生最终渲染列表
+  const [rawTargets, setRawTargets] = useState<RankedTargetItem[]>([]);
+
+  // 实时扫描进度同步状态
+  const [scanProgress, setScanProgress] = useState<ScanProgressInfo>({
+    isScanning: false,
+    scannedIPs: 0,
+    totalIPs: 0,
+    currentCIDR: '',
+    currentIP: '',
+    speed: 0,
+    percent: 0,
+    foundCount: 0,
+    matchedCount: 0,
+    message: '',
+  });
+
+  // 最近一次新发现的目标（用于高亮动画反馈）
+  const [latestDiscoveredDomain, setLatestDiscoveredDomain] = useState<string | null>(null);
 
   const [selectedTarget, setSelectedTarget] = useState<TargetItem | null>(null);
   const [copiedDomain, setCopiedDomain] = useState<string | null>(null);
 
-  // 维护活动的 EventSource 实例便于主动取消
+  // Refs 维护实时最新的状态，避免闭包捕获陈旧值
   const esRef = useRef<EventSource | null>(null);
+  const summaryRef = useRef<TargetSummaryInfo | null>(null);
+  const filterRef = useRef<SmartFilterOptions>(filter);
+  const scanMetricsRef = useRef<{
+    startTime: number;
+    lastTime: number;
+    lastCount: number;
+  }>({ startTime: 0, lastTime: 0, lastCount: 0 });
 
+  useEffect(() => {
+    summaryRef.current = summary;
+  }, [summary]);
+
+  useEffect(() => {
+    filterRef.current = filter;
+  }, [filter]);
+
+  // 初始化加载服务端推荐过滤器默认值
   useEffect(() => {
     fetch('/api/filter/default')
       .then((res) => res.json())
       .then((data) => {
         if (data.code === 200 && data.data) {
-          if (data.data.min_stars !== undefined && data.data.min_stars > 0) setMinStars(data.data.min_stars);
-          if (data.data.require_no_cn !== undefined) setRequireNoCN(data.data.require_no_cn);
+          setFilter((prev) => ({
+            ...prev,
+            minStars: data.data.min_stars !== undefined && data.data.min_stars > 0 ? data.data.min_stars : prev.minStars,
+            requireNoCN: data.data.require_no_cn !== undefined ? !!data.data.require_no_cn : prev.requireNoCN,
+            requireNoCDN: data.data.require_no_cdn !== undefined ? !!data.data.require_no_cdn : prev.requireNoCDN,
+            requireNoDefaultPage: data.data.require_no_default_page !== undefined ? !!data.data.require_no_default_page : prev.requireNoDefaultPage,
+            maxHandshakeMS: data.data.max_handshake_ms !== undefined ? data.data.max_handshake_ms : prev.maxHandshakeMS,
+            minCertDays: data.data.min_cert_days !== undefined ? data.data.min_cert_days : prev.minCertDays,
+          }));
         }
       })
       .catch(() => {});
@@ -68,7 +135,7 @@ export const SmartFinder = () => {
     }
   };
 
-  // 快捷测试 IP
+  // 快捷测试 IP 资产
   const sampleIPs = [
     { label: '东京 Vultr (AS20473)', ip: '45.76.12.34' },
     { label: '新加坡 Linode (AS63949)', ip: '139.162.24.12' },
@@ -76,21 +143,129 @@ export const SmartFinder = () => {
     { label: '香港 GCP (AS396982)', ip: '34.92.12.80' },
   ];
 
+  // 前端过滤核心匹配函数 (纯函数，0 延迟即时评估)
+  const isItemMatchFilter = (
+    item: TargetItem | RankedTargetItem,
+    f: SmartFilterOptions,
+    currSummary?: TargetSummaryInfo | null
+  ): boolean => {
+    // 1. 最低星级限制
+    if (f.minStars > 0 && item.stars < f.minStars) return false;
+
+    // 2. 最大握手延迟限制
+    if (f.maxHandshakeMS > 0 && item.handshake_ms > f.maxHandshakeMS) return false;
+
+    // 3. 源站直连 / 排除 CDN
+    if (f.requireNoCDN && item.is_cdn) return false;
+
+    // 4. 排除 Nginx / 默认页面
+    if (f.requireNoDefaultPage && item.is_default_page) return false;
+
+    // 5. 排除 .cn / 境内后缀域名
+    if (f.requireNoCN) {
+      const d = item.domain.toLowerCase();
+      if (d.endsWith('.cn') || d.includes('.edu.cn') || d.includes('.gov.cn')) return false;
+    }
+
+    // 6. 证书剩余有效天数
+    if (f.minCertDays > 0 && item.cert_days < f.minCertDays) return false;
+
+    // 7. 匹配范畴范围过滤
+    const targetASN = currSummary?.asn?.toUpperCase().replace(/^AS/, '');
+    const itemASN = item.asn?.toUpperCase().replace(/^AS/, '');
+    const isSameASN = !!(targetASN && itemASN && targetASN === itemASN);
+
+    const targetCountry = currSummary?.country?.toUpperCase();
+    const itemCountry = item.country?.toUpperCase();
+    const isSameCountry = !!(targetCountry && itemCountry && targetCountry === itemCountry);
+
+    if (f.matchScope === 'same_asn' && !isSameASN) return false;
+    if (f.matchScope === 'same_country' && !isSameASN && !isSameCountry) return false;
+
+    // 8. HTTP 状态码校验 (仅 200 OK 或 443 直出)
+    if (f.statusFilter === 'success_only') {
+      if (item.status_code >= 400 || (item.status_code < 200 && item.status_code !== 0)) return false;
+    }
+
+    // 9. 域名或网站标题即时关键词筛选
+    if (f.keyword.trim()) {
+      const kw = f.keyword.trim().toLowerCase();
+      const inDomain = item.domain.toLowerCase().includes(kw);
+      const inTitle = item.page_title ? item.page_title.toLowerCase().includes(kw) : false;
+      const inASN = item.asn ? item.asn.toLowerCase().includes(kw) : false;
+      if (!inDomain && !inTitle && !inASN) return false;
+    }
+
+    return true;
+  };
+
+  // 纯前端响应式计算当前展示的目标清单（即时响应，零网络开销）
+  const displayedTargets = useMemo(() => {
+    return rawTargets.filter((item) => isItemMatchFilter(item, filter, summary));
+  }, [rawTargets, filter, summary]);
+
+  // 统计已激活的高级过滤器数量
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (filter.minStars > 0) count++;
+    if (filter.maxHandshakeMS > 0) count++;
+    if (filter.requireNoCDN) count++;
+    if (filter.requireNoDefaultPage) count++;
+    if (filter.requireNoCN) count++;
+    if (filter.minCertDays > 0) count++;
+    if (filter.matchScope !== 'all') count++;
+    if (filter.statusFilter !== 'all') count++;
+    if (filter.keyword.trim()) count++;
+    return count;
+  }, [filter]);
+
+  // 重置所有过滤器
+  const resetFilters = () => {
+    setFilter({
+      minStars: 0,
+      maxHandshakeMS: 0,
+      requireNoCDN: false,
+      requireNoDefaultPage: false,
+      requireNoCN: false,
+      minCertDays: 0,
+      matchScope: 'all',
+      statusFilter: 'all',
+      keyword: '',
+    });
+  };
+
+  // 应用推荐过滤器配置
+  const applyRecommendedFilters = () => {
+    setFilter({
+      minStars: 3,
+      maxHandshakeMS: 150,
+      requireNoCDN: true,
+      requireNoDefaultPage: true,
+      requireNoCN: true,
+      minCertDays: 15,
+      matchScope: 'all',
+      statusFilter: 'all',
+      keyword: '',
+    });
+  };
+
   // 终止流式扫描
   const stopScan = () => {
     if (esRef.current) {
       esRef.current.close();
       esRef.current = null;
     }
-    setIsScanning(false);
-    setLoading(false);
-    setStreamProgress('扫描已由用户手动停止，断点进度已安全保存。');
+    setScanProgress((prev) => ({
+      ...prev,
+      isScanning: false,
+      message: `⏹ 扫描已由用户手动停止，当前探测断点已安全归档入库。`,
+    }));
   };
 
-  // 核心查询逻辑：优先查库返回；提前获得 ASN、国家与断点信息
-  const handleSearch = async (e?: React.FormEvent) => {
+  // 核心查询逻辑：优先从库里匹配目标，同时提取目标 IP 的 ASN 与网络拓扑元数据
+  const handleSearch = async (e?: React.FormEvent, customIP?: string) => {
     if (e) e.preventDefault();
-    const cleanIP = ip.trim();
+    const cleanIP = (customIP !== undefined ? customIP : ip).trim();
     if (!cleanIP) {
       setError('请输入节点服务器 IP');
       return;
@@ -100,16 +275,17 @@ export const SmartFinder = () => {
       esRef.current.close();
       esRef.current = null;
     }
-    setIsScanning(false);
+
+    setScanProgress((prev) => ({ ...prev, isScanning: false }));
     setLoading(true);
     setError('');
-    setTargets([]);
-    setStreamProgress('');
+    setRawTargets([]);
 
     try {
       const tokenParam = apiToken.trim() ? `&token=${encodeURIComponent(apiToken.trim())}` : '';
-      const url = `/api/targets/smart?ip=${encodeURIComponent(cleanIP)}&limit=${limit}&min_stars=${minStars}&require_no_cn=${requireNoCN ? 1 : 0}${tokenParam}`;
-      
+      // 请求大容量候选池 (limit=100)，方便前端过滤器实时筛选与切换
+      const url = `/api/targets/smart?ip=${encodeURIComponent(cleanIP)}&limit=100&min_stars=1&require_no_cn=0${tokenParam}`;
+
       const headers: Record<string, string> = {};
       if (apiToken.trim()) {
         headers['Authorization'] = `Bearer ${apiToken.trim()}`;
@@ -122,7 +298,12 @@ export const SmartFinder = () => {
       }
 
       setSummary(data.data.summary);
-      setTargets(data.data.targets || []);
+      setRawTargets(data.data.targets || []);
+      setScanProgress((prev) => ({
+        ...prev,
+        isScanning: false,
+        message: '',
+      }));
     } catch (err: any) {
       setError(err.message || '网络连接异常');
     } finally {
@@ -130,7 +311,7 @@ export const SmartFinder = () => {
     }
   };
 
-  // 触发流式扫描：提前把任务与元数据推到前端，并在后台以单 IP 粒度断点续传扫描
+  // 启动实时扫描：实时同步扫描进度，有新的符合过滤器的结果立即返回与渲染
   const startScanStream = (scanAll: boolean = true) => {
     const cleanIP = ip.trim();
     if (!cleanIP) {
@@ -142,22 +323,39 @@ export const SmartFinder = () => {
       esRef.current.close();
     }
 
-    setLoading(true);
-    setIsScanning(true);
+    const now = Date.now();
+    scanMetricsRef.current = {
+      startTime: now,
+      lastTime: now,
+      lastCount: 0,
+    };
+
+    setScanProgress({
+      isScanning: true,
+      scannedIPs: 0,
+      totalIPs: summary?.total_ips || 0,
+      currentCIDR: '',
+      currentIP: '',
+      speed: 0,
+      percent: 0,
+      foundCount: 0,
+      matchedCount: 0,
+      message: '正在建立流式探测长连接通道，提前同步目标 ASN 拓扑元数据...',
+    });
     setError('');
-    setStreamProgress('正在连接流式扫描引擎，首帧提前同步 ASN 与拓扑信息...');
 
     const tokenParam = apiToken.trim() ? `&token=${encodeURIComponent(apiToken.trim())}` : '';
     const scanAllParam = scanAll ? '&scan_all=1' : '';
-    const url = `/api/targets/stream?ip=${encodeURIComponent(cleanIP)}&limit=${limit}&min_stars=${minStars}&require_no_cn=${requireNoCN ? 1 : 0}${scanAllParam}${tokenParam}`;
+    const url = `/api/targets/stream?ip=${encodeURIComponent(cleanIP)}&limit=50&min_stars=1&require_no_cn=0${scanAllParam}${tokenParam}`;
 
     const es = new EventSource(url);
     esRef.current = es;
 
+    // 1. 初始化事件: 首帧同步 ASN 拓扑与断点信息
     es.addEventListener('init', (evt: any) => {
       try {
         const data = JSON.parse(evt.data);
-        setSummary((prev) => ({
+        const updatedSummary: TargetSummaryInfo = {
           target_ip: data.ip,
           asn: data.asn,
           asn_name: data.asn_name,
@@ -170,67 +368,126 @@ export const SmartFinder = () => {
           has_checkpoint: data.has_checkpoint,
           last_checkpoint_ip: data.last_checkpoint_ip,
           same_asn_hits: data.cached_hits,
-          total_hits: prev?.total_hits || data.cached_hits,
-        }));
+          total_hits: data.cached_hits,
+        };
+        setSummary(updatedSummary);
+        summaryRef.current = updatedSummary;
 
-        let msg = `⚡ 提前就绪：${data.asn} (${data.country}) · ${data.is_residential ? '家庭宽带' : '机房数据中心'}`;
+        let msg = `⚡ 拓扑就绪：${data.asn} (${data.country}) · ${data.is_residential ? '家庭宽带' : '机房数据中心'}`;
         if (data.cidr_count) {
-          msg += `，涵盖 ${data.cidr_count} 个网段 (约 ${data.total_ips?.toLocaleString() || 0} 个 IP)`;
+          msg += `，共 ${data.cidr_count} 个网段 (约 ${data.total_ips?.toLocaleString() || 0} 个 IP)`;
         }
         if (data.has_checkpoint && data.last_checkpoint_ip) {
           msg += `，发现断点，正从 ${data.last_checkpoint_ip} 自动精准续传...`;
         } else {
-          msg += `，开始首轮并发探测...`;
+          msg += `，正在开启全并发流水线探测...`;
         }
-        setStreamProgress(msg);
+
+        setScanProgress((prev) => ({
+          ...prev,
+          totalIPs: data.total_ips || prev.totalIPs,
+          message: msg,
+        }));
       } catch (_) {}
     });
 
+    // 2. 进度同步事件: 实时计算扫描进度与速率
     es.addEventListener('progress', (evt: any) => {
       try {
         const data = JSON.parse(evt.data);
-        setStreamProgress(`🔍 并发探测中: ${data.current_cidr} (已扫描 ${data.scanned_ips} 个 IP，当前探测 ${data.current_ip})`);
-      } catch (_) {}
-    });
+        const currentScanned = Number(data.scanned_ips) || 0;
+        const nowMs = Date.now();
+        const elapsedSec = (nowMs - scanMetricsRef.current.startTime) / 1000;
+        const speed = elapsedSec > 0 ? Math.round(currentScanned / elapsedSec) : 0;
 
-    es.addEventListener('target', (evt: any) => {
-      try {
-        const item: TargetItem = JSON.parse(evt.data);
-        setTargets((prev) => {
-          const exists = prev.some((p) => p.domain === item.domain);
-          if (exists) return prev;
-          const isSameASN = summary?.asn && item.asn && item.asn.toUpperCase() === summary.asn.toUpperCase();
-          const ranked: RankedTargetItem = {
-            ...item,
-            match_level: isSameASN ? 'same_asn' : 'same_country',
-            score: isSameASN ? 1000 + item.stars * 30 : 250 + item.stars * 30,
+        setScanProgress((prev) => {
+          const tot = prev.totalIPs > 0 ? prev.totalIPs : summaryRef.current?.total_ips || 0;
+          const pct = tot > 0 ? Math.min(100, Math.round((currentScanned / tot) * 100)) : 0;
+          return {
+            ...prev,
+            scannedIPs: currentScanned,
+            currentCIDR: data.current_cidr || prev.currentCIDR,
+            currentIP: data.current_ip || prev.currentIP,
+            speed: speed > 0 ? speed : prev.speed,
+            percent: pct,
           };
-          return [...prev, ranked];
         });
       } catch (_) {}
     });
 
+    // 3. 目标发现事件: 有新的符合过滤器的结果立即返回并渲染！
+    es.addEventListener('target', (evt: any) => {
+      try {
+        const item: TargetItem = JSON.parse(evt.data);
+        const activeSummary = summaryRef.current;
+        const targetASNNorm = activeSummary?.asn?.toUpperCase().replace(/^AS/, '');
+        const itemASNNorm = item.asn?.toUpperCase().replace(/^AS/, '');
+        const isSameASN = !!(targetASNNorm && itemASNNorm && targetASNNorm === itemASNNorm);
+        const isSameCountry = !!(activeSummary?.country && item.country && activeSummary.country.toUpperCase() === item.country.toUpperCase());
+
+        const ranked: RankedTargetItem = {
+          ...item,
+          match_level: isSameASN ? 'same_asn' : isSameCountry ? 'same_country' : 'global',
+          score: isSameASN ? 1000 + item.stars * 30 : isSameCountry ? 250 + item.stars * 30 : 50 + item.stars * 30,
+          is_new_scan: true,
+        };
+
+        // 检查是否符合当前前端激活的过滤器
+        const matchesCurrentFilter = isItemMatchFilter(ranked, filterRef.current, activeSummary);
+
+        // 立即存入原始池，并置顶于列表最前方
+        setRawTargets((prev) => {
+          const exists = prev.some((p) => p.domain === item.domain);
+          if (exists) return prev;
+          return [ranked, ...prev];
+        });
+
+        if (matchesCurrentFilter) {
+          setLatestDiscoveredDomain(item.domain);
+          // 4 秒后清除新发现的高亮状态
+          setTimeout(() => setLatestDiscoveredDomain(null), 4000);
+        }
+
+        // 同步累计发现数与符合过滤器的匹配数
+        setScanProgress((prev) => ({
+          ...prev,
+          foundCount: prev.foundCount + 1,
+          matchedCount: matchesCurrentFilter ? prev.matchedCount + 1 : prev.matchedCount,
+          message: matchesCurrentFilter
+            ? `✨ 实时新发现符合目标: ${item.domain} (${item.stars}★, ${item.handshake_ms}ms)`
+            : `🔎 扫描命中新资产: ${item.domain} (未通过当前过滤器，已收录资产库)`,
+        }));
+      } catch (_) {}
+    });
+
+    // 4. 完成事件
     es.addEventListener('done', (evt: any) => {
-      setIsScanning(false);
-      setLoading(false);
+      let totalFound = 0;
       try {
         const doneData = JSON.parse(evt.data);
-        setStreamProgress(`✅ 扫描完成！本次共获得 ${doneData.total_found || 0} 个优质目标。`);
-      } catch (_) {
-        setStreamProgress('✅ 扫描完成。');
-      }
+        totalFound = doneData.total_found || 0;
+      } catch (_) {}
+
+      setScanProgress((prev) => ({
+        ...prev,
+        isScanning: false,
+        percent: 100,
+        message: `✅ 实时扫描已全部完成！共探测发现 ${totalFound || prev.foundCount} 个资产，当前展示 ${prev.matchedCount} 个符合过滤标准的目标。`,
+      }));
+
       es.close();
       esRef.current = null;
     });
 
+    // 5. 异常或中断事件
     es.addEventListener('error', () => {
-      setIsScanning(false);
-      setLoading(false);
+      setScanProgress((prev) => ({
+        ...prev,
+        isScanning: false,
+        message: prev.foundCount > 0 ? `⚠️ 流式探测已断开，已安全保存已发现的 ${prev.foundCount} 个资产。` : '',
+      }));
       es.close();
       esRef.current = null;
-      if (targets.length === 0) {
-        setError('流式探测中断或鉴权失败，请检查 Token 与网络状态');
-      }
     });
   };
 
@@ -252,8 +509,8 @@ export const SmartFinder = () => {
               REALITY 伪装匹配
             </h1>
             <p className="hero-subtitle">
-              输入你的落地服务器或 VPS IP，系统自动提前解析其所属 ASN 与网段。
-              <b style={{ color: '#fb923c' }}> 本地库有即秒级返回；若无则支持一键马上扫描，精准 IP 级断点续传。</b>
+              输入你的落地服务器或 VPS IP，从资产库秒级匹配。
+              <b style={{ color: '#fb923c' }}> 支持前端实时多维过滤；启动实时扫描时同步进度，有新符合结果立即返回。</b>
             </p>
           </div>
 
@@ -304,7 +561,7 @@ export const SmartFinder = () => {
           </div>
         )}
 
-        {/* 搜索控制区 */}
+        {/* 核心检索卡片 */}
         <div className="search-box-card glass-panel" style={{ marginTop: '18px' }}>
           <form onSubmit={handleSearch} className="search-form">
             <div className="input-group">
@@ -318,28 +575,14 @@ export const SmartFinder = () => {
               />
             </div>
 
-            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-              <select
-                className="input-group"
-                style={{ padding: '9px 12px', background: 'var(--bg-input)', color: 'var(--text-main)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)' }}
-                value={minStars}
-                onChange={(e) => setMinStars(Number(e.target.value))}
-              >
-                <option value={3}>⭐️ 3星及以上 (优质)</option>
-                <option value={4}>⭐️ 4星及以上 (极优)</option>
-                <option value={5}>⭐️ 5星极品 (顶配)</option>
-                <option value={1}>全星级不限</option>
-              </select>
-
-              <button type="submit" className="btn btn-primary" disabled={loading || isScanning}>
-                {loading ? <Radio size={16} className="animate-spin" /> : <Sparkles size={16} />}
-                {loading ? '正在查询...' : '查询资产库'}
-              </button>
-            </div>
+            <button type="submit" className="btn btn-primary" disabled={loading || scanProgress.isScanning}>
+              {loading ? <Radio size={16} className="animate-spin" /> : <Sparkles size={16} />}
+              {loading ? '正在匹配...' : '匹配资产库'}
+            </button>
           </form>
 
-          {/* 常用 IP 快捷填充与过滤器选项 */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', flexWrap: 'wrap', gap: '10px' }}>
+          {/* 快捷填入示例 IP */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '14px', flexWrap: 'wrap', gap: '10px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               <span style={{ fontSize: '0.78rem', color: 'var(--text-sub)' }}>快捷填入:</span>
               {sampleIPs.map((s) => (
@@ -350,7 +593,7 @@ export const SmartFinder = () => {
                   style={{ cursor: 'pointer', border: '1px solid var(--border-subtle)' }}
                   onClick={() => {
                     setIP(s.ip);
-                    setTimeout(() => handleSearch(), 50);
+                    handleSearch(undefined, s.ip);
                   }}
                 >
                   {s.label}
@@ -358,36 +601,402 @@ export const SmartFinder = () => {
               ))}
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: 'var(--text-muted)', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={requireNoCN}
-                  onChange={(e) => setRequireNoCN(e.target.checked)}
-                />
-                排除 .cn / 境内域名
-              </label>
+            {/* 快速重置 / 高级过滤展开入口 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <button
+                type="button"
+                className={`btn ${showAdvancedFilter ? 'btn-secondary' : 'btn-ghost'}`}
+                style={{ padding: '5px 10px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '5px' }}
+                onClick={() => setShowAdvancedFilter(!showAdvancedFilter)}
+              >
+                <SlidersHorizontal size={13} style={{ color: activeFilterCount > 0 ? 'var(--accent-cyan)' : 'inherit' }} />
+                <span>高级过滤器</span>
+                {activeFilterCount > 0 && (
+                  <span
+                    style={{
+                      background: 'var(--accent-cyan)',
+                      color: '#000',
+                      borderRadius: '99px',
+                      padding: '1px 6px',
+                      fontSize: '0.7rem',
+                      fontWeight: 700,
+                    }}
+                  >
+                    {activeFilterCount}
+                  </span>
+                )}
+                {showAdvancedFilter ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              </button>
             </div>
           </div>
 
-          {/* 实时探测进度指示 */}
-          {streamProgress && (
-            <div style={{ marginTop: '14px', padding: '10px 14px', background: isScanning ? 'rgba(56, 189, 248, 0.12)' : 'rgba(16, 185, 129, 0.12)', border: isScanning ? '1px solid rgba(56, 189, 248, 0.3)' : '1px solid rgba(16, 185, 129, 0.3)', borderRadius: 'var(--radius-sm)', fontSize: '0.82rem', color: isScanning ? 'var(--accent-cyan)' : 'var(--accent-emerald)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Radio size={14} className={isScanning ? 'animate-pulse' : ''} />
-                <span>{streamProgress}</span>
-              </div>
-              {isScanning && (
+          {/* 过滤器控制面板（前端控制，即时过滤与动态生效） */}
+          <div className="filter-panel-card">
+            {/* 第一行：常用快捷过滤标签 */}
+            <div className="filter-primary-row">
+              <div className="filter-chips-group">
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-sub)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <Filter size={13} />
+                  <span>星级偏好:</span>
+                </span>
+
                 <button
                   type="button"
-                  className="btn btn-secondary"
-                  style={{ padding: '4px 10px', fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--accent-rose)', borderColor: 'rgba(244,63,94,0.4)' }}
-                  onClick={stopScan}
+                  className={`filter-chip ${filter.minStars === 0 ? 'active' : ''}`}
+                  onClick={() => setFilter((f) => ({ ...f, minStars: 0 }))}
                 >
-                  <Square size={12} />
-                  停止扫描
+                  全部
                 </button>
+                <button
+                  type="button"
+                  className={`filter-chip ${filter.minStars === 3 ? 'active' : ''}`}
+                  onClick={() => setFilter((f) => ({ ...f, minStars: 3 }))}
+                >
+                  ⭐️ 3星+ (优质)
+                </button>
+                <button
+                  type="button"
+                  className={`filter-chip ${filter.minStars === 4 ? 'active' : ''}`}
+                  onClick={() => setFilter((f) => ({ ...f, minStars: 4 }))}
+                >
+                  ⭐️ 4星+ (极优)
+                </button>
+                <button
+                  type="button"
+                  className={`filter-chip ${filter.minStars === 5 ? 'active' : ''}`}
+                  onClick={() => setFilter((f) => ({ ...f, minStars: 5 }))}
+                >
+                  ⭐️ 5星极品
+                </button>
+              </div>
+
+              {/* 关键开关 (CDN、境内、默认页) */}
+              <div className="filter-chips-group">
+                <button
+                  type="button"
+                  className={`filter-chip ${filter.requireNoCDN ? 'active' : ''}`}
+                  onClick={() => setFilter((f) => ({ ...f, requireNoCDN: !f.requireNoCDN }))}
+                  title="仅保留源站直连目标，排除 Cloudflare/Akamai 等 CDN 域名"
+                >
+                  ⚡ 源站直连 (排除 CDN)
+                </button>
+
+                <button
+                  type="button"
+                  className={`filter-chip ${filter.requireNoCN ? 'active' : ''}`}
+                  onClick={() => setFilter((f) => ({ ...f, requireNoCN: !f.requireNoCN }))}
+                  title="排除 .cn / 境内域名以规避境内合规风险"
+                >
+                  🛡️ 排除 .cn 境内域名
+                </button>
+
+                <button
+                  type="button"
+                  className={`filter-chip ${filter.requireNoDefaultPage ? 'active-warning' : ''}`}
+                  onClick={() => setFilter((f) => ({ ...f, requireNoDefaultPage: !f.requireNoDefaultPage }))}
+                  title="排除探测出 Nginx / Apache 默认欢迎页的域名"
+                >
+                  📄 排除默认欢迎页
+                </button>
+              </div>
+            </div>
+
+            {/* 第二行：高级抽屉折叠面板 */}
+            {showAdvancedFilter && (
+              <div className="filter-drawer">
+                {/* 握手延迟限制 */}
+                <div className="filter-field">
+                  <label className="filter-field-label">
+                    <Clock size={13} style={{ color: 'var(--accent-cyan)' }} />
+                    <span>握手延迟上限</span>
+                  </label>
+                  <select
+                    value={filter.maxHandshakeMS}
+                    onChange={(e) => setFilter((f) => ({ ...f, maxHandshakeMS: Number(e.target.value) }))}
+                  >
+                    <option value={0}>不限延迟</option>
+                    <option value={60}>≤ 60 ms (极致)</option>
+                    <option value={100}>≤ 100 ms (极速)</option>
+                    <option value={150}>≤ 150 ms (优良)</option>
+                    <option value={220}>≤ 220 ms (标准)</option>
+                    <option value={350}>≤ 350 ms (宽松)</option>
+                  </select>
+                </div>
+
+                {/* 证书有效天数 */}
+                <div className="filter-field">
+                  <label className="filter-field-label">
+                    <ShieldCheck size={13} style={{ color: 'var(--accent-emerald)' }} />
+                    <span>证书剩余有效天数</span>
+                  </label>
+                  <select
+                    value={filter.minCertDays}
+                    onChange={(e) => setFilter((f) => ({ ...f, minCertDays: Number(e.target.value) }))}
+                  >
+                    <option value={0}>不限天数</option>
+                    <option value={15}>≥ 15 天</option>
+                    <option value={30}>≥ 30 天 (规避临期续费窗口)</option>
+                    <option value={60}>≥ 60 天 (长期稳定)</option>
+                  </select>
+                </div>
+
+                {/* 匹配范畴 */}
+                <div className="filter-field">
+                  <label className="filter-field-label">
+                    <Globe size={13} style={{ color: 'var(--accent-fire)' }} />
+                    <span>匹配范畴优先级</span>
+                  </label>
+                  <select
+                    value={filter.matchScope}
+                    onChange={(e) => setFilter((f) => ({ ...f, matchScope: e.target.value as any }))}
+                  >
+                    <option value="all">全量加权 (同 ASN 自动置顶)</option>
+                    <option value="same_asn">仅同 ASN (极速同机房直连)</option>
+                    <option value="same_country">同机房 + 同国家 (同地区)</option>
+                  </select>
+                </div>
+
+                {/* HTTP 状态 */}
+                <div className="filter-field">
+                  <label className="filter-field-label">
+                    <Server size={13} style={{ color: 'var(--text-sub)' }} />
+                    <span>HTTP 响应状态</span>
+                  </label>
+                  <select
+                    value={filter.statusFilter}
+                    onChange={(e) => setFilter((f) => ({ ...f, statusFilter: e.target.value as any }))}
+                  >
+                    <option value="all">全部 (包含 443 协议直通)</option>
+                    <option value="success_only">仅 200 OK / 正常直通 (排除 4xx/5xx)</option>
+                  </select>
+                </div>
+
+                {/* 关键词快速筛选 */}
+                <div className="filter-field" style={{ gridColumn: 'span 2' }}>
+                  <label className="filter-field-label">
+                    <Search size={13} style={{ color: 'var(--accent-cyan)' }} />
+                    <span>域名或标题实时过滤</span>
+                  </label>
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type="text"
+                      placeholder="输入关键字即时过滤 (如 cloud, debian, microsoft)..."
+                      value={filter.keyword}
+                      onChange={(e) => setFilter((f) => ({ ...f, keyword: e.target.value }))}
+                      style={{ width: '100%', paddingRight: '28px' }}
+                    />
+                    {filter.keyword && (
+                      <button
+                        type="button"
+                        onClick={() => setFilter((f) => ({ ...f, keyword: '' }))}
+                        style={{
+                          position: 'absolute',
+                          right: '8px',
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--text-sub)',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <X size={13} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* 快捷操作按钮 */}
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', paddingBottom: '2px' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '5px' }}
+                    onClick={applyRecommendedFilters}
+                  >
+                    <Sparkles size={13} style={{ color: 'var(--accent-cyan)' }} />
+                    推荐配置
+                  </button>
+
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '5px' }}
+                    onClick={resetFilters}
+                  >
+                    <RotateCcw size={13} />
+                    清空条件
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 结果过滤统计摘要条 */}
+            <div className="filter-summary-bar">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span>
+                  当前展示 <strong style={{ color: 'var(--accent-cyan)' }}>{displayedTargets.length}</strong> 个目标
+                  {rawTargets.length > 0 && (
+                    <span>
+                      {' '}
+                      (共召回 <span style={{ color: 'var(--text-main)' }}>{rawTargets.length}</span> 个候选，
+                      <span style={{ color: rawTargets.length - displayedTargets.length > 0 ? 'var(--accent-amber)' : 'var(--text-sub)' }}>
+                        {rawTargets.length - displayedTargets.length} 个被过滤
+                      </span>
+                      )
+                    </span>
+                  )}
+                </span>
+              </div>
+
+              {/* 激活的过滤标签胶囊 */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                {filter.minStars > 0 && (
+                  <span className="badge badge-warning" style={{ fontSize: '0.72rem' }}>
+                    ≥{filter.minStars}星
+                  </span>
+                )}
+                {filter.maxHandshakeMS > 0 && (
+                  <span className="badge badge-info" style={{ fontSize: '0.72rem' }}>
+                    ≤{filter.maxHandshakeMS}ms
+                  </span>
+                )}
+                {filter.requireNoCDN && (
+                  <span className="badge badge-success" style={{ fontSize: '0.72rem' }}>
+                    源站直连
+                  </span>
+                )}
+                {filter.requireNoCN && (
+                  <span className="badge badge-global" style={{ fontSize: '0.72rem' }}>
+                    无 .cn
+                  </span>
+                )}
+                {filter.requireNoDefaultPage && (
+                  <span className="badge badge-warning" style={{ fontSize: '0.72rem' }}>
+                    无默认页
+                  </span>
+                )}
+                {filter.minCertDays > 0 && (
+                  <span className="badge badge-info" style={{ fontSize: '0.72rem' }}>
+                    ≥{filter.minCertDays}天证书
+                  </span>
+                )}
+                {filter.matchScope !== 'all' && (
+                  <span className="badge badge-same-asn" style={{ fontSize: '0.72rem' }}>
+                    {filter.matchScope === 'same_asn' ? '仅同ASN' : '同ASN/同国家'}
+                  </span>
+                )}
+                {filter.keyword && (
+                  <span className="badge badge-info" style={{ fontSize: '0.72rem' }}>
+                    词: {filter.keyword}
+                  </span>
+                )}
+                {activeFilterCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={resetFilters}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--text-sub)',
+                      fontSize: '0.72rem',
+                      cursor: 'pointer',
+                      textDecoration: 'underline',
+                      marginLeft: '4px',
+                    }}
+                  >
+                    重置
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* 实时扫描进度卡片 (实时同步扫描进度) */}
+          {(scanProgress.isScanning || scanProgress.message) && (
+            <div className="scan-progress-card">
+              <div className="scan-progress-header">
+                <div className="scan-status-title">
+                  {scanProgress.isScanning ? (
+                    <div className="radar-ping">
+                      <span className="radar-ping-ring"></span>
+                      <span className="radar-ping-dot"></span>
+                    </div>
+                  ) : (
+                    <Check size={16} style={{ color: 'var(--accent-emerald)' }} />
+                  )}
+                  <span>{scanProgress.message}</span>
+                </div>
+
+                {scanProgress.isScanning && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{
+                      padding: '4px 12px',
+                      fontSize: '0.78rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      color: 'var(--accent-rose)',
+                      borderColor: 'rgba(244,63,94,0.4)',
+                    }}
+                    onClick={stopScan}
+                  >
+                    <Square size={12} />
+                    停止扫描
+                  </button>
+                )}
+              </div>
+
+              {/* 实时进度条 */}
+              {scanProgress.isScanning && (
+                <div className="scan-progress-bar-bg">
+                  <div
+                    className="scan-progress-bar-fill"
+                    style={{ width: `${Math.max(5, scanProgress.percent)}%` }}
+                  ></div>
+                </div>
               )}
+
+              {/* 实时探测数据指标网格 */}
+              <div className="scan-stats-grid">
+                <div className="scan-stat-item">
+                  <span className="scan-stat-label">已探测 IP / 总量</span>
+                  <span className="scan-stat-value">
+                    {scanProgress.scannedIPs.toLocaleString()}
+                    {scanProgress.totalIPs > 0 && (
+                      <span style={{ color: 'var(--text-sub)', fontSize: '0.8rem' }}>
+                        {' '}/ {scanProgress.totalIPs.toLocaleString()} ({scanProgress.percent}%)
+                      </span>
+                    )}
+                  </span>
+                </div>
+
+                <div className="scan-stat-item">
+                  <span className="scan-stat-label">当前正在探测</span>
+                  <span className="scan-stat-value" style={{ color: 'var(--accent-cyan)' }}>
+                    {scanProgress.currentIP || scanProgress.currentCIDR || '就绪中...'}
+                  </span>
+                </div>
+
+                <div className="scan-stat-item">
+                  <span className="scan-stat-label">探测并发速率</span>
+                  <span className="scan-stat-value" style={{ color: 'var(--accent-emerald)' }}>
+                    {scanProgress.speed > 0 ? `~${scanProgress.speed} IP/s` : '计算中...'}
+                  </span>
+                </div>
+
+                <div className="scan-stat-item">
+                  <span className="scan-stat-label">现场即时命中 (符合过滤器 / 总数)</span>
+                  <span className="scan-stat-value">
+                    <span style={{ color: '#fb923c' }}>{scanProgress.matchedCount} 个</span>
+                    <span style={{ color: 'var(--text-sub)', fontSize: '0.8rem' }}>
+                      {' '}(共发现 {scanProgress.foundCount})
+                    </span>
+                  </span>
+                </div>
+              </div>
             </div>
           )}
 
@@ -446,8 +1055,8 @@ export const SmartFinder = () => {
                 同 ASN 库内命中: {summary.same_asn_hits} 个
               </span>
 
-              {/* 若已有结果，亦可在此快速触发增量流式扫描 */}
-              {!isScanning ? (
+              {/* 触发实时流式扫描 */}
+              {!scanProgress.isScanning ? (
                 <button
                   type="button"
                   className="btn btn-secondary"
@@ -474,8 +1083,8 @@ export const SmartFinder = () => {
         )}
       </section>
 
-      {/* 核心业务：当数据库无资产时，展示醒目的【马上扫描】开关面板 */}
-      {summary && targets.length === 0 && !loading && !isScanning && (
+      {/* 当数据库暂无收录资产且未在扫描时，展示醒目的【马上扫描】开关引导面板 */}
+      {summary && rawTargets.length === 0 && !loading && !scanProgress.isScanning && (
         <div
           className="glass-panel"
           style={{
@@ -535,7 +1144,7 @@ export const SmartFinder = () => {
                   </span>
                 ) : (
                   <span style={{ display: 'block', marginTop: '6px' }}>
-                    打开下方开关即刻启动并发流水线，边扫边流式返回入库。
+                    点击下方按钮启动并发流水线，边扫边同步进度，有符合条件的目标即刻展示！
                   </span>
                 )}
               </span>
@@ -572,21 +1181,49 @@ export const SmartFinder = () => {
         </div>
       )}
 
+      {/* 当有目标但被过滤器全部筛除时的空提示 */}
+      {rawTargets.length > 0 && displayedTargets.length === 0 && (
+        <div
+          className="glass-panel"
+          style={{
+            padding: '40px 20px',
+            textAlign: 'center',
+            marginTop: '24px',
+            border: '1px dashed var(--border-subtle)',
+          }}
+        >
+          <Filter size={32} style={{ color: 'var(--accent-amber)', margin: '0 auto 12px auto', opacity: 0.8 }} />
+          <h4 style={{ fontSize: '1.05rem', fontWeight: 600 }}>当前没有符合过滤器的目标</h4>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-sub)', marginTop: '6px', maxWidth: '480px', margin: '6px auto 16px auto' }}>
+            系统已召回 {rawTargets.length} 个候选资产，但由于当前过滤器条件较严格（如星级、延迟或关键词），它们均被隐藏。
+          </p>
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+            <button type="button" className="btn btn-secondary" style={{ fontSize: '0.82rem' }} onClick={resetFilters}>
+              清空所有过滤限制
+            </button>
+            <button type="button" className="btn btn-primary" style={{ fontSize: '0.82rem' }} onClick={applyRecommendedFilters}>
+              恢复推荐过滤
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 结果卡片网格 */}
       <div className="targets-grid" style={{ marginTop: '24px' }}>
-        {targets.map((target) => {
+        {displayedTargets.map((target) => {
           const isSameASN = target.match_level === 'same_asn';
           const isSameCountry = target.match_level === 'same_country';
+          const isFreshlyScanned = target.domain === latestDiscoveredDomain || target.is_new_scan;
 
           return (
             <div
               key={target.domain}
-              className={`target-card glass-panel ${isSameASN ? 'highlight-asn' : ''}`}
+              className={`target-card glass-panel ${isSameASN ? 'highlight-asn' : ''} ${isFreshlyScanned ? 'highlight-new' : ''}`}
             >
               <div>
                 <div className="card-top">
                   <div className="card-title-group">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                       {isSameASN ? (
                         <span className="badge badge-same-asn">
                           <Flame size={12} />
@@ -599,6 +1236,12 @@ export const SmartFinder = () => {
                         </span>
                       ) : (
                         <span className="badge badge-global">全球精选</span>
+                      )}
+
+                      {isFreshlyScanned && (
+                        <span className="badge badge-live-scan" title="实时流水线刚探测发现的目标">
+                          现场即时新扫
+                        </span>
                       )}
 
                       <span className="star-rating">
@@ -636,9 +1279,11 @@ export const SmartFinder = () => {
                       className="spec-value"
                       style={{
                         color:
-                          target.handshake_ms < 50
+                          target.handshake_ms < 60
                             ? 'var(--accent-emerald)'
                             : target.handshake_ms < 150
+                            ? 'var(--accent-cyan)'
+                            : target.handshake_ms < 250
                             ? 'var(--accent-amber)'
                             : 'var(--text-main)',
                       }}
@@ -662,7 +1307,9 @@ export const SmartFinder = () => {
                     <span className="spec-label">HTTP 状态</span>
                     <span className="spec-value">
                       {target.status_code > 0 ? (
-                        <span style={{ color: 'var(--accent-emerald)' }}>{target.status_code} OK</span>
+                        <span style={{ color: target.status_code < 400 ? 'var(--accent-emerald)' : 'var(--accent-amber)' }}>
+                          {target.status_code} OK
+                        </span>
                       ) : (
                         '443 直出'
                       )}
@@ -683,9 +1330,6 @@ export const SmartFinder = () => {
                   )}
                   {target.is_default_page && (
                     <span className="badge badge-warning">{target.default_page_type || 'Nginx'} 默认页</span>
-                  )}
-                  {target.source === 'scan' && (
-                    <span className="badge" style={{ background: 'rgba(56, 189, 248, 0.2)', color: 'var(--accent-cyan)' }}>现场即时新扫</span>
                   )}
                 </div>
               </div>
@@ -714,7 +1358,7 @@ export const SmartFinder = () => {
         })}
       </div>
 
-      {!summary && targets.length === 0 && !loading && (
+      {!summary && rawTargets.length === 0 && !loading && (
         <div
           className="glass-panel"
           style={{
