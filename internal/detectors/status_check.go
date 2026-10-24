@@ -30,8 +30,8 @@ func (scs *StatusCheckStage) Execute(ctx *types.PipelineContext) error {
 	}
 
 	// 优先根据配置的 ExcludeStatus 判断
-	if ctx.Config != nil && len(ctx.Config.RealityFilter.ExcludeStatus) > 0 {
-		for _, s := range ctx.Config.RealityFilter.ExcludeStatus {
+	if ctx.Config != nil && len(ctx.Config.GetFilter().ExcludeStatus) > 0 {
+		for _, s := range ctx.Config.GetFilter().ExcludeStatus {
 			if s == statusCode {
 				ctx.Result.StatusCodeCategory = types.StatusCodeCategoryExcluded
 				return nil

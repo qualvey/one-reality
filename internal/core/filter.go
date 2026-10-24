@@ -10,7 +10,7 @@ import (
 )
 
 // FilterTarget 纯内存进阶偏好过滤（阶段二）：评估一个候选目标是否满足用户的进阶策略
-func FilterTarget(target *types.DetectionResult, filter types.RealityFilterConfig) (bool, string) {
+func FilterTarget(target *types.DetectionResult, filter types.FilterConfig) (bool, string) {
 	if target == nil {
 		return false, "目标为空"
 	}
@@ -92,7 +92,7 @@ func FilterTarget(target *types.DetectionResult, filter types.RealityFilterConfi
 }
 
 // FilterPool 对资产池进行纯内存批量偏好二次过滤（阶段二）
-func FilterPool(pool []*types.DetectionResult, filter types.RealityFilterConfig) []*types.DetectionResult {
+func FilterPool(pool []*types.DetectionResult, filter types.FilterConfig) []*types.DetectionResult {
 	var suitable []*types.DetectionResult
 	seen := make(map[string]bool)
 

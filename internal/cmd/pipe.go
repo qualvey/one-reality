@@ -18,9 +18,9 @@ import (
 func (r *RootCmd) executePipe() {
 	logger.PrintTimestampedMessage("开启管道流式检测模式 (Pipe Mode)...")
 
-	filter := types.RealityFilterConfig{}
+	filter := types.FilterConfig{}
 	if r.batchManager != nil && r.batchManager.GetConfig() != nil {
-		filter = r.batchManager.GetConfig().RealityFilter
+		filter = r.batchManager.GetConfig().Filter
 	}
 
 	scanner := bufio.NewScanner(os.Stdin)

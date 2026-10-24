@@ -45,7 +45,7 @@ type AutoScanCLIOptions struct {
 	MaxTargets     int
 	CheckAll       bool
 	ExportFile     string
-	Filter         types.RealityFilterConfig
+	Filter         types.FilterConfig
 	ASN            string
 	Country        string
 	InitialResults []*types.DetectionResult
@@ -291,7 +291,7 @@ func contains(slice []string, item string) bool {
 }
 
 // resolveInputToCIDRs 原生构建 CIDR 扫描队列（无需依赖易失效的第三方 HTTP API）
-func resolveInputToCIDRs(targetInput string, inFile string, filter types.RealityFilterConfig) []string {
+func resolveInputToCIDRs(targetInput string, inFile string, filter types.FilterConfig) []string {
 	var cidrs []string
 
 	// 从文件批量读取 CIDRs
@@ -320,7 +320,7 @@ func resolveInputToCIDRs(targetInput string, inFile string, filter types.Reality
 
 // resolveAutoInput discovers announced prefixes for a target IP and keeps only
 // prefixes whose representative address is in the target IP's country and matches IPv4/IPv6 filter.
-func resolveAutoInput(ctx context.Context, targetInput string, inFile string, country string, filter types.RealityFilterConfig) ([]string, string, string, error) {
+func resolveAutoInput(ctx context.Context, targetInput string, inFile string, country string, filter types.FilterConfig) ([]string, string, string, error) {
 	if inFile != "" || targetInput == "" || strings.Contains(targetInput, "/") {
 		return resolveInputToCIDRs(targetInput, inFile, filter), "", "", nil
 	}
@@ -381,7 +381,7 @@ func resolveAutoInput(ctx context.Context, targetInput string, inFile string, co
 }
 
 // appendCIDR 解析并追加 CIDR 或单 IP 扩展网段，自动去重并规范化
-func appendCIDR(list []string, input string, filter types.RealityFilterConfig) []string {
+func appendCIDR(list []string, input string, filter types.FilterConfig) []string {
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return list
@@ -490,7 +490,7 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 	noCache := false
 	verbose := false
 	maxTargets := 5
-	filter := r.batchManager.GetConfig().RealityFilter
+	filter := r.batchManager.GetConfig().Filter
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -719,8 +719,8 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 }
 
 // formatNonDefaultFilters 格式化输出用户自定义/非默认的 REALITY 选型策略
-func formatNonDefaultFilters(filter types.RealityFilterConfig) []string {
-	def := config.GetDefaultConfig().RealityFilter
+func formatNonDefaultFilters(filter types.FilterConfig) []string {
+	def := config.GetDefaultConfig().Filter
 	var diffs []string
 
 	if filter.RequireNoCN != def.RequireNoCN {

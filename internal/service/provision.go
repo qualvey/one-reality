@@ -453,7 +453,7 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 		},
 	}
 
-	filterConfig := types.RealityFilterConfig{
+	filterConfig := types.FilterConfig{
 		MinStars:    req.MinStars,
 		RequireNoCN: req.RequireNoCN,
 		IPv4Only:    req.IPv4Only,

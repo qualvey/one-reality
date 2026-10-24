@@ -339,9 +339,9 @@ type TLSConfig struct {
 	NextProtos   []string
 }
 
-// RealityFilterConfig REALITY 选型策略配置
-type RealityFilterConfig struct {
-	// --- 网络与环境开关 ---
+// FilterConfig REALITY 资产选型与查询过滤策略配置
+type FilterConfig struct {
+	// --- 网络与运行环境策略 ---
 	RequireNoCN          bool     `yaml:"require_no_cn"`          // 是否排除国内网站 (默认 true，翻回国内设为 false)
 	CheckGFW             bool     `yaml:"check_gfw"`              // 是否启用 GFW 静态黑名单 (本地直连建议 false)
 	IPv4Only             bool     `yaml:"ipv4_only"`              // 是否仅拉取与扫描 IPv4 网段 (默认 false)
@@ -354,7 +354,7 @@ type RealityFilterConfig struct {
 	ScanTimeout          int      `yaml:"scan_timeout"`           // 单 IP 探测超时秒数 (默认 3)
 	Verbose              bool     `yaml:"verbose"`                // 详细输出模式 (输出每一条扫描记录到 stdout)
 
-	// --- 阶段二/进阶偏好过滤 ---
+	// --- 阶段二/进阶偏好过滤策略 (主要用于查库、排序打分与智能推荐) ---
 	RequireNoCDN         bool     `yaml:"require_no_cdn"`         // 是否强制排除 CDN
 	MaxHandshakeMS       int64    `yaml:"max_handshake_ms"`       // 最大握手延迟上限 (ms)
 	RequireNoHot         bool     `yaml:"require_no_hot"`         // 是否排除超级热门大站
@@ -368,6 +368,9 @@ type RealityFilterConfig struct {
 	ExcludePatterns      []string `yaml:"exclude_patterns"`       // 排除特征模式
 	ExcludeStatus        []int    `yaml:"exclude_status"`         // 排除的 HTTP 状态码
 }
+
+// RealityFilterConfig 向后兼容类型别名
+type RealityFilterConfig = FilterConfig
 
 // TargetRecord REALITY 资产数据库记录
 type TargetRecord struct {
@@ -525,10 +528,62 @@ type Config struct {
 	Output           OutputConfig        `yaml:"output"`
 	Cache            CacheConfig         `yaml:"cache"`
 	Batch            BatchConfig         `yaml:"batch"`
-	RealityFilter    RealityFilterConfig `yaml:"reality_filter"`
+	Filter           FilterConfig        `yaml:"filter"`
+	RealityFilter    FilterConfig        `yaml:"reality_filter,omitempty"` // 向后兼容旧配置键名
 	Log              LogConfig           `yaml:"log"`
 	Server           ServerConfig        `yaml:"server"`
 	Database         DatabaseConfig      `yaml:"database"`
+}
+
+// GetFilter 获取有效的选型与过滤策略配置（优先使用 Filter，若未设置则回退兼容 RealityFilter）
+func (c *Config) GetFilter() FilterConfig {
+	if c == nil {
+		return FilterConfig{}
+	}
+	f := c.Filter
+	if !f.RequireNoCDN && c.RealityFilter.RequireNoCDN {
+		f.RequireNoCDN = c.RealityFilter.RequireNoCDN
+	}
+	if !f.RequireNoCN && c.RealityFilter.RequireNoCN {
+		f.RequireNoCN = c.RealityFilter.RequireNoCN
+	}
+	if !f.CheckGFW && c.RealityFilter.CheckGFW {
+		f.CheckGFW = c.RealityFilter.CheckGFW
+	}
+	if !f.RequireNoHot && c.RealityFilter.RequireNoHot {
+		f.RequireNoHot = c.RealityFilter.RequireNoHot
+	}
+	if !f.RequireNoDefaultPage && c.RealityFilter.RequireNoDefaultPage {
+		f.RequireNoDefaultPage = c.RealityFilter.RequireNoDefaultPage
+	}
+	if f.MaxHandshakeMS == 0 && c.RealityFilter.MaxHandshakeMS > 0 {
+		f.MaxHandshakeMS = c.RealityFilter.MaxHandshakeMS
+	}
+	if f.MinCertDays == 0 && c.RealityFilter.MinCertDays > 0 {
+		f.MinCertDays = c.RealityFilter.MinCertDays
+	}
+	if f.MinStars == 0 && c.RealityFilter.MinStars > 0 {
+		f.MinStars = c.RealityFilter.MinStars
+	}
+	if f.ExcludeRulesFile == "" && c.RealityFilter.ExcludeRulesFile != "" {
+		f.ExcludeRulesFile = c.RealityFilter.ExcludeRulesFile
+	}
+	if len(f.ExcludeStatus) == 0 && len(c.RealityFilter.ExcludeStatus) > 0 {
+		f.ExcludeStatus = c.RealityFilter.ExcludeStatus
+	}
+	if len(f.IncludeSuffixes) == 0 && len(c.RealityFilter.IncludeSuffixes) > 0 {
+		f.IncludeSuffixes = c.RealityFilter.IncludeSuffixes
+	}
+	if len(f.ExcludeDomains) == 0 && len(c.RealityFilter.ExcludeDomains) > 0 {
+		f.ExcludeDomains = c.RealityFilter.ExcludeDomains
+	}
+	if len(f.ExcludeSuffixes) == 0 && len(c.RealityFilter.ExcludeSuffixes) > 0 {
+		f.ExcludeSuffixes = c.RealityFilter.ExcludeSuffixes
+	}
+	if len(f.ExcludePatterns) == 0 && len(c.RealityFilter.ExcludePatterns) > 0 {
+		f.ExcludePatterns = c.RealityFilter.ExcludePatterns
+	}
+	return f
 }
 
 // DatabaseConfig 数据库存储引擎配置

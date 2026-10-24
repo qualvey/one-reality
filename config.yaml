@@ -33,8 +33,8 @@ database:
     max_conn_lifetime: "1h" # 连接最长复用时间
     max_conn_idle_time: "30m" # 空闲连接超时释放
 
-# REALITY 目标选型过滤策略 (遵从 Xray 官方最佳实践)
-reality_filter:
+# 资产选型与查询过滤策略 (Filter: 全局默认检索与偏好配置，不作为 Daemon 落库拦截)
+filter:
   # ==================== 网络与运行环境策略 ====================
   # 1. 排除国内网站 (true: 默认排除国内站点；若为海外回国翻墙/访问国内流媒体，可设为 false)
   require_no_cn: true

@@ -304,15 +304,20 @@ func (p *Pipeline) executeStages(ctx context.Context, pipelineCtx *types.Pipelin
 // 一切主观偏好（CDN、热门大站、默认页面、特定状态码、握手延迟阈值等）均不在此阻断，
 // 而是作为元数据特征打标入库，由查询过滤（FilterTarget / QueryTargets）在消费侧决定。
 func (p *Pipeline) evaluateSuitability(result *types.DetectionResult) {
+	filter := types.FilterConfig{}
+	if p.config != nil {
+		filter = p.config.GetFilter()
+	}
+
 	// 检查 GFW 静态黑名单 (仅当启用了 check_gfw 时拦截)
-	if p.config != nil && p.config.RealityFilter.CheckGFW && result.Blocked != nil && result.Blocked.IsBlocked {
+	if filter.CheckGFW && result.Blocked != nil && result.Blocked.IsBlocked {
 		result.Suitable = false
 		result.Error = fmt.Errorf("域名被墙")
 		return
 	}
 
 	// 检查国内网站 (仅当启用了 require_no_cn 时拦截，海外回国场景可放行)
-	if p.config != nil && p.config.RealityFilter.RequireNoCN && result.Location != nil && result.Location.IsDomestic {
+	if filter.RequireNoCN && result.Location != nil && result.Location.IsDomestic {
 		result.Suitable = false
 		result.Error = fmt.Errorf("国内网站")
 		return
@@ -330,8 +335,8 @@ func (p *Pipeline) evaluateSuitability(result *types.DetectionResult) {
 		statusCode := result.Network.StatusCode
 		isExcluded := false
 
-		if p.config != nil && len(p.config.RealityFilter.ExcludeStatus) > 0 {
-			for _, s := range p.config.RealityFilter.ExcludeStatus {
+		if len(filter.ExcludeStatus) > 0 {
+			for _, s := range filter.ExcludeStatus {
 				if s == statusCode {
 					isExcluded = true
 					break

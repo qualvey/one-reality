@@ -53,7 +53,7 @@ func TestBatchManager_SortByRecommendationStars(t *testing.T) {
 
 func TestBatchManager_GenerateBatchReport_FilterIntegration(t *testing.T) {
 	cfg := &types.Config{
-		RealityFilter: types.RealityFilterConfig{
+		Filter: types.FilterConfig{
 			RequireNoCDN: true,
 		},
 	}

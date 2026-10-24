@@ -195,9 +195,9 @@ func (bm *Manager) CheckDomainsWithProgress(ctx context.Context, domains []strin
 			// 显示进度
 			fmt.Printf("[%s] 正在检测 [%d/%d]: %s... ", time.Now().Format("15:04:05"), completed, len(domains), progressResult.Domain)
 
-			filter := types.RealityFilterConfig{}
+			filter := types.FilterConfig{}
 			if bm.config != nil {
-				filter = bm.config.RealityFilter
+				filter = bm.config.GetFilter()
 			}
 
 			if progressResult.Error != nil {
@@ -263,9 +263,9 @@ func (bm *Manager) generateBatchReport(results []*types.DetectionResult, startTi
 		TotalDomains: len(results),
 	}
 
-	filter := types.RealityFilterConfig{}
+	filter := types.FilterConfig{}
 	if bm.config != nil {
-		filter = bm.config.RealityFilter
+		filter = bm.config.GetFilter()
 	}
 
 	for _, result := range results {
@@ -334,9 +334,9 @@ func (bm *Manager) formatBatchReport(report *types.BatchReport) string {
 	var unsuitableResults []*types.DetectionResult
 	var excludedResults []*types.DetectionResult // 状态码不自然的域名
 
-	filter := types.RealityFilterConfig{}
+	filter := types.FilterConfig{}
 	if bm.config != nil {
-		filter = bm.config.RealityFilter
+		filter = bm.config.GetFilter()
 	}
 
 	for _, domainResult := range report.Results {

@@ -28,7 +28,7 @@ type AutoScanConfig struct {
 	CIDRs          []string
 	MaxTargets     int
 	CheckAll       bool
-	Filter         types.RealityFilterConfig
+	Filter         types.FilterConfig
 	ASN            string
 	Country        string
 	InitialResults []*types.DetectionResult

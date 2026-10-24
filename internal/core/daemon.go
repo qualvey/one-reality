@@ -292,7 +292,7 @@ func (d *DaemonScheduler) processASN(ctx context.Context, rec *types.ASNRecord) 
 	if scanTimeoutSec <= 0 {
 		scanTimeoutSec = 3
 	}
-	filterCfg := types.RealityFilterConfig{
+	filterCfg := types.FilterConfig{
 		ScanThreads: d.config.ScanThreads,
 		ScanTimeout: scanTimeoutSec,
 		RequireNoCN: true,

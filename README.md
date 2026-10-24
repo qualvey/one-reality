@@ -175,8 +175,8 @@ log:
   level: info
   file: ""
 
-# REALITY 目标选型过滤策略
-reality_filter:
+# 资产选型与查询过滤策略 (filter)
+filter:
   # ==================== 网络与运行环境策略 ====================
   # 1. 排除国内网站 (true: 默认排除国内站点；若为海外回国翻墙/访问国内流媒体，可设为 false)
   require_no_cn: true

@@ -179,53 +179,122 @@ func mergeConfig(defaultConfig *types.Config, fileConfig *types.Config) {
 		defaultConfig.Batch.Timeout = fileConfig.Batch.Timeout
 	}
 
-	// REALITY 选型策略配置
-	defaultConfig.RealityFilter.RequireNoCN = fileConfig.RealityFilter.RequireNoCN
-	defaultConfig.RealityFilter.CheckGFW = fileConfig.RealityFilter.CheckGFW
-	defaultConfig.RealityFilter.IPv4Only = fileConfig.RealityFilter.IPv4Only
-	defaultConfig.RealityFilter.IPv6Only = fileConfig.RealityFilter.IPv6Only
-	defaultConfig.RealityFilter.UseCache = fileConfig.RealityFilter.UseCache
-	defaultConfig.RealityFilter.VerifyCache = fileConfig.RealityFilter.VerifyCache
-	defaultConfig.RealityFilter.NoResume = fileConfig.RealityFilter.NoResume
-	if fileConfig.RealityFilter.CacheMaxDays > 0 {
-		defaultConfig.RealityFilter.CacheMaxDays = fileConfig.RealityFilter.CacheMaxDays
+	// 选型与过滤策略配置 (优先采用 filter，回退兼容旧的 reality_filter)
+	effectiveFilter := fileConfig.Filter
+	if !effectiveFilter.RequireNoCN && fileConfig.RealityFilter.RequireNoCN {
+		effectiveFilter.RequireNoCN = fileConfig.RealityFilter.RequireNoCN
 	}
-	if fileConfig.RealityFilter.ScanThreads > 0 {
-		defaultConfig.RealityFilter.ScanThreads = fileConfig.RealityFilter.ScanThreads
+	if !effectiveFilter.RequireNoCDN && fileConfig.RealityFilter.RequireNoCDN {
+		effectiveFilter.RequireNoCDN = fileConfig.RealityFilter.RequireNoCDN
 	}
-	if fileConfig.RealityFilter.ScanTimeout > 0 {
-		defaultConfig.RealityFilter.ScanTimeout = fileConfig.RealityFilter.ScanTimeout
+	if !effectiveFilter.CheckGFW && fileConfig.RealityFilter.CheckGFW {
+		effectiveFilter.CheckGFW = fileConfig.RealityFilter.CheckGFW
 	}
-	defaultConfig.RealityFilter.RequireNoCDN = fileConfig.RealityFilter.RequireNoCDN
-	defaultConfig.RealityFilter.RequireNoHot = fileConfig.RealityFilter.RequireNoHot
-	defaultConfig.RealityFilter.RequireNoDefaultPage = fileConfig.RealityFilter.RequireNoDefaultPage
-	if fileConfig.RealityFilter.ExcludeRulesFile != "" {
-		defaultConfig.RealityFilter.ExcludeRulesFile = fileConfig.RealityFilter.ExcludeRulesFile
+	if !effectiveFilter.IPv4Only && fileConfig.RealityFilter.IPv4Only {
+		effectiveFilter.IPv4Only = fileConfig.RealityFilter.IPv4Only
 	}
-	if fileConfig.RealityFilter.MaxHandshakeMS > 0 {
-		defaultConfig.RealityFilter.MaxHandshakeMS = fileConfig.RealityFilter.MaxHandshakeMS
+	if !effectiveFilter.IPv6Only && fileConfig.RealityFilter.IPv6Only {
+		effectiveFilter.IPv6Only = fileConfig.RealityFilter.IPv6Only
 	}
-	if fileConfig.RealityFilter.MinCertDays > 0 {
-		defaultConfig.RealityFilter.MinCertDays = fileConfig.RealityFilter.MinCertDays
+	if !effectiveFilter.UseCache && fileConfig.RealityFilter.UseCache {
+		effectiveFilter.UseCache = fileConfig.RealityFilter.UseCache
 	}
-	if fileConfig.RealityFilter.MinStars > 0 {
-		defaultConfig.RealityFilter.MinStars = fileConfig.RealityFilter.MinStars
+	if !effectiveFilter.VerifyCache && fileConfig.RealityFilter.VerifyCache {
+		effectiveFilter.VerifyCache = fileConfig.RealityFilter.VerifyCache
 	}
-	if len(fileConfig.RealityFilter.IncludeSuffixes) > 0 {
-		defaultConfig.RealityFilter.IncludeSuffixes = mergeUniqueStrings(defaultConfig.RealityFilter.IncludeSuffixes, fileConfig.RealityFilter.IncludeSuffixes)
+	if !effectiveFilter.NoResume && fileConfig.RealityFilter.NoResume {
+		effectiveFilter.NoResume = fileConfig.RealityFilter.NoResume
 	}
-	if len(fileConfig.RealityFilter.ExcludeDomains) > 0 {
-		defaultConfig.RealityFilter.ExcludeDomains = mergeUniqueStrings(defaultConfig.RealityFilter.ExcludeDomains, fileConfig.RealityFilter.ExcludeDomains)
+	if !effectiveFilter.RequireNoHot && fileConfig.RealityFilter.RequireNoHot {
+		effectiveFilter.RequireNoHot = fileConfig.RealityFilter.RequireNoHot
 	}
-	if len(fileConfig.RealityFilter.ExcludeSuffixes) > 0 {
-		defaultConfig.RealityFilter.ExcludeSuffixes = mergeUniqueStrings(defaultConfig.RealityFilter.ExcludeSuffixes, fileConfig.RealityFilter.ExcludeSuffixes)
+	if !effectiveFilter.RequireNoDefaultPage && fileConfig.RealityFilter.RequireNoDefaultPage {
+		effectiveFilter.RequireNoDefaultPage = fileConfig.RealityFilter.RequireNoDefaultPage
 	}
-	if len(fileConfig.RealityFilter.ExcludePatterns) > 0 {
-		defaultConfig.RealityFilter.ExcludePatterns = mergeUniqueStrings(defaultConfig.RealityFilter.ExcludePatterns, fileConfig.RealityFilter.ExcludePatterns)
+	if effectiveFilter.CacheMaxDays == 0 && fileConfig.RealityFilter.CacheMaxDays > 0 {
+		effectiveFilter.CacheMaxDays = fileConfig.RealityFilter.CacheMaxDays
 	}
-	if len(fileConfig.RealityFilter.ExcludeStatus) > 0 {
-		defaultConfig.RealityFilter.ExcludeStatus = mergeUniqueInts(defaultConfig.RealityFilter.ExcludeStatus, fileConfig.RealityFilter.ExcludeStatus)
+	if effectiveFilter.ScanThreads == 0 && fileConfig.RealityFilter.ScanThreads > 0 {
+		effectiveFilter.ScanThreads = fileConfig.RealityFilter.ScanThreads
 	}
+	if effectiveFilter.ScanTimeout == 0 && fileConfig.RealityFilter.ScanTimeout > 0 {
+		effectiveFilter.ScanTimeout = fileConfig.RealityFilter.ScanTimeout
+	}
+	if effectiveFilter.MaxHandshakeMS == 0 && fileConfig.RealityFilter.MaxHandshakeMS > 0 {
+		effectiveFilter.MaxHandshakeMS = fileConfig.RealityFilter.MaxHandshakeMS
+	}
+	if effectiveFilter.MinCertDays == 0 && fileConfig.RealityFilter.MinCertDays > 0 {
+		effectiveFilter.MinCertDays = fileConfig.RealityFilter.MinCertDays
+	}
+	if effectiveFilter.MinStars == 0 && fileConfig.RealityFilter.MinStars > 0 {
+		effectiveFilter.MinStars = fileConfig.RealityFilter.MinStars
+	}
+	if effectiveFilter.ExcludeRulesFile == "" && fileConfig.RealityFilter.ExcludeRulesFile != "" {
+		effectiveFilter.ExcludeRulesFile = fileConfig.RealityFilter.ExcludeRulesFile
+	}
+	if len(effectiveFilter.IncludeSuffixes) == 0 && len(fileConfig.RealityFilter.IncludeSuffixes) > 0 {
+		effectiveFilter.IncludeSuffixes = fileConfig.RealityFilter.IncludeSuffixes
+	}
+	if len(effectiveFilter.ExcludeDomains) == 0 && len(fileConfig.RealityFilter.ExcludeDomains) > 0 {
+		effectiveFilter.ExcludeDomains = fileConfig.RealityFilter.ExcludeDomains
+	}
+	if len(effectiveFilter.ExcludeSuffixes) == 0 && len(fileConfig.RealityFilter.ExcludeSuffixes) > 0 {
+		effectiveFilter.ExcludeSuffixes = fileConfig.RealityFilter.ExcludeSuffixes
+	}
+	if len(effectiveFilter.ExcludePatterns) == 0 && len(fileConfig.RealityFilter.ExcludePatterns) > 0 {
+		effectiveFilter.ExcludePatterns = fileConfig.RealityFilter.ExcludePatterns
+	}
+	if len(effectiveFilter.ExcludeStatus) == 0 && len(fileConfig.RealityFilter.ExcludeStatus) > 0 {
+		effectiveFilter.ExcludeStatus = fileConfig.RealityFilter.ExcludeStatus
+	}
+
+	defaultConfig.Filter.RequireNoCN = effectiveFilter.RequireNoCN
+	defaultConfig.Filter.CheckGFW = effectiveFilter.CheckGFW
+	defaultConfig.Filter.IPv4Only = effectiveFilter.IPv4Only
+	defaultConfig.Filter.IPv6Only = effectiveFilter.IPv6Only
+	defaultConfig.Filter.UseCache = effectiveFilter.UseCache
+	defaultConfig.Filter.VerifyCache = effectiveFilter.VerifyCache
+	defaultConfig.Filter.NoResume = effectiveFilter.NoResume
+	if effectiveFilter.CacheMaxDays > 0 {
+		defaultConfig.Filter.CacheMaxDays = effectiveFilter.CacheMaxDays
+	}
+	if effectiveFilter.ScanThreads > 0 {
+		defaultConfig.Filter.ScanThreads = effectiveFilter.ScanThreads
+	}
+	if effectiveFilter.ScanTimeout > 0 {
+		defaultConfig.Filter.ScanTimeout = effectiveFilter.ScanTimeout
+	}
+	defaultConfig.Filter.RequireNoCDN = effectiveFilter.RequireNoCDN
+	defaultConfig.Filter.RequireNoHot = effectiveFilter.RequireNoHot
+	defaultConfig.Filter.RequireNoDefaultPage = effectiveFilter.RequireNoDefaultPage
+	if effectiveFilter.ExcludeRulesFile != "" {
+		defaultConfig.Filter.ExcludeRulesFile = effectiveFilter.ExcludeRulesFile
+	}
+	if effectiveFilter.MaxHandshakeMS > 0 {
+		defaultConfig.Filter.MaxHandshakeMS = effectiveFilter.MaxHandshakeMS
+	}
+	if effectiveFilter.MinCertDays > 0 {
+		defaultConfig.Filter.MinCertDays = effectiveFilter.MinCertDays
+	}
+	if effectiveFilter.MinStars > 0 {
+		defaultConfig.Filter.MinStars = effectiveFilter.MinStars
+	}
+	if len(effectiveFilter.IncludeSuffixes) > 0 {
+		defaultConfig.Filter.IncludeSuffixes = mergeUniqueStrings(defaultConfig.Filter.IncludeSuffixes, effectiveFilter.IncludeSuffixes)
+	}
+	if len(effectiveFilter.ExcludeDomains) > 0 {
+		defaultConfig.Filter.ExcludeDomains = mergeUniqueStrings(defaultConfig.Filter.ExcludeDomains, effectiveFilter.ExcludeDomains)
+	}
+	if len(effectiveFilter.ExcludeSuffixes) > 0 {
+		defaultConfig.Filter.ExcludeSuffixes = mergeUniqueStrings(defaultConfig.Filter.ExcludeSuffixes, effectiveFilter.ExcludeSuffixes)
+	}
+	if len(effectiveFilter.ExcludePatterns) > 0 {
+		defaultConfig.Filter.ExcludePatterns = mergeUniqueStrings(defaultConfig.Filter.ExcludePatterns, effectiveFilter.ExcludePatterns)
+	}
+	if len(effectiveFilter.ExcludeStatus) > 0 {
+		defaultConfig.Filter.ExcludeStatus = mergeUniqueInts(defaultConfig.Filter.ExcludeStatus, effectiveFilter.ExcludeStatus)
+	}
+	defaultConfig.RealityFilter = defaultConfig.Filter
 
 	// 日志配置
 	if fileConfig.Log.Level != "" {
@@ -293,6 +362,54 @@ func GetDefaultConfig() *types.Config {
 
 // getDefaultConfig 获取默认配置
 func getDefaultConfig() *types.Config {
+	defaultFilter := types.FilterConfig{
+		RequireNoCN:          true,
+		CheckGFW:             false,
+		UseCache:             true,
+		CacheMaxDays:         7,
+		ScanThreads:          200,
+		ScanTimeout:          3,
+		RequireNoCDN:         true,
+		MaxHandshakeMS:       800,
+		RequireNoHot:         true,
+		MinCertDays:          7,
+		MinStars:             3,
+		RequireNoDefaultPage: true,
+		ExcludeRulesFile:     "data/exclude_rules.txt",
+		IncludeSuffixes:      []string{},
+		ExcludeDomains: []string{
+			"localhost",
+			"server.domain.com",
+			"johnnasmalley.hostname",
+			"Kubernetes Ingress Controller Fake Certificate",
+			"CloudFlare Origin Certificate",
+			"FortiGate",
+			"Unspecified",
+		},
+		ExcludeSuffixes: []string{
+			".local",
+			".internal",
+			".lan",
+			".home",
+			".corp",
+			".arpa",
+			".test",
+			".example",
+			".invalid",
+			".localhost",
+			".onion",
+		},
+		ExcludePatterns: []string{
+			"kubernetes",
+			"ingress controller fake certificate",
+			"fake certificate",
+		},
+		ExcludeStatus: []int{
+			400, 401, 403, 404, 407, 408, 429,
+			500, 501, 502, 503, 504,
+		},
+	}
+
 	return &types.Config{
 		Proxy: types.ProxyConfig{
 			URL:      "",
@@ -330,53 +447,8 @@ func getDefaultConfig() *types.Config {
 			ReportFormat: "text",
 			Timeout:      30 * time.Second,
 		},
-		RealityFilter: types.RealityFilterConfig{
-			RequireNoCN:          true,
-			CheckGFW:             false,
-			UseCache:             true,
-			CacheMaxDays:         7,
-			ScanThreads:          200,
-			ScanTimeout:          3,
-			RequireNoCDN:         true,
-			MaxHandshakeMS:       800,
-			RequireNoHot:         true,
-			MinCertDays:          7,
-			MinStars:             3,
-			RequireNoDefaultPage: true,
-			ExcludeRulesFile:     "data/exclude_rules.txt",
-			IncludeSuffixes:      []string{},
-			ExcludeDomains: []string{
-				"localhost",
-				"server.domain.com",
-				"johnnasmalley.hostname",
-				"Kubernetes Ingress Controller Fake Certificate",
-				"CloudFlare Origin Certificate",
-				"FortiGate",
-				"Unspecified",
-			},
-			ExcludeSuffixes: []string{
-				".local",
-				".internal",
-				".lan",
-				".home",
-				".corp",
-				".arpa",
-				".test",
-				".example",
-				".invalid",
-				".localhost",
-				".onion",
-			},
-			ExcludePatterns: []string{
-				"kubernetes",
-				"ingress controller fake certificate",
-				"fake certificate",
-			},
-			ExcludeStatus: []int{
-				400, 401, 403, 404, 407, 408, 429,
-				500, 501, 502, 503, 504,
-			},
-		},
+		Filter:        defaultFilter,
+		RealityFilter: defaultFilter,
 		Log: types.LogConfig{
 			Level: "info",
 			File:  "",
@@ -494,17 +566,21 @@ func validateAndSetDefaults(config *types.Config) {
 	}
 
 	// 尝试加载排除规则（优先用户配置路径/本地文件，若不存在自动回退至内置规则）
-	rulesPath := config.RealityFilter.ExcludeRulesFile
+	rulesPath := config.Filter.ExcludeRulesFile
+	if rulesPath == "" {
+		rulesPath = config.RealityFilter.ExcludeRulesFile
+	}
 	if rulesPath == "" {
 		rulesPath = "data/exclude_rules.txt"
 	}
 	domains, suffixes, patterns, statusCodes, incSuffixes, err := LoadExcludeRulesFromFile(rulesPath)
 	if err == nil {
-		config.RealityFilter.IncludeSuffixes = mergeUniqueStrings(config.RealityFilter.IncludeSuffixes, incSuffixes)
-		config.RealityFilter.ExcludeDomains = mergeUniqueStrings(config.RealityFilter.ExcludeDomains, domains)
-		config.RealityFilter.ExcludeSuffixes = mergeUniqueStrings(config.RealityFilter.ExcludeSuffixes, suffixes)
-		config.RealityFilter.ExcludePatterns = mergeUniqueStrings(config.RealityFilter.ExcludePatterns, patterns)
-		config.RealityFilter.ExcludeStatus = mergeUniqueInts(config.RealityFilter.ExcludeStatus, statusCodes)
+		config.Filter.IncludeSuffixes = mergeUniqueStrings(config.Filter.IncludeSuffixes, incSuffixes)
+		config.Filter.ExcludeDomains = mergeUniqueStrings(config.Filter.ExcludeDomains, domains)
+		config.Filter.ExcludeSuffixes = mergeUniqueStrings(config.Filter.ExcludeSuffixes, suffixes)
+		config.Filter.ExcludePatterns = mergeUniqueStrings(config.Filter.ExcludePatterns, patterns)
+		config.Filter.ExcludeStatus = mergeUniqueInts(config.Filter.ExcludeStatus, statusCodes)
+		config.RealityFilter = config.Filter
 	}
 }
 
@@ -554,7 +630,7 @@ func LoadExcludeRulesFromFile(filePath string) (domains, suffixes, patterns []st
 }
 
 // ShouldExcludeDomain 根据 REALITY 策略与排除规则判断是否应该排除指定域名
-func ShouldExcludeDomain(domain string, filter types.RealityFilterConfig) bool {
+func ShouldExcludeDomain(domain string, filter types.FilterConfig) bool {
 	if domain == "" {
 		return true
 	}
@@ -676,7 +752,7 @@ func mergeUniqueInts(base, additions []int) []int {
 }
 
 // ShouldExcludeStatusCode 判断状态码是否属于排除列表
-func ShouldExcludeStatusCode(statusCode int, filter types.RealityFilterConfig) bool {
+func ShouldExcludeStatusCode(statusCode int, filter types.FilterConfig) bool {
 	if len(filter.ExcludeStatus) > 0 {
 		for _, s := range filter.ExcludeStatus {
 			if s == statusCode {
