@@ -10,6 +10,7 @@ import { apiFetch, getApiToken, setApiToken as saveApiToken } from '../api';
 import { ConfigModal } from './ConfigModal';
 import { TargetDetailModal } from './TargetDetailModal';
 import { formatCertExpireDate } from '../format';
+import { getCountryDomainSuffix, getCountryFlagEmoji } from '../utils/countryTld';
 import {
   Sparkles,
   Globe,
@@ -72,6 +73,7 @@ export const SmartFinder = () => {
 
   // 原始所有召回目标资产池 (数据库返回 + 实时扫描推流)，前端按过滤器纯函数派生最终渲染列表
   const [rawTargets, setRawTargets] = useState<RankedTargetItem[]>([]);
+  const [resultDomainQuery, setResultDomainQuery] = useState('');
 
   // 实时扫描进度同步状态
   const [scanProgress, setScanProgress] = useState<ScanProgressInfo>({
@@ -256,8 +258,12 @@ export const SmartFinder = () => {
 
   // 纯前端响应式计算当前展示的目标清单（即时响应，零网络开销）
   const displayedTargets = useMemo(() => {
-    return rawTargets.filter((item) => isItemMatchFilter(item, filter, summary));
-  }, [rawTargets, filter, summary]);
+    const query = resultDomainQuery.trim().toLowerCase();
+    return rawTargets.filter((item) =>
+      isItemMatchFilter(item, filter, summary) &&
+      (!query || item.domain.toLowerCase().includes(query))
+    );
+  }, [rawTargets, filter, summary, resultDomainQuery]);
 
   // 统计已激活的高级过滤器数量
   const activeFilterCount = useMemo(() => {
@@ -309,6 +315,15 @@ export const SmartFinder = () => {
       };
     });
   };
+
+  // 根据当前 IP 识别结果 (summary.country) 动态计算目标所属国家/地区的顶级域名后缀
+  const detectedCountrySuffix = useMemo(() => {
+    return getCountryDomainSuffix(summary?.country);
+  }, [summary?.country]);
+
+  const detectedCountryFlag = useMemo(() => {
+    return getCountryFlagEmoji(summary?.country);
+  }, [summary?.country]);
 
   // 重置所有过滤器
   const resetFilters = () => {
@@ -810,6 +825,32 @@ export const SmartFinder = () => {
                   全部后缀
                 </button>
 
+                {/* 若 IP 识别到所属国家，动态渲染该国家顶级域名后缀快捷按钮 */}
+                {detectedCountrySuffix && (
+                  <button
+                    type="button"
+                    className={`filter-chip ${isSuffixSelected(detectedCountrySuffix) ? 'active' : ''}`}
+                    onClick={() => toggleSuffix(detectedCountrySuffix)}
+                    title={`根据当前 IP 归属地 (${summary?.country}) 动态识别的国家域名后缀`}
+                    style={{
+                      borderColor: isSuffixSelected(detectedCountrySuffix)
+                        ? 'var(--accent-cyan)'
+                        : 'rgba(56, 189, 248, 0.35)',
+                      background: isSuffixSelected(detectedCountrySuffix)
+                        ? undefined
+                        : 'rgba(56, 189, 248, 0.08)',
+                      color: isSuffixSelected(detectedCountrySuffix)
+                        ? undefined
+                        : 'var(--accent-cyan)',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <span>{detectedCountryFlag || '🌐'}</span>
+                    <span>{detectedCountrySuffix}</span>
+                    <span style={{ fontSize: '0.68rem', opacity: 0.8, marginLeft: '-2px' }}>({summary?.country})</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   className={`filter-chip ${isSuffixSelected('.com') ? 'active' : ''}`}
@@ -851,7 +892,8 @@ export const SmartFinder = () => {
                   .xyz
                 </button>
 
-                {filter.domainSuffixes && !['.com', '.net', '.org', '.io', '.xyz'].includes(filter.domainSuffixes.trim()) && (
+                {filter.domainSuffixes &&
+                  !['.com', '.net', '.org', '.io', '.xyz', detectedCountrySuffix].filter(Boolean).includes(filter.domainSuffixes.trim()) && (
                   <span className="badge badge-info" style={{ fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                     已自定义: {filter.domainSuffixes}
                     <button
@@ -973,6 +1015,21 @@ export const SmartFinder = () => {
                   </div>
                   <div style={{ display: 'flex', gap: '6px', marginTop: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
                     <span style={{ fontSize: '0.72rem', color: 'var(--text-sub)' }}>快捷选填:</span>
+                    {detectedCountrySuffix && (
+                      <button
+                        type="button"
+                        className={`badge ${isSuffixSelected(detectedCountrySuffix) ? 'badge-same-asn' : 'badge-global'}`}
+                        style={{
+                          cursor: 'pointer',
+                          borderColor: isSuffixSelected(detectedCountrySuffix) ? 'var(--accent-cyan)' : 'rgba(56, 189, 248, 0.4)',
+                          color: isSuffixSelected(detectedCountrySuffix) ? undefined : 'var(--accent-cyan)',
+                        }}
+                        onClick={() => toggleSuffix(detectedCountrySuffix)}
+                        title={`当前 IP 归属地 (${summary?.country}) 对应后缀`}
+                      >
+                        {detectedCountryFlag ? `${detectedCountryFlag} ` : ''}{detectedCountrySuffix} ({summary?.country})
+                      </button>
+                    )}
                     <button
                       type="button"
                       className={`badge ${isSuffixSelected('.com') ? 'badge-same-asn' : 'badge-global'}`}
@@ -1477,7 +1534,7 @@ export const SmartFinder = () => {
       )}
 
       {/* 结果区域工具栏与布局切换 */}
-      {displayedTargets.length > 0 && (
+      {(displayedTargets.length > 0 || rawTargets.length > 0) && (
         <div className="results-toolbar">
           <div className="results-toolbar-left">
             <div className="results-title-group">
@@ -1485,6 +1542,26 @@ export const SmartFinder = () => {
               <span className="badge badge-info" style={{ fontFamily: 'var(--font-mono)' }}>
                 {displayedTargets.length} 个目标
               </span>
+            </div>
+            <div className="input-group" style={{ marginLeft: '16px', minWidth: '240px' }}>
+              <Search size={15} style={{ color: 'var(--text-sub)' }} />
+              <input
+                type="search"
+                placeholder="按域名关键词搜索"
+                value={resultDomainQuery}
+                onChange={(e) => setResultDomainQuery(e.target.value)}
+                aria-label="按域名关键词搜索结果"
+              />
+              {resultDomainQuery && (
+                <button
+                  type="button"
+                  className="btn-icon"
+                  onClick={() => setResultDomainQuery('')}
+                  title="清除域名搜索"
+                >
+                  <X size={14} />
+                </button>
+              )}
             </div>
           </div>
 
