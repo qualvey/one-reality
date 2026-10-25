@@ -112,6 +112,10 @@ export const QuickCheckModal = ({ onClose, onSuccess }: QuickCheckModalProps) =>
             </div>
             <div className="card-specs" style={{ margin: 0 }}>
               <div className="spec-item">
+                <span className="spec-label">解析 IP</span>
+                <span className="spec-value" style={{ fontFamily: 'var(--font-mono)' }}>{result.ip || '未知'}</span>
+              </div>
+              <div className="spec-item">
                 <span className="spec-label">星级评级</span>
                 <span className="spec-value" style={{ color: '#fbbf24' }}>{'★'.repeat(result.stars)} ({result.stars} 星)</span>
               </div>
