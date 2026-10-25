@@ -554,7 +554,11 @@ func DetectionResultToRecord(res *types.DetectionResult, asn, country, ip string
 	}
 
 	if res.TLS != nil {
-		rec.HandshakeMS = res.TLS.HandshakeTime.Milliseconds()
+		ms := res.TLS.HandshakeTime.Milliseconds()
+		if ms == 0 && res.TLS.HandshakeTime > 0 {
+			ms = 1
+		}
+		rec.HandshakeMS = ms
 	}
 
 	if res.Certificate != nil {

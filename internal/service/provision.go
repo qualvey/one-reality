@@ -18,6 +18,7 @@ import (
 	"RealityChecker/internal/config"
 	"RealityChecker/internal/core"
 	"RealityChecker/internal/logger"
+	"RealityChecker/internal/network"
 	"RealityChecker/internal/scanner"
 	"RealityChecker/internal/storage"
 	"RealityChecker/internal/types"
@@ -934,18 +935,32 @@ func (s *ProvisionService) CheckSingleDomain(ctx context.Context, domain, manual
 	if d == "" {
 		return nil, errors.New("domain cannot be empty")
 	}
+	manualIP = strings.TrimSpace(manualIP)
 
-	pipeline := core.NewPipeline(nil, s.appConfig)
-	res, err := pipeline.Execute(ctx, d)
+	connMgr := network.NewConnectionManager(s.appConfig)
+	pipeline := core.NewPipeline(connMgr, s.appConfig)
+	res, err := pipeline.ExecuteWithTargetIP(ctx, d, manualIP)
 	if err != nil {
 		return nil, fmt.Errorf("pipeline execution failed: %w", err)
 	}
+	if res.Error != nil {
+		return nil, fmt.Errorf("baseline verification failed: %w", res.Error)
+	}
+	if !res.Suitable {
+		return nil, errors.New("target domain is not suitable for REALITY")
+	}
 
 	var ipStr, asnStr, countryStr string
-	if manualIP != "" {
+	if manualIP != "" && net.ParseIP(manualIP) != nil {
 		ipStr = manualIP
-	} else if res.Network != nil && res.Network.FinalDomain != "" {
-		ipStr = res.Network.FinalDomain
+	} else if res.Location != nil && res.Location.IPAddress != "" {
+		ipStr = res.Location.IPAddress
+	}
+
+	if ipStr == "" {
+		if ips, err := net.LookupIP(d); err == nil && len(ips) > 0 {
+			ipStr = ips[0].String()
+		}
 	}
 
 	if ipStr != "" {
@@ -955,10 +970,19 @@ func (s *ProvisionService) CheckSingleDomain(ctx context.Context, domain, manual
 					countryStr = strings.ToUpper(rec.Country.IsoCode)
 				}
 			}
-			if asnNum, _, err := s.asnClient.PrefixesForIP(ctx, ipStr); err == nil && asnNum > 0 {
-				asnStr = fmt.Sprintf("AS%d", asnNum)
+			if s.asnClient != nil {
+				if asnNum, _, err := s.asnClient.PrefixesForIP(ctx, ipStr); err == nil && asnNum > 0 {
+					asnStr = fmt.Sprintf("AS%d", asnNum)
+				}
 			}
 		}
+	}
+
+	if countryStr == "" && res.Location != nil && res.Location.Country != "" {
+		countryStr = res.Location.Country
+	}
+	if asnStr == "" && res.Location != nil && res.Location.ASN != "" {
+		asnStr = res.Location.ASN
 	}
 
 	stars := core.CalculateTargetStars(res)

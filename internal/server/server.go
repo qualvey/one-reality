@@ -406,8 +406,8 @@ func (s *TargetServer) handleTargetsCheck(w http.ResponseWriter, r *http.Request
 	rec, err := s.service.CheckSingleDomain(r.Context(), payload.Domain, payload.IP)
 	if err != nil {
 		logger.Warn("❌ [API] 在线复核失败: 域名=%s, IP=%s, 错误: %v (客户端: %s)", payload.Domain, payload.IP, err, getClientIP(r))
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]any{"code": 500, "error": err.Error()})
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 400, "error": err.Error()})
 		return
 	}
 
