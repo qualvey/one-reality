@@ -395,4 +395,23 @@ func TestProvisionService_GetSmartTargetsTieredRecall(t *testing.T) {
 	}
 }
 
+func TestCheckSingleDomain_ValidationAndSuitability(t *testing.T) {
+	svc := NewProvisionService(nil, nil, nil, nil)
+
+	// 1. 空域名校验
+	_, err := svc.CheckSingleDomain(context.Background(), "", "")
+	if err == nil {
+		t.Fatalf("expected error for empty domain, got nil")
+	}
+
+	// 2. 检测不合规目标（例如不存在的域名）应明确报错，禁止误报成功或返回 0ms / 空 IP
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err = svc.CheckSingleDomain(ctx, "invalid-non-existent-domain-12345.xyz", "192.0.2.1")
+	if err == nil {
+		t.Fatalf("expected error for unreachable/invalid target, got nil")
+	}
+}
+
+
 

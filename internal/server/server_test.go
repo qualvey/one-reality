@@ -396,3 +396,47 @@ func TestServer_DefaultFilterAndPreferenceQuery(t *testing.T) {
 	}
 }
 
+func TestServer_TargetsCheck(t *testing.T) {
+	ts, store := setupTestServer(t)
+	defer store.Close()
+
+	// 1. GET 请求测试 (Method Not Allowed)
+	reqGet := httptest.NewRequest(http.MethodGet, "/api/targets/check", nil)
+	wGet := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(wGet, reqGet)
+	if wGet.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405 for GET, got %d", wGet.Code)
+	}
+
+	// 2. 非法 JSON Payload
+	reqBadJSON := httptest.NewRequest(http.MethodPost, "/api/targets/check", strings.NewReader("{invalid-json"))
+	wBadJSON := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(wBadJSON, reqBadJSON)
+	if wBadJSON.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for bad JSON, got %d", wBadJSON.Code)
+	}
+
+	// 3. 缺少 domain 参数
+	reqEmptyDomain := httptest.NewRequest(http.MethodPost, "/api/targets/check", strings.NewReader(`{"domain": ""}`))
+	wEmptyDomain := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(wEmptyDomain, reqEmptyDomain)
+	if wEmptyDomain.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty domain, got %d", wEmptyDomain.Code)
+	}
+
+	// 4. 不存在的域名检测失败应返回 400 与错误原因
+	reqInvalid := httptest.NewRequest(http.MethodPost, "/api/targets/check", strings.NewReader(`{"domain": "invalid-domain-xyz-12345.xyz", "ip": "192.0.2.1"}`))
+	wInvalid := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(wInvalid, reqInvalid)
+	if wInvalid.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for failed baseline check, got %d", wInvalid.Code)
+	}
+	var errResp map[string]any
+	if err := json.Unmarshal(wInvalid.Body.Bytes(), &errResp); err == nil {
+		if errResp["code"] != float64(400) {
+			t.Errorf("expected error response code 400, got %v", errResp["code"])
+		}
+	}
+}
+
+
