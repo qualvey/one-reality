@@ -6,6 +6,7 @@ import type {
   SmartFilterOptions,
   ScanProgressInfo,
 } from '../types';
+import { apiFetch, getApiToken, setApiToken as saveApiToken } from '../api';
 import { ConfigModal } from './ConfigModal';
 import { TargetDetailModal } from './TargetDetailModal';
 import { formatCertExpireDate } from '../format';
@@ -62,7 +63,7 @@ export const SmartFinder = () => {
   const [showAdvancedFilter, setShowAdvancedFilter] = useState(false);
 
   // 鉴权 Token
-  const [apiToken, setApiToken] = useState(() => localStorage.getItem('rc_api_token') || '');
+  const [apiToken, setApiToken] = useState(() => getApiToken());
   const [showTokenSettings, setShowTokenSettings] = useState(false);
 
   const [loading, setLoading] = useState(false);
@@ -146,7 +147,7 @@ export const SmartFinder = () => {
 
   // 初始化加载服务端推荐过滤器默认值
   useEffect(() => {
-    fetch('/api/filter/default')
+    apiFetch('/api/filter/default')
       .then((res) => res.json())
       .then((data) => {
         if (data.code === 200 && data.data) {
@@ -172,11 +173,7 @@ export const SmartFinder = () => {
 
   const handleTokenChange = (val: string) => {
     setApiToken(val);
-    if (val.trim()) {
-      localStorage.setItem('rc_api_token', val.trim());
-    } else {
-      localStorage.removeItem('rc_api_token');
-    }
+    saveApiToken(val);
   };
 
   // 快捷测试 IP 资产
@@ -387,7 +384,7 @@ export const SmartFinder = () => {
         headers['Authorization'] = `Bearer ${apiToken.trim()}`;
       }
 
-      const res = await fetch(url, { headers });
+      const res = await apiFetch(url, { headers });
       const data = await res.json();
       if (!res.ok || data.code !== 200) {
         throw new Error(data.error || '请求匹配失败');

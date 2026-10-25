@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { TargetRecord, TargetItem } from '../types';
+import { apiFetch } from '../api';
 import { ConfigModal } from './ConfigModal';
 import { QuickCheckModal } from './QuickCheckModal';
 import {
@@ -22,6 +23,7 @@ export const TargetTable = () => {
   const [page, setPage] = useState(1);
   const [pageSize] = useState(15);
   const [loading, setLoading] = useState(false);
+  const [authError, setAuthError] = useState(false);
 
   // 筛选条件
   const [keyword, setKeyword] = useState('');
@@ -67,7 +69,14 @@ export const TargetTable = () => {
       if (minCertDays > 0) params.append('min_cert_days', minCertDays.toString());
       if (excludeStatus403) params.append('exclude_status', '400,401,403,404,429,500,502,503');
 
-      const res = await fetch(`/api/targets?${params.toString()}`);
+      const res = await apiFetch(`/api/targets?${params.toString()}`);
+      if (res.status === 401) {
+        setAuthError(true);
+        setItems([]);
+        setTotal(0);
+        return;
+      }
+      setAuthError(false);
       const data = await res.json();
       if (res.ok && data.code === 200) {
         setItems(data.data.items || []);
@@ -86,7 +95,7 @@ export const TargetTable = () => {
 
   const applyDefaultFilter = async () => {
     try {
-      const res = await fetch('/api/filter/default');
+      const res = await apiFetch('/api/filter/default');
       const data = await res.json();
       if (res.ok && data.code === 200 && data.data) {
         const def = data.data;
@@ -128,7 +137,7 @@ export const TargetTable = () => {
 
   const toggleActive = async (target: TargetRecord) => {
     try {
-      const res = await fetch(`/api/targets/${encodeURIComponent(target.domain)}`, {
+      const res = await apiFetch(`/api/targets/${encodeURIComponent(target.domain)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ is_active: !target.is_active }),
@@ -149,7 +158,7 @@ export const TargetTable = () => {
     if (!window.confirm(`确定要从数据库中物理删除目标 [${domain}] 吗？`)) return;
 
     try {
-      const res = await fetch(`/api/targets/${encodeURIComponent(domain)}`, {
+      const res = await apiFetch(`/api/targets/${encodeURIComponent(domain)}`, {
         method: 'DELETE',
       });
       if (res.ok) {
@@ -548,7 +557,16 @@ export const TargetTable = () => {
             {items.length === 0 && !loading && (
               <tr>
                 <td colSpan={9} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-sub)' }}>
-                  暂未找到匹配的资产记录
+                  {authError ? (
+                    <div style={{ color: 'var(--accent-amber)', display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                      <span>⚠️ 鉴权失败：服务端已开启 API Token 保护 (HTTP 401)</span>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                        请在顶栏或「智能同ASN推荐」页面设置并保存正确的 API Token
+                      </span>
+                    </div>
+                  ) : (
+                    '暂未找到匹配的资产记录'
+                  )}
                 </td>
               </tr>
             )}

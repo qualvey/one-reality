@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { TargetStats } from '../types';
+import { apiFetch } from '../api';
 import { Database, ShieldCheck, Zap, Globe, Star } from 'lucide-react';
 
 export const StatsDashboard = () => {
@@ -7,7 +8,7 @@ export const StatsDashboard = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/stats')
+    apiFetch('/api/stats')
       .then((res) => res.json())
       .then((data) => {
         if (data.code === 200) {

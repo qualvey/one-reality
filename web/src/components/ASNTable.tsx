@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { ASNRecord } from '../types';
+import { apiFetch } from '../api';
 import { RefreshCw, CheckCircle, Clock, Loader2 } from 'lucide-react';
 
 export const ASNTable = () => {
@@ -9,7 +10,7 @@ export const ASNTable = () => {
   const fetchASNs = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/asns?limit=100');
+      const res = await apiFetch('/api/asns?limit=100');
       const data = await res.json();
       if (res.ok && data.code === 200) {
         setAsns(data.data || []);
