@@ -54,20 +54,44 @@ type ComprehensiveTLSResult struct {
 
 // performComprehensiveTLSDetection 执行综合TLS检测
 func (cts *ComprehensiveTLSStage) performComprehensiveTLSDetection(ctx *types.PipelineContext, domain string) *ComprehensiveTLSResult {
-	// 获取连接管理器
-	connMgr, ok := ctx.Connections.(interface {
+	type targetConnMgr interface {
+		GetTLSConnectionTarget(context.Context, string, string) (*tls.Conn, error)
+		GetX25519TLSConnectionTarget(context.Context, string, string) (*tls.Conn, error)
+		CloseTLSConnection(*tls.Conn)
+	}
+
+	type defaultConnMgr interface {
 		GetTLSConnection(context.Context, string) (*tls.Conn, error)
 		GetX25519TLSConnection(context.Context, string) (*tls.Conn, error)
 		CloseTLSConnection(*tls.Conn)
-	})
-	if !ok {
-		// 如果连接管理器不可用，回退到直接连接
-		return cts.performDirectTLSDetection(domain)
 	}
 
-	// 第一次握手：正常TLS握手，检测TLS1.3、HTTP/2、SNI、证书
+	targetIP := ""
+	var reqCtx context.Context
+	if ctx != nil {
+		targetIP = ctx.TargetIP
+		reqCtx = ctx.Context
+	}
+	if reqCtx == nil {
+		reqCtx = context.Background()
+	}
+
 	startTime := time.Now()
-	normalConn, err := connMgr.GetTLSConnection(ctx.Context, domain)
+	var normalConn *tls.Conn
+	var err error
+	var closeConn func(*tls.Conn)
+
+	if tcm, ok := ctx.Connections.(targetConnMgr); ok {
+		normalConn, err = tcm.GetTLSConnectionTarget(reqCtx, domain, targetIP)
+		closeConn = tcm.CloseTLSConnection
+	} else if dcm, ok := ctx.Connections.(defaultConnMgr); ok {
+		normalConn, err = dcm.GetTLSConnection(reqCtx, domain)
+		closeConn = dcm.CloseTLSConnection
+	} else {
+		// 如果连接管理器不可用，回退到直接连接
+		return cts.performDirectTLSDetection(reqCtx, domain, targetIP)
+	}
+
 	if err != nil {
 		// 连接失败时，normalConn可能为nil，不需要关闭
 		return cts.createFailedResult(startTime)
@@ -81,7 +105,9 @@ func (cts *ComprehensiveTLSStage) performComprehensiveTLSDetection(ctx *types.Pi
 	firstResult := cts.analyzeTLSState(normalState, domain, handshakeTime)
 
 	// 关闭第一次握手的连接
-	connMgr.CloseTLSConnection(normalConn)
+	if closeConn != nil {
+		closeConn(normalConn)
+	}
 
 	// 检查第一次握手的关键要求
 	if !cts.checkCriticalRequirements(firstResult) {
@@ -94,7 +120,21 @@ func (cts *ComprehensiveTLSStage) performComprehensiveTLSDetection(ctx *types.Pi
 	}
 
 	// 仅当服务端未在首轮选择 X25519 时，才发起第二次专门强制 X25519 的探测
-	supportsX25519 := cts.checkX25519Support(domain, 3*time.Second)
+	if tcm, ok := ctx.Connections.(targetConnMgr); ok {
+		if xConn, err := tcm.GetX25519TLSConnectionTarget(reqCtx, domain, targetIP); err == nil && xConn != nil {
+			firstResult.TLS.SupportsX25519 = true
+			tcm.CloseTLSConnection(xConn)
+			return firstResult
+		}
+	} else if dcm, ok := ctx.Connections.(defaultConnMgr); ok {
+		if xConn, err := dcm.GetX25519TLSConnection(reqCtx, domain); err == nil && xConn != nil {
+			firstResult.TLS.SupportsX25519 = true
+			dcm.CloseTLSConnection(xConn)
+			return firstResult
+		}
+	}
+
+	supportsX25519 := cts.checkX25519SupportTarget(domain, targetIP, 3*time.Second)
 	firstResult.TLS.SupportsX25519 = supportsX25519
 
 	return firstResult
@@ -188,24 +228,51 @@ func verifyPeerCertificate(leaf *x509.Certificate, peerIntermediates []*x509.Cer
 }
 
 // performDirectTLSDetection 直接TLS检测（回退方案）
-func (cts *ComprehensiveTLSStage) performDirectTLSDetection(domain string) *ComprehensiveTLSResult {
-	// 简化的直接检测实现
-	return &ComprehensiveTLSResult{
-		TLS: &types.TLSResult{
-			ProtocolVersion: "",
-			SupportsTLS13:   false,
-			SupportsX25519:  false,
-			SupportsHTTP2:   false,
-			CipherSuite:     "",
-			HandshakeTime:   0,
-		},
-		SNI: &types.SNIResult{
-			SupportsSNI: false,
-			SNIMatch:    false,
-			ServerName:  domain,
-		},
-		Certificate: nil,
+func (cts *ComprehensiveTLSStage) performDirectTLSDetection(ctx context.Context, domain, targetIP string) *ComprehensiveTLSResult {
+	targetHost := domain
+	if targetIP != "" {
+		targetHost = targetIP
 	}
+	addr := net.JoinHostPort(targetHost, "443")
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	startTime := time.Now()
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	tcpConn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return cts.createFailedResult(startTime)
+	}
+
+	tlsCfg := &tls.Config{
+		ServerName:         domain,
+		InsecureSkipVerify: true,
+		NextProtos:         []string{"h2", "http/1.1"},
+		CurvePreferences:   []tls.CurveID{tls.X25519, tls.X25519MLKEM768, tls.CurveP256},
+	}
+
+	tlsConn := tls.Client(tcpConn, tlsCfg)
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		if tc, ok := tcpConn.(*net.TCPConn); ok {
+			_ = tc.SetLinger(0)
+		}
+		_ = tcpConn.Close()
+		return cts.createFailedResult(startTime)
+	}
+
+	handshakeTime := time.Since(startTime)
+	state := tlsConn.ConnectionState()
+	_ = tlsConn.Close()
+
+	res := cts.analyzeTLSState(state, domain, handshakeTime)
+	if !cts.checkCriticalRequirements(res) {
+		return res
+	}
+	if !res.TLS.SupportsX25519 {
+		res.TLS.SupportsX25519 = cts.checkX25519SupportTarget(domain, targetIP, 3*time.Second)
+	}
+	return res
 }
 
 // createFailedResult 创建失败结果
@@ -228,22 +295,27 @@ func (cts *ComprehensiveTLSStage) createFailedResult(startTime time.Time) *Compr
 	}
 }
 
-// checkX25519Support 检查X25519支持（正确的检测方法）
-func (cts *ComprehensiveTLSStage) checkX25519Support(domain string, timeout time.Duration) bool {
-	const port = ":443"
+// checkX25519SupportTarget 检查X25519支持（支持可选指定目标 IP）
+func (cts *ComprehensiveTLSStage) checkX25519SupportTarget(domain, targetIP string, timeout time.Duration) bool {
+	targetHost := domain
+	if targetIP != "" {
+		targetHost = targetIP
+	}
+	addr := net.JoinHostPort(targetHost, "443")
 
 	// 专门做一次"仅X25519"的握手
 	x25519Config := &tls.Config{
-		ServerName:       domain,
-		CurvePreferences: []tls.CurveID{tls.X25519}, // 强制仅使用X25519
-		NextProtos:       []string{"h2", "http/1.1"},
-		MinVersion:       tls.VersionTLS13, // 确保使用TLS1.3
-		MaxVersion:       tls.VersionTLS13,
+		ServerName:         domain,
+		InsecureSkipVerify: true,
+		CurvePreferences:   []tls.CurveID{tls.X25519}, // 强制仅使用X25519
+		NextProtos:         []string{"h2", "http/1.1"},
+		MinVersion:         tls.VersionTLS13, // 确保使用TLS1.3
+		MaxVersion:         tls.VersionTLS13,
 	}
 
 	conn, err := tls.DialWithDialer(&net.Dialer{
 		Timeout: timeout,
-	}, "tcp", domain+port, x25519Config)
+	}, "tcp", addr, x25519Config)
 
 	if err != nil {
 		// X25519握手失败，说明不支持X25519
@@ -251,11 +323,14 @@ func (cts *ComprehensiveTLSStage) checkX25519Support(domain string, timeout time
 	}
 	defer conn.Close()
 
-	// 检查连接状态
+	// 检查握手结果
 	state := conn.ConnectionState()
+	return state.HandshakeComplete && (state.CurveID == tls.X25519 || state.CurveID == tls.X25519MLKEM768 || state.Version == tls.VersionTLS13)
+}
 
-	// 握手成功且使用TLS1.3，说明支持X25519
-	return state.Version == tls.VersionTLS13
+// checkX25519Support 检查X25519支持（正确的检测方法）
+func (cts *ComprehensiveTLSStage) checkX25519Support(domain string, timeout time.Duration) bool {
+	return cts.checkX25519SupportTarget(domain, "", timeout)
 }
 
 // CanEarlyExit 是否可以早期退出

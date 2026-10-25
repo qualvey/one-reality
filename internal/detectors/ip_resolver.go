@@ -20,11 +20,17 @@ func NewIPResolverStage() *IPResolverStage {
 
 // Execute 执行IP解析
 func (irs *IPResolverStage) Execute(ctx *types.PipelineContext) error {
+	var ip string
+	var err error
 
-	// 解析IP地址
-	ip, err := irs.resolveIP(ctx.Domain)
-	if err != nil {
-		return fmt.Errorf("IP解析失败: %v", err)
+	if ctx.TargetIP != "" && net.ParseIP(ctx.TargetIP) != nil {
+		ip = ctx.TargetIP
+	} else {
+		// 解析IP地址
+		ip, err = irs.resolveIP(ctx.Domain)
+		if err != nil {
+			return fmt.Errorf("IP解析失败: %v", err)
+		}
 	}
 
 	// 快速连通性测试

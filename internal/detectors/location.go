@@ -24,21 +24,30 @@ func NewLocationStage() *LocationStage {
 
 // Execute 执行地理位置检测
 func (ls *LocationStage) Execute(ctx *types.PipelineContext) error {
+	var ip string
+	var err error
 
-	// 解析IP地址
-	ip, err := ls.resolveIP(ctx.Domain)
-	if err != nil {
-		return fmt.Errorf("IP解析失败: %v", err)
+	if ctx.TargetIP != "" && net.ParseIP(ctx.TargetIP) != nil {
+		ip = ctx.TargetIP
+	} else if ctx.Result.Location != nil && ctx.Result.Location.IPAddress != "" {
+		ip = ctx.Result.Location.IPAddress
+	} else {
+		// 解析IP地址
+		ip, err = ls.resolveIP(ctx.Domain)
+		if err != nil {
+			return fmt.Errorf("IP解析失败: %v", err)
+		}
 	}
 
 	// 获取地理位置
 	country, isDomestic := ls.getLocation(ip)
 
-	ctx.Result.Location = &types.LocationResult{
-		Country:    country,
-		IsDomestic: isDomestic,
-		IPAddress:  ip,
+	if ctx.Result.Location == nil {
+		ctx.Result.Location = &types.LocationResult{}
 	}
+	ctx.Result.Location.Country = country
+	ctx.Result.Location.IsDomestic = isDomestic
+	ctx.Result.Location.IPAddress = ip
 
 	if isDomestic {
 		ctx.EarlyExit = true
