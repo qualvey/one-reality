@@ -23,9 +23,15 @@ export const QuickCheckModal = ({ onClose, onSuccess }: QuickCheckModalProps) =>
     setResult(null);
 
     try {
+      // 在线检测接口同样受服务端 API Token 保护；与智能检测页共用已保存的 Token。
+      const token = (localStorage.getItem('rc_api_token') || '').trim();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
       const res = await fetch('/api/targets/check', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ domain: domain.trim(), ip: ip.trim() }),
       });
       const data = await res.json();
