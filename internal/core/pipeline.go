@@ -75,6 +75,9 @@ func NewPipeline(connections *network.ConnectionManager, config *types.Config) *
 
 // NewPipelineWithProfile 根据指定画像创建检测流水线
 func NewPipelineWithProfile(connections *network.ConnectionManager, config *types.Config, profile PipelineProfile) *Pipeline {
+	if connections == nil {
+		connections = network.NewConnectionManager(config)
+	}
 	p := &Pipeline{
 		profile:     profile,
 		config:      config,
@@ -88,6 +91,9 @@ func NewPipelineWithProfile(connections *network.ConnectionManager, config *type
 
 // NewPipelineWithOptions 使用自定义选项构建检测流水线
 func NewPipelineWithOptions(connections *network.ConnectionManager, config *types.Config, opts ...PipelineOption) *Pipeline {
+	if connections == nil {
+		connections = network.NewConnectionManager(config)
+	}
 	p := &Pipeline{
 		profile:     ProfileStandard,
 		config:      config,
@@ -231,13 +237,14 @@ func (p *Pipeline) EnableStage(name string, enabled bool) {
 	}
 }
 
-// Execute 执行检测流水线
-func (p *Pipeline) Execute(ctx context.Context, domain string) (*types.DetectionResult, error) {
+// ExecuteWithTargetIP 执行检测流水线 (支持可选显式指定测试 IP)
+func (p *Pipeline) ExecuteWithTargetIP(ctx context.Context, domain string, targetIP string) (*types.DetectionResult, error) {
 	startTime := time.Now()
 
 	// 创建流水线上下文
 	pipelineCtx := &types.PipelineContext{
 		Domain:      domain,
+		TargetIP:    targetIP,
 		StartTime:   startTime,
 		Result:      &types.DetectionResult{Domain: domain, StartTime: startTime},
 		Connections: p.connections, // 传递连接管理器给检测器
@@ -257,6 +264,11 @@ func (p *Pipeline) Execute(ctx context.Context, domain string) (*types.Detection
 	p.evaluateSuitability(pipelineCtx.Result)
 
 	return pipelineCtx.Result, nil
+}
+
+// Execute 执行检测流水线
+func (p *Pipeline) Execute(ctx context.Context, domain string) (*types.DetectionResult, error) {
+	return p.ExecuteWithTargetIP(ctx, domain, "")
 }
 
 // executeStages 按优先级顺序严格执行各检测阶段（确定性且无数据竞争）

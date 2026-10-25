@@ -77,11 +77,16 @@ func (e *Engine) Stop() error {
 
 // CheckDomain 检测单个域名（直接使用pipeline，简化架构）
 func (e *Engine) CheckDomain(ctx context.Context, domain string) (*types.DetectionResult, error) {
+	return e.CheckDomainWithTargetIP(ctx, domain, "")
+}
+
+// CheckDomainWithTargetIP 检测单个域名并指定可选测试 IP
+func (e *Engine) CheckDomainWithTargetIP(ctx context.Context, domain, targetIP string) (*types.DetectionResult, error) {
 	if !e.running {
 		return nil, fmt.Errorf("引擎未运行")
 	}
 
-	return e.pipeline.Execute(ctx, domain)
+	return e.pipeline.ExecuteWithTargetIP(ctx, domain, targetIP)
 }
 
 // CheckDomains 批量检测域名（移除并发控制，由调用方管理）

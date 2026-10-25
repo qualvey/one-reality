@@ -257,6 +257,7 @@ type DetectionStage interface {
 // PipelineContext 流水线上下文
 type PipelineContext struct {
 	Domain      string
+	TargetIP    string // 可选指定测试 IP
 	StartTime   time.Time
 	Result      *DetectionResult
 	Connections interface{} // 使用interface{}来支持不同的连接管理器类型

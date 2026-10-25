@@ -81,9 +81,13 @@ func (cm *ConnectionManager) GetHTTPConnection(ctx context.Context, domain strin
 	return conn, nil
 }
 
-// GetTLSConnection 获取支持 Context 握手与优先 X25519 曲线的 TLS 连接
-func (cm *ConnectionManager) GetTLSConnection(ctx context.Context, domain string) (*tls.Conn, error) {
-	hostPort := net.JoinHostPort(domain, "443")
+// GetTLSConnectionTarget 获取指定目标 IP/地址与 ServerName 的 TLS 连接
+func (cm *ConnectionManager) GetTLSConnectionTarget(ctx context.Context, domain string, targetIP string) (*tls.Conn, error) {
+	targetHost := domain
+	if targetIP != "" {
+		targetHost = targetIP
+	}
+	hostPort := net.JoinHostPort(targetHost, "443")
 	tcpConn, err := cm.dialContext(ctx, "tcp", hostPort)
 	if err != nil {
 		cm.mu.Lock()
@@ -118,9 +122,18 @@ func (cm *ConnectionManager) GetTLSConnection(ctx context.Context, domain string
 	return tlsConn, nil
 }
 
-// GetX25519TLSConnection 获取强制仅 X25519 的 TLS 连接（用于复核探测）
-func (cm *ConnectionManager) GetX25519TLSConnection(ctx context.Context, domain string) (*tls.Conn, error) {
-	hostPort := net.JoinHostPort(domain, "443")
+// GetTLSConnection 获取支持 Context 握手与优先 X25519 曲线的 TLS 连接
+func (cm *ConnectionManager) GetTLSConnection(ctx context.Context, domain string) (*tls.Conn, error) {
+	return cm.GetTLSConnectionTarget(ctx, domain, "")
+}
+
+// GetX25519TLSConnectionTarget 获取指定目标 IP/地址与 ServerName 的强制仅 X25519 的 TLS 连接
+func (cm *ConnectionManager) GetX25519TLSConnectionTarget(ctx context.Context, domain string, targetIP string) (*tls.Conn, error) {
+	targetHost := domain
+	if targetIP != "" {
+		targetHost = targetIP
+	}
+	hostPort := net.JoinHostPort(targetHost, "443")
 	tcpConn, err := cm.dialContext(ctx, "tcp", hostPort)
 	if err != nil {
 		cm.mu.Lock()
@@ -155,6 +168,11 @@ func (cm *ConnectionManager) GetX25519TLSConnection(ctx context.Context, domain 
 	cm.stats.ActiveConnections++
 	cm.mu.Unlock()
 	return tlsConn, nil
+}
+
+// GetX25519TLSConnection 获取强制仅 X25519 的 TLS 连接（用于复核探测）
+func (cm *ConnectionManager) GetX25519TLSConnection(ctx context.Context, domain string) (*tls.Conn, error) {
+	return cm.GetX25519TLSConnectionTarget(ctx, domain, "")
 }
 
 // CloseConnection 关闭普通连接并使用 SetLinger(0) 立即回收套接字
