@@ -457,6 +457,80 @@ h1, h2, h3, h4 {
   font-family: var(--font-sans);
 }
 
+.search-history {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 12px;
+  padding-top: 2px;
+}
+
+.search-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.search-history-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.search-history-count {
+  color: var(--text-sub);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+
+.search-history-clear {
+  border: none;
+  background: transparent;
+  color: var(--text-sub);
+  cursor: pointer;
+  font-size: 0.74rem;
+  padding: 2px 4px;
+}
+
+.search-history-clear:hover {
+  color: var(--accent-rose);
+}
+
+.search-history-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.search-history-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  padding: 5px 8px;
+  transition: all var(--transition-fast);
+}
+
+.search-history-item:hover:not(:disabled) {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.35);
+  color: var(--text-main);
+}
+
+.search-history-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 /* IP Summary Info Banner */
 .ip-summary-banner {
   display: flex;

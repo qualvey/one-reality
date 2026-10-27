@@ -61,9 +61,31 @@ const DEFAULT_FILTER: SmartFilterOptions = {
 };
 
 const FRONTEND_SCAN_TASK_KEY = 'rc_frontend_scan_task_id';
+const SEARCH_HISTORY_KEY = 'rc_ip_search_history';
+const MAX_SEARCH_HISTORY = 10;
+
+const loadSearchHistory = (): string[] => {
+  try {
+    const stored = localStorage.getItem(SEARCH_HISTORY_KEY);
+    if (!stored) return [];
+
+    const parsed: unknown = JSON.parse(stored);
+    if (!Array.isArray(parsed)) return [];
+
+    return [...new Set(
+      parsed
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )].slice(0, MAX_SEARCH_HISTORY);
+  } catch {
+    return [];
+  }
+};
 
 export const SmartFinder = () => {
   const [ip, setIP] = useState('');
+  const [searchHistory, setSearchHistory] = useState<string[]>(loadSearchHistory);
 
   // 过滤器状态（完全由前端控制，支持即时响应与热切换）
   const [filter, setFilter] = useState<SmartFilterOptions>(DEFAULT_FILTER);
@@ -159,6 +181,18 @@ export const SmartFinder = () => {
   useEffect(() => {
     filterRef.current = filter;
   }, [filter]);
+
+  useEffect(() => {
+    try {
+      if (searchHistory.length > 0) {
+        localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(searchHistory));
+      } else {
+        localStorage.removeItem(SEARCH_HISTORY_KEY);
+      }
+    } catch {
+      // 忽略浏览器禁用或无痕模式下的 localStorage 异常
+    }
+  }, [searchHistory]);
 
   // 初始化加载服务端推荐过滤器默认值
   useEffect(() => {
@@ -421,6 +455,10 @@ export const SmartFinder = () => {
       return;
     }
 
+    setSearchHistory((prev) =>
+      [cleanIP, ...prev.filter((item) => item !== cleanIP)].slice(0, MAX_SEARCH_HISTORY)
+    );
+
     if (esRef.current) {
       esRef.current.close();
       esRef.current = null;
@@ -473,6 +511,10 @@ export const SmartFinder = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const clearSearchHistory = () => {
+    setSearchHistory([]);
   };
 
   // 详情弹窗复检完成后，将服务端最新记录同步回当前结果池与弹窗
@@ -1094,6 +1136,39 @@ export const SmartFinder = () => {
               </button>
             </div>
           </div>
+
+          {searchHistory.length > 0 && (
+            <div className="search-history" aria-label="搜索历史">
+              <div className="search-history-header">
+                <span className="search-history-title">
+                  <Clock size={13} style={{ color: 'var(--accent-cyan)' }} />
+                  最近搜索
+                  <span className="search-history-count">{searchHistory.length}/{MAX_SEARCH_HISTORY}</span>
+                </span>
+                <button type="button" className="search-history-clear" onClick={clearSearchHistory}>
+                  清空
+                </button>
+              </div>
+              <div className="search-history-list">
+                {searchHistory.map((historyIP) => (
+                  <button
+                    key={historyIP}
+                    type="button"
+                    className="search-history-item"
+                    disabled={loading || scanProgress.isScanning}
+                    onClick={() => {
+                      setIP(historyIP);
+                      void handleSearch(undefined, historyIP);
+                    }}
+                    title={`再次搜索 ${historyIP}`}
+                  >
+                    <span>{historyIP}</span>
+                    <Search size={12} />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* 过滤器控制面板（前端控制，即时过滤与动态生效） */}
           <div className="filter-panel-card">
