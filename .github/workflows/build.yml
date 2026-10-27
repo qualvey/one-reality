@@ -32,7 +32,7 @@ jobs:
 
     - name: Build web frontend
       run: |
-        pnpm --dir web install --frozen-lockfile
+        pnpm --dir web install --ignore-workspace --frozen-lockfile
         pnpm --dir web build
       
     - name: Set up Go
