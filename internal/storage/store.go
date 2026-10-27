@@ -1230,6 +1230,19 @@ func (s *TargetStore) QueryTargets(opts types.TargetQueryOptions) ([]*types.Targ
 		args = append(args, defaultVal)
 	}
 
+	if opts.RequireNoCN != nil && *opts.RequireNoCN {
+		whereClauses = append(whereClauses, "LOWER(domain) NOT LIKE '%.cn'")
+	}
+
+	if suffixes := splitDomainSuffixes(opts.DomainSuffixes); len(suffixes) > 0 {
+		parts := make([]string, 0, len(suffixes))
+		for _, suffix := range suffixes {
+			parts = append(parts, "LOWER(domain) LIKE ?")
+			args = append(args, "%"+suffix)
+		}
+		whereClauses = append(whereClauses, "("+strings.Join(parts, " OR ")+")")
+	}
+
 	if opts.MaxHandshakeMS > 0 {
 		whereClauses = append(whereClauses, "handshake_ms > 0 AND handshake_ms <= ?")
 		args = append(args, opts.MaxHandshakeMS)
@@ -1247,6 +1260,10 @@ func (s *TargetStore) QueryTargets(opts types.TargetQueryOptions) ([]*types.Targ
 			args = append(args, code)
 		}
 		whereClauses = append(whereClauses, fmt.Sprintf("status_code NOT IN (%s)", strings.Join(placeholders, ",")))
+	}
+
+	if opts.SuccessOnly {
+		whereClauses = append(whereClauses, "(status_code = 0 OR (status_code >= 200 AND status_code < 400))")
 	}
 
 	whereSQL := strings.Join(whereClauses, " AND ")
@@ -1307,6 +1324,21 @@ func (s *TargetStore) QueryTargets(opts types.TargetQueryOptions) ([]*types.Targ
 	}
 
 	return results, total, rows.Err()
+}
+
+func splitDomainSuffixes(value string) []string {
+	var suffixes []string
+	for _, item := range strings.Split(value, ",") {
+		suffix := strings.ToLower(strings.TrimSpace(item))
+		if suffix == "" {
+			continue
+		}
+		if !strings.HasPrefix(suffix, ".") {
+			suffix = "." + suffix
+		}
+		suffixes = append(suffixes, suffix)
+	}
+	return suffixes
 }
 
 // UpdateTargetActive 快速切换资产的激活/禁用状态

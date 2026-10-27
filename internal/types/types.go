@@ -344,7 +344,7 @@ type TLSConfig struct {
 // FilterConfig REALITY 资产选型与查询过滤策略配置
 type FilterConfig struct {
 	// --- 网络与运行环境策略 ---
-	RequireNoCN          bool     `yaml:"require_no_cn"`          // 是否排除国内网站 (默认 true，翻回国内设为 false)
+	RequireNoCN          bool     `yaml:"require_no_cn" json:"require_no_cn"` // 是否排除国内网站 (默认 true，翻回国内设为 false)
 	CheckGFW             bool     `yaml:"check_gfw"`              // 是否启用 GFW 静态黑名单 (本地直连建议 false)
 	IPv4Only             bool     `yaml:"ipv4_only"`              // 是否仅拉取与扫描 IPv4 网段 (默认 false)
 	IPv6Only             bool     `yaml:"ipv6_only"`              // 是否仅拉取与扫描 IPv6 网段 (默认 false)
@@ -357,18 +357,18 @@ type FilterConfig struct {
 	Verbose              bool     `yaml:"verbose"`                // 详细输出模式 (输出每一条扫描记录到 stdout)
 
 	// --- 阶段二/进阶偏好过滤策略 (主要用于查库、排序打分与智能推荐) ---
-	RequireNoCDN         bool     `yaml:"require_no_cdn"`         // 是否强制排除 CDN
-	MaxHandshakeMS       int64    `yaml:"max_handshake_ms"`       // 最大握手延迟上限 (ms)
-	RequireNoHot         bool     `yaml:"require_no_hot"`         // 是否排除超级热门大站
-	MinCertDays          int      `yaml:"min_cert_days"`          // 证书剩余天数下限
-	MinStars             int      `yaml:"min_stars"`              // 最低推荐星级 (1~5)
-	RequireNoDefaultPage bool     `yaml:"require_no_default_page"`// 是否排除 Nginx/Web 默认页
+	RequireNoCDN         bool     `yaml:"require_no_cdn" json:"require_no_cdn"`         // 是否强制排除 CDN
+	MaxHandshakeMS       int64    `yaml:"max_handshake_ms" json:"max_handshake_ms"`       // 最大握手延迟上限 (ms)
+	RequireNoHot         bool     `yaml:"require_no_hot" json:"require_no_hot"`         // 是否排除超级热门大站
+	MinCertDays          int      `yaml:"min_cert_days" json:"min_cert_days"`          // 证书剩余天数下限
+	MinStars             int      `yaml:"min_stars" json:"min_stars"`              // 最低推荐星级 (1~5)
+	RequireNoDefaultPage bool     `yaml:"require_no_default_page" json:"require_no_default_page"`// 是否排除 Nginx/Web 默认页
 	ExcludeRulesFile     string   `yaml:"exclude_rules_file"`     // 外部规则文件路径
 	IncludeSuffixes      []string `yaml:"include_suffixes"`       // 白名单后缀 (如 .com, .de)
 	ExcludeSuffixes      []string `yaml:"exclude_suffixes"`       // 黑名单后缀 (如 .xyz, .top)
 	ExcludeDomains       []string `yaml:"exclude_domains"`        // 排除域名
 	ExcludePatterns      []string `yaml:"exclude_patterns"`       // 排除特征模式
-	ExcludeStatus        []int    `yaml:"exclude_status"`         // 排除的 HTTP 状态码
+	ExcludeStatus        []int    `yaml:"exclude_status" json:"exclude_status"`         // 排除的 HTTP 状态码
 }
 
 // RealityFilterConfig 向后兼容类型别名
@@ -688,9 +688,12 @@ type TargetQueryOptions struct {
 	RequireNoCDN         *bool  `json:"require_no_cdn"`          // 排除 CDN (true: is_cdn=0)
 	RequireNoHot         *bool  `json:"require_no_hot"`          // 排除超级大站 (true: is_hot=0)
 	RequireNoDefaultPage *bool  `json:"require_no_default_page"` // 排除默认返回页 (true: is_default_page=0)
+	RequireNoCN          *bool  `json:"require_no_cn"`           // 排除 .cn / 境内域名
+	DomainSuffixes       string `json:"domain_suffixes"`         // 逗号分隔的域名后缀
 	MaxHandshakeMS       int64  `json:"max_handshake_ms"`        // 握手延迟上限 (ms)
 	MinCertDays          int    `json:"min_cert_days"`           // 证书剩余天数下限
 	ExcludeStatus        []int  `json:"exclude_status"`          // 排除的 HTTP 状态码
+	SuccessOnly          bool   `json:"success_only"`            // 仅保留 2xx/3xx 与 443 直通
 	SortBy               string `json:"sort_by"`                 // "stars_desc", "handshake_asc", "recent_desc"
 	Page                 int    `json:"page"`
 	PageSize             int    `json:"page_size"`

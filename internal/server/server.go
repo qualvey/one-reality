@@ -476,6 +476,12 @@ func (s *TargetServer) handleTargetsManage(w http.ResponseWriter, r *http.Reques
 			requireNoDefaultPage = &b
 		}
 
+		var requireNoCN *bool
+		if val := q.Get("require_no_cn"); val != "" {
+			b := parseBool(val)
+			requireNoCN = &b
+		}
+
 		var maxHandshakeMS int64
 		if val := q.Get("max_handshake_ms"); val != "" {
 			if ms, err := strconv.ParseInt(val, 10, 64); err == nil && ms > 0 {
@@ -498,6 +504,7 @@ func (s *TargetServer) handleTargetsManage(w http.ResponseWriter, r *http.Reques
 				}
 			}
 		}
+		successOnly := parseBool(q.Get("success_only"))
 
 		page, _ := strconv.Atoi(q.Get("page"))
 		if page <= 0 {
@@ -518,9 +525,12 @@ func (s *TargetServer) handleTargetsManage(w http.ResponseWriter, r *http.Reques
 			RequireNoCDN:         requireNoCDN,
 			RequireNoHot:         requireNoHot,
 			RequireNoDefaultPage: requireNoDefaultPage,
+			RequireNoCN:          requireNoCN,
+			DomainSuffixes:       q.Get("domain_suffixes"),
 			MaxHandshakeMS:       maxHandshakeMS,
 			MinCertDays:          minCertDays,
 			ExcludeStatus:        excludeStatus,
+			SuccessOnly:          successOnly,
 			SortBy:               q.Get("sort_by"),
 			Page:                 page,
 			PageSize:             pageSize,

@@ -570,6 +570,20 @@ func (s *PostgresStore) QueryTargets(opts types.TargetQueryOptions) ([]*types.Ta
 		idx++
 	}
 
+	if opts.RequireNoCN != nil && *opts.RequireNoCN {
+		whereClauses = append(whereClauses, "LOWER(domain) NOT LIKE '%.cn'")
+	}
+
+	if suffixes := splitDomainSuffixes(opts.DomainSuffixes); len(suffixes) > 0 {
+		parts := make([]string, 0, len(suffixes))
+		for _, suffix := range suffixes {
+			parts = append(parts, fmt.Sprintf("LOWER(domain) LIKE $%d", idx))
+			args = append(args, "%"+suffix)
+			idx++
+		}
+		whereClauses = append(whereClauses, "("+strings.Join(parts, " OR ")+")")
+	}
+
 	if opts.MaxHandshakeMS > 0 {
 		whereClauses = append(whereClauses, fmt.Sprintf("handshake_ms > 0 AND handshake_ms <= $%d", idx))
 		args = append(args, opts.MaxHandshakeMS)
@@ -590,6 +604,10 @@ func (s *PostgresStore) QueryTargets(opts types.TargetQueryOptions) ([]*types.Ta
 			idx++
 		}
 		whereClauses = append(whereClauses, fmt.Sprintf("status_code NOT IN (%s)", strings.Join(placeholders, ",")))
+	}
+
+	if opts.SuccessOnly {
+		whereClauses = append(whereClauses, "(status_code = 0 OR (status_code >= 200 AND status_code < 400))")
 	}
 
 	whereSQL := strings.Join(whereClauses, " AND ")

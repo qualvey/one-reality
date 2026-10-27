@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
-import type { TargetRecord, TargetItem } from '../types';
+import type { SmartFilterOptions, TargetRecord, TargetItem } from '../types';
 import { apiFetch, setTargetStarred, setTargetDisliked } from '../api';
 import { copyText } from '../utils/clipboard';
 import { ConfigModal } from './ConfigModal';
 import { QuickCheckModal } from './QuickCheckModal';
+import { TargetDetailModal } from './TargetDetailModal';
+import { SmartFilterPanel } from './SmartFilterPanel';
 import {
   Search,
   Plus,
@@ -13,11 +15,12 @@ import {
   Zap,
   Copy,
   Check,
-  Filter,
   ChevronLeft,
   ChevronRight,
   Star,
   ThumbsDown,
+  Filter,
+  Eye,
 } from 'lucide-react';
 
 export const TargetTable = () => {
@@ -28,23 +31,29 @@ export const TargetTable = () => {
   const [loading, setLoading] = useState(false);
   const [authError, setAuthError] = useState(false);
 
-  // 筛选条件
-  const [keyword, setKeyword] = useState('');
+  // 新版智能过滤器与资产管理专属条件共用同一套服务端查询
+  const [filter, setFilter] = useState<SmartFilterOptions>({
+    minStars: 0,
+    maxHandshakeMS: 0,
+    requireNoCDN: false,
+    requireNoDefaultPage: false,
+    requireNoCN: false,
+    minCertDays: 0,
+    matchScope: 'all',
+    statusFilter: 'all',
+    keyword: '',
+    domainSuffixes: '',
+  });
   const [asn, setASN] = useState('');
   const [country, setCountry] = useState('');
-  const [minStars, setMinStars] = useState(0);
   const [isActive, setIsActive] = useState<string>('all');
   const [sortBy, setSortBy] = useState('stars_desc');
 
   // 进阶选型偏好过滤 (Filter 策略)
-  const [requireNoCDN, setRequireNoCDN] = useState(false);
-  const [requireNoDefaultPage, setRequireNoDefaultPage] = useState(false);
   const [requireNoHot, setRequireNoHot] = useState(false);
-  const [maxHandshakeMS, setMaxHandshakeMS] = useState(0);
-  const [minCertDays, setMinCertDays] = useState(0);
-  const [excludeStatus403, setExcludeStatus403] = useState(false);
 
   const [selectedTarget, setSelectedTarget] = useState<TargetItem | null>(null);
+  const [selectedDetailTarget, setSelectedDetailTarget] = useState<TargetItem | null>(null);
   const [showCheckModal, setShowCheckModal] = useState(false);
   const [copiedDomain, setCopiedDomain] = useState<string | null>(null);
 
@@ -57,20 +66,22 @@ export const TargetTable = () => {
         sort_by: sortBy,
       });
 
-      if (keyword.trim()) params.append('keyword', keyword.trim());
+      if (filter.keyword.trim()) params.append('keyword', filter.keyword.trim());
       if (asn.trim()) params.append('asn', asn.trim());
       if (country.trim()) params.append('country', country.trim());
-      if (minStars > 0) params.append('min_stars', minStars.toString());
+      if (filter.minStars > 0) params.append('min_stars', filter.minStars.toString());
       if (isActive === 'active') params.append('is_active', '1');
       if (isActive === 'inactive') params.append('is_active', '0');
 
       // 选型偏好过滤参数下推
-      if (requireNoCDN) params.append('require_no_cdn', '1');
-      if (requireNoDefaultPage) params.append('require_no_default_page', '1');
+      if (filter.requireNoCDN) params.append('require_no_cdn', '1');
+      if (filter.requireNoDefaultPage) params.append('require_no_default_page', '1');
       if (requireNoHot) params.append('require_no_hot', '1');
-      if (maxHandshakeMS > 0) params.append('max_handshake_ms', maxHandshakeMS.toString());
-      if (minCertDays > 0) params.append('min_cert_days', minCertDays.toString());
-      if (excludeStatus403) params.append('exclude_status', '400,401,403,404,429,500,502,503');
+      if (filter.maxHandshakeMS > 0) params.append('max_handshake_ms', filter.maxHandshakeMS.toString());
+      if (filter.minCertDays > 0) params.append('min_cert_days', filter.minCertDays.toString());
+      if (filter.requireNoCN) params.append('require_no_cn', '1');
+      if (filter.domainSuffixes.trim()) params.append('domain_suffixes', filter.domainSuffixes.trim());
+      if (filter.statusFilter === 'success_only') params.append('success_only', '1');
 
       const res = await apiFetch(`/api/targets?${params.toString()}`);
       if (res.status === 401) {
@@ -94,7 +105,7 @@ export const TargetTable = () => {
 
   useEffect(() => {
     fetchTargets();
-  }, [page, sortBy, minStars, isActive, requireNoCDN, requireNoDefaultPage, requireNoHot, maxHandshakeMS, minCertDays, excludeStatus403]);
+  }, [page, sortBy, isActive, requireNoHot, filter]);
 
   const applyDefaultFilter = async () => {
     try {
@@ -102,13 +113,16 @@ export const TargetTable = () => {
       const data = await res.json();
       if (res.ok && data.code === 200 && data.data) {
         const def = data.data;
-        setRequireNoCDN(!!def.require_no_cdn);
-        setRequireNoDefaultPage(!!def.require_no_default_page);
+        setFilter((previous) => ({
+          ...previous,
+          requireNoCDN: !!def.require_no_cdn,
+          requireNoDefaultPage: !!def.require_no_default_page,
+          requireNoCN: !!def.require_no_cn,
+          maxHandshakeMS: def.max_handshake_ms || 0,
+          minCertDays: def.min_cert_days || 0,
+          minStars: def.min_stars || 0,
+        }));
         setRequireNoHot(!!def.require_no_hot);
-        setMaxHandshakeMS(def.max_handshake_ms || 0);
-        setMinCertDays(def.min_cert_days || 0);
-        setMinStars(def.min_stars || 0);
-        setExcludeStatus403(Array.isArray(def.exclude_status) && def.exclude_status.length > 0);
         setPage(1);
       }
     } catch (err) {
@@ -117,18 +131,23 @@ export const TargetTable = () => {
   };
 
   const resetAllFilters = () => {
-    setKeyword('');
+    setFilter({
+      minStars: 0,
+      maxHandshakeMS: 0,
+      requireNoCDN: false,
+      requireNoDefaultPage: false,
+      requireNoCN: false,
+      minCertDays: 0,
+      matchScope: 'all',
+      statusFilter: 'all',
+      keyword: '',
+      domainSuffixes: '',
+    });
     setASN('');
     setCountry('');
-    setMinStars(0);
     setIsActive('all');
     setSortBy('stars_desc');
-    setRequireNoCDN(false);
-    setRequireNoDefaultPage(false);
     setRequireNoHot(false);
-    setMaxHandshakeMS(0);
-    setMinCertDays(0);
-    setExcludeStatus403(false);
     setPage(1);
   };
 
@@ -206,6 +225,26 @@ export const TargetTable = () => {
     setSelectedTarget(item);
   };
 
+  const toTargetItem = (row: TargetRecord): TargetItem => ({
+    ...row,
+    created_at: row.last_checked_at,
+  });
+
+  const handleRecheck = (updated: TargetRecord) => {
+    setItems((previous) => previous.map((item) => item.domain === updated.domain ? updated : item));
+    setSelectedDetailTarget(toTargetItem(updated));
+  };
+
+  const toggleDetailDisliked = async (target: TargetItem) => {
+    try {
+      const disliked = await setTargetDisliked(target.domain, !target.is_disliked);
+      setItems((previous) => previous.map((item) => item.domain === target.domain ? { ...item, is_disliked: disliked } : item));
+      setSelectedDetailTarget({ ...target, is_disliked: disliked });
+    } catch (err) {
+      console.error('Failed to update disliked state from detail modal:', err);
+    }
+  };
+
   const totalPages = Math.ceil(total / pageSize) || 1;
 
   return (
@@ -230,230 +269,36 @@ export const TargetTable = () => {
         </div>
       </div>
 
-      {/* 过滤筛选条 */}
-      <div className="glass-panel" style={{ padding: '16px 20px', marginBottom: '20px' }}>
-        <form onSubmit={handleSearchSubmit} style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
-          <div className="input-group" style={{ flex: '1 1 240px' }}>
-            <Search size={16} style={{ color: 'var(--text-sub)' }} />
-            <input
-              type="text"
-              placeholder="搜索域名、IP 或网站标题..."
-              value={keyword}
-              onChange={(e) => setKeyword(e.target.value)}
-            />
-          </div>
+       <div className="glass-panel" style={{ padding: '16px 20px', marginBottom: '20px' }}>
+         <form onSubmit={handleSearchSubmit} style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+           <div className="input-group" style={{ flex: '1 1 240px' }}>
+             <Search size={16} style={{ color: 'var(--text-sub)' }} />
+             <input type="text" placeholder="搜索域名、IP 或网站标题..." value={filter.keyword} onChange={(event) => setFilter((previous) => ({ ...previous, keyword: event.target.value }))} />
+           </div>
+           <div className="input-group" style={{ width: '130px' }}><input type="text" placeholder="ASN 编号" value={asn} onChange={(event) => setASN(event.target.value)} /></div>
+           <div className="input-group" style={{ width: '100px' }}><input type="text" placeholder="国家代码" value={country} onChange={(event) => setCountry(event.target.value)} /></div>
+           <select className="input-group" style={{ width: '130px', padding: '10px', background: 'var(--bg-input)', color: 'var(--text-main)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)' }} value={isActive} onChange={(event) => { setIsActive(event.target.value); setPage(1); }}>
+             <option value="all">状态全部</option><option value="active">仅活跃有效</option><option value="inactive">仅已停用</option>
+           </select>
+           <select className="input-group" style={{ width: '145px', padding: '10px', background: 'var(--bg-input)', color: 'var(--text-main)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)' }} value={sortBy} onChange={(event) => { setSortBy(event.target.value); setPage(1); }}>
+             <option value="stars_desc">星级从高到低</option><option value="handshake_asc">延迟从低到高</option><option value="recent_desc">最近巡检时间</option>
+           </select>
+           <button type="submit" className="btn btn-secondary"><Filter size={14} />筛选</button>
+         </form>
+       </div>
+       <SmartFilterPanel
+         filter={filter}
+         setFilter={(next) => { setFilter(next); setPage(1); }}
+         resultCount={total}
+         onReset={resetAllFilters}
+         onLoadDefault={applyDefaultFilter}
+         requireNoHot={requireNoHot}
+         onRequireNoHotChange={(value) => { setRequireNoHot(value); setPage(1); }}
+         showKeyword={false}
+         showMatchScope={false}
+       />
 
-          <div className="input-group" style={{ width: '130px' }}>
-            <input
-              type="text"
-              placeholder="ASN 编号"
-              value={asn}
-              onChange={(e) => setASN(e.target.value)}
-            />
-          </div>
-
-          <div className="input-group" style={{ width: '100px' }}>
-            <input
-              type="text"
-              placeholder="国家代码"
-              value={country}
-              onChange={(e) => setCountry(e.target.value)}
-            />
-          </div>
-
-          <select
-            className="input-group"
-            style={{ width: '130px', padding: '10px', background: 'var(--bg-input)', color: 'var(--text-main)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)' }}
-            value={minStars}
-            onChange={(e) => {
-              setMinStars(Number(e.target.value));
-              setPage(1);
-            }}
-          >
-            <option value={0}>星级不限</option>
-            <option value={3}>3 星及以上</option>
-            <option value={4}>4 星及以上</option>
-            <option value={5}>5 星极品</option>
-          </select>
-
-          <select
-            className="input-group"
-            style={{ width: '120px', padding: '10px', background: 'var(--bg-input)', color: 'var(--text-main)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)' }}
-            value={isActive}
-            onChange={(e) => {
-              setIsActive(e.target.value);
-              setPage(1);
-            }}
-          >
-            <option value="all">状态全部</option>
-            <option value="active">仅活跃有效</option>
-            <option value="inactive">仅已停用</option>
-          </select>
-
-          <select
-            className="input-group"
-            style={{ width: '130px', padding: '10px', background: 'var(--bg-input)', color: 'var(--text-main)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)' }}
-            value={sortBy}
-            onChange={(e) => {
-              setSortBy(e.target.value);
-              setPage(1);
-            }}
-          >
-            <option value="stars_desc">星级从高到低</option>
-            <option value="handshake_asc">延迟从低到高</option>
-            <option value="recent_desc">最近巡检时间</option>
-          </select>
-
-          <button type="submit" className="btn btn-secondary">
-            <Filter size={14} />
-            筛选
-          </button>
-
-          {/* 选型偏好过滤快捷开关栏 (Filter Strategies) */}
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', width: '100%', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--border-subtle)' }}>
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px', marginRight: '4px' }}>
-              <Filter size={13} /> 选型偏好:
-            </span>
-
-            <button
-              type="button"
-              style={{
-                fontSize: '0.75rem',
-                padding: '4px 10px',
-                borderRadius: '12px',
-                cursor: 'pointer',
-                border: '1px solid',
-                borderColor: requireNoCDN ? 'var(--primary)' : 'var(--border-subtle)',
-                background: requireNoCDN ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-input)',
-                color: requireNoCDN ? 'var(--primary)' : 'var(--text-sub)',
-                fontWeight: requireNoCDN ? 600 : 400,
-                transition: 'all 0.15s ease',
-              }}
-              onClick={() => { setRequireNoCDN(!requireNoCDN); setPage(1); }}
-            >
-              {requireNoCDN ? '✓ 排除 CDN' : '+ 排除 CDN'}
-            </button>
-
-            <button
-              type="button"
-              style={{
-                fontSize: '0.75rem',
-                padding: '4px 10px',
-                borderRadius: '12px',
-                cursor: 'pointer',
-                border: '1px solid',
-                borderColor: requireNoDefaultPage ? 'var(--primary)' : 'var(--border-subtle)',
-                background: requireNoDefaultPage ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-input)',
-                color: requireNoDefaultPage ? 'var(--primary)' : 'var(--text-sub)',
-                fontWeight: requireNoDefaultPage ? 600 : 400,
-                transition: 'all 0.15s ease',
-              }}
-              onClick={() => { setRequireNoDefaultPage(!requireNoDefaultPage); setPage(1); }}
-            >
-              {requireNoDefaultPage ? '✓ 排除默认页' : '+ 排除默认页'}
-            </button>
-
-            <button
-              type="button"
-              style={{
-                fontSize: '0.75rem',
-                padding: '4px 10px',
-                borderRadius: '12px',
-                cursor: 'pointer',
-                border: '1px solid',
-                borderColor: requireNoHot ? 'var(--primary)' : 'var(--border-subtle)',
-                background: requireNoHot ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-input)',
-                color: requireNoHot ? 'var(--primary)' : 'var(--text-sub)',
-                fontWeight: requireNoHot ? 600 : 400,
-                transition: 'all 0.15s ease',
-              }}
-              onClick={() => { setRequireNoHot(!requireNoHot); setPage(1); }}
-            >
-              {requireNoHot ? '✓ 排除热门大站' : '+ 排除热门大站'}
-            </button>
-
-            <button
-              type="button"
-              style={{
-                fontSize: '0.75rem',
-                padding: '4px 10px',
-                borderRadius: '12px',
-                cursor: 'pointer',
-                border: '1px solid',
-                borderColor: excludeStatus403 ? 'var(--primary)' : 'var(--border-subtle)',
-                background: excludeStatus403 ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-input)',
-                color: excludeStatus403 ? 'var(--primary)' : 'var(--text-sub)',
-                fontWeight: excludeStatus403 ? 600 : 400,
-                transition: 'all 0.15s ease',
-              }}
-              onClick={() => { setExcludeStatus403(!excludeStatus403); setPage(1); }}
-            >
-              {excludeStatus403 ? '✓ 排除异常/403状态码' : '+ 排除异常/403状态码'}
-            </button>
-
-            <select
-              style={{
-                fontSize: '0.75rem',
-                padding: '4px 8px',
-                borderRadius: '12px',
-                border: '1px solid var(--border-subtle)',
-                background: maxHandshakeMS > 0 ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-input)',
-                color: maxHandshakeMS > 0 ? 'var(--primary)' : 'var(--text-sub)',
-              }}
-              value={maxHandshakeMS}
-              onChange={(e) => { setMaxHandshakeMS(Number(e.target.value)); setPage(1); }}
-            >
-              <option value={0}>延迟不限</option>
-              <option value={150}>延迟 ≤ 150ms</option>
-              <option value={300}>延迟 ≤ 300ms</option>
-              <option value={500}>延迟 ≤ 500ms</option>
-              <option value={800}>延迟 ≤ 800ms</option>
-            </select>
-
-            <select
-              style={{
-                fontSize: '0.75rem',
-                padding: '4px 8px',
-                borderRadius: '12px',
-                border: '1px solid var(--border-subtle)',
-                background: minCertDays > 0 ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-input)',
-                color: minCertDays > 0 ? 'var(--primary)' : 'var(--text-sub)',
-              }}
-              value={minCertDays}
-              onChange={(e) => { setMinCertDays(Number(e.target.value)); setPage(1); }}
-            >
-              <option value={0}>证书天数不限</option>
-              <option value={7}>证书剩余 ≥ 7天</option>
-              <option value={15}>证书剩余 ≥ 15天</option>
-              <option value={30}>证书剩余 ≥ 30天</option>
-              <option value={60}>证书剩余 ≥ 60天</option>
-            </select>
-
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                style={{ fontSize: '0.75rem', padding: '3px 8px', height: '26px' }}
-                onClick={applyDefaultFilter}
-                title="载入 config.yaml 中的默认选型策略"
-              >
-                载入配置偏好
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                style={{ fontSize: '0.75rem', padding: '3px 8px', height: '26px' }}
-                onClick={resetAllFilters}
-                title="清空所有过滤条件"
-              >
-                重置
-              </button>
-            </div>
-          </div>
-        </form>
-      </div>
-
-      {/* 数据表格 */}
+       {/* 数据表格 */}
       <div className="table-container">
         <table className="data-table">
           <thead>
@@ -474,7 +319,14 @@ export const TargetTable = () => {
               <tr key={row.domain}>
                 <td>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{row.domain}</span>
+                    <button
+                      type="button"
+                      style={{ fontWeight: 600, fontFamily: 'var(--font-mono)', color: 'var(--text-main)', background: 'none', border: 0, padding: 0, cursor: 'pointer' }}
+                      title="打开资产详情"
+                      onClick={() => setSelectedDetailTarget(toTargetItem(row))}
+                    >
+                      {row.domain}
+                    </button>
                     <button
                       className="btn-icon"
                       style={{ padding: '2px 5px', color: row.is_starred ? 'var(--accent-amber)' : undefined }}
@@ -567,6 +419,13 @@ export const TargetTable = () => {
                   <div style={{ display: 'inline-flex', gap: '6px' }}>
                     <button
                       className="btn-icon"
+                      title="查看详细信息"
+                      onClick={() => setSelectedDetailTarget(toTargetItem(row))}
+                    >
+                      <Eye size={14} style={{ color: 'var(--accent-cyan)' }} />
+                    </button>
+                    <button
+                      className="btn-icon"
                       title={row.is_active ? '停用此资产' : '重新激活'}
                       style={{ color: row.is_active ? 'var(--accent-emerald)' : 'var(--text-sub)' }}
                       onClick={() => toggleActive(row)}
@@ -641,6 +500,14 @@ export const TargetTable = () => {
         target={selectedTarget}
         serverIP={selectedTarget?.ip || ''}
         onClose={() => setSelectedTarget(null)}
+      />
+
+      <TargetDetailModal
+        target={selectedDetailTarget}
+        onClose={() => setSelectedDetailTarget(null)}
+        onOpenConfig={(target) => setSelectedTarget(target)}
+        onRecheck={handleRecheck}
+        onToggleDisliked={toggleDetailDisliked}
       />
 
       {showCheckModal && (
