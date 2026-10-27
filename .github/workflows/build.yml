@@ -112,7 +112,7 @@ jobs:
 
           > 本工具仅用于技术研究和学习，请遵守当地法律法规并合理使用网络资源。
         draft: false
-        prerelease: false
+        prerelease: ${{ contains(steps.version.outputs.version, '-') }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         
