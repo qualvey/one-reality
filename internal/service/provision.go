@@ -57,6 +57,7 @@ type TargetItem struct {
 	IsCDN           bool       `json:"is_cdn"`
 	IsDefaultPage   bool       `json:"is_default_page"`
 	DefaultPageType string     `json:"default_page_type,omitempty"`
+	IsStarred       bool       `json:"is_starred"`
 	CreatedAt       time.Time  `json:"created_at"`
 }
 
@@ -78,6 +79,7 @@ type TargetSummaryInfo struct {
 	SuggestScan        bool   `json:"suggest_scan"`   // 是否建议扫描 (机房为 true，家宽因几乎无网站为 false)
 	CIDRCount          int    `json:"cidr_count"`
 	TotalIPs           int64  `json:"total_ips"`
+	ScannedIPs         int64  `json:"scanned_ips"`
 	HasCheckpoint      bool   `json:"has_checkpoint"`
 	LastCheckpointIP   string `json:"last_checkpoint_ip,omitempty"`
 	CompletedCIDRCount int    `json:"completed_cidr_count"`
@@ -104,6 +106,7 @@ type InitEventData struct {
 	CIDRCount        int      `json:"cidr_count"`
 	TotalIPs         int64    `json:"total_ips"`
 	CachedHits       int      `json:"cached_hits"`
+	ScannedIPs       int64    `json:"scanned_ips"`
 	HasCheckpoint    bool     `json:"has_checkpoint"`
 	LastCheckpointIP string   `json:"last_checkpoint_ip,omitempty"`
 	Prefixes         []string `json:"prefixes,omitempty"`
@@ -130,6 +133,9 @@ type ProvisionService struct {
 	geoipReader *geoip2.Reader
 	asnClient   asn.ASNResolver
 	appConfig   *types.Config
+
+	tasksMu sync.RWMutex
+	tasks   map[string]*frontendScanTask
 }
 
 // NewProvisionService 创建供给服务实例
@@ -154,6 +160,7 @@ func NewProvisionService(
 		geoipReader: geoipReader,
 		asnClient:   asnClient,
 		appConfig:   cfg,
+		tasks:       make(map[string]*frontendScanTask),
 	}
 }
 
@@ -171,14 +178,20 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 	targetIP := strings.TrimSpace(req.IP)
 	if targetIP == "" {
 		err := errors.New("missing ip parameter")
+		logger.Error("❌ [扫描] 请求缺少目标 IP")
 		_ = emit(ProvisionEvent{Event: "error", Data: map[string]string{"error": err.Error()}})
 		return err
 	}
 	parsedIP := net.ParseIP(targetIP)
 	if parsedIP == nil {
 		err := fmt.Errorf("invalid ip address: %s", targetIP)
+		logger.Error("❌ [扫描] 目标 IP 格式无效: %s", targetIP)
 		_ = emit(ProvisionEvent{Event: "error", Data: map[string]string{"error": err.Error()}})
 		return err
+	}
+	targetAddr, targetAddrErr := netip.ParseAddr(targetIP)
+	if targetAddrErr == nil {
+		targetAddr = targetAddr.Unmap()
 	}
 
 	if req.Limit <= 0 {
@@ -207,6 +220,7 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 
 	asnNumber, prefixes, err := s.asnClient.PrefixesForIP(ctx, targetIP)
 	if err != nil {
+		logger.Error("❌ [扫描] ASN 查询失败: IP=%s, error=%v", targetIP, err)
 		_ = emit(ProvisionEvent{Event: "error", Data: map[string]string{"error": fmt.Sprintf("lookup asn for ip %s failed: %v", targetIP, err)}})
 		return err
 	}
@@ -225,7 +239,10 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 		if req.IPv6Only && !prefix.Addr().Is6() {
 			continue
 		}
-		if s.geoipReader != nil && country != "" {
+		// 目标 IP 所在 CIDR 必须保留并优先探测，不能因为 CIDR 起始地址
+		// 的 GeoIP 与目标 IP 不同而被整段过滤掉。
+		isTargetCIDR := targetAddrErr == nil && prefix.Contains(targetAddr)
+		if !isTargetCIDR && s.geoipReader != nil && country != "" {
 			if rec, err := s.geoipReader.Country(net.ParseIP(prefix.Addr().String())); err == nil {
 				if !strings.EqualFold(rec.Country.IsoCode, country) {
 					continue
@@ -235,6 +252,9 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 		matchedCIDRs = append(matchedCIDRs, prefix.String())
 	}
 	matchedCIDRs = core.PrioritizeCIDRsByIP(matchedCIDRs, targetIP)
+	if len(matchedCIDRs) > 0 {
+		logger.Info("🔎 [扫描] CIDR 优先级已应用: target=%s, first_cidr=%s", targetIP, matchedCIDRs[0])
+	}
 
 	var cachedTargets []*types.TargetRecord
 	if !req.Fresh && s.store != nil {
@@ -243,9 +263,11 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 
 	var hasCheckpoint bool
 	var lastCheckpointIP string
+	var checkpointedIPs int64
 	if s.store != nil {
 		if cps, err := s.store.GetCheckpoints(asnStr); err == nil && len(cps) > 0 {
 			hasCheckpoint = true
+			checkpointedIPs = core.CalculateScannedIPs(matchedCIDRs, cps)
 			for _, cp := range cps {
 				if !cp.Completed && cp.LastIP != "" {
 					lastCheckpointIP = cp.LastIP
@@ -283,6 +305,7 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 			CIDRCount:        len(matchedCIDRs),
 			TotalIPs:         totalIPs,
 			CachedHits:       len(cachedTargets),
+			ScannedIPs:       checkpointedIPs,
 			HasCheckpoint:    hasCheckpoint,
 			LastCheckpointIP: lastCheckpointIP,
 			Prefixes:         matchedCIDRs,
@@ -294,6 +317,7 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 	var fromCacheCount int
 	var fromScanCount int
 	seenDomains := make(map[string]bool)
+	var resultMu sync.Mutex
 
 	// 4. 阶段一：本地资产缓存优先 (0 延迟即时推送)
 	if !req.Fresh && len(cachedTargets) > 0 {
@@ -340,6 +364,7 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 				IsCDN:           rec.IsCDN,
 				IsDefaultPage:   rec.IsDefaultPage,
 				DefaultPageType: rec.DefaultPageType,
+				IsStarred:       rec.IsStarred,
 				CreatedAt:       rec.LastCheckedAt,
 			}
 
@@ -387,15 +412,28 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 	defer cancelScan()
 
 	engine := core.NewEngine(s.appConfig)
+	if err := engine.Start(); err != nil {
+		return fmt.Errorf("start scan engine: %w", err)
+	}
+	defer func() { _ = engine.Stop() }()
 
 	var lastProgressTime time.Time
 	var progressMu sync.Mutex
-	var totalScannedIPs int64
+	// progress.scanned_ips 对前端展示的是整个 ASN 的累计进度，而不是本次
+	// 连接建立后的增量。断点中的已完成网段和已扫描 IP 要计入初始值。
+	var totalScannedIPs int64 = checkpointedIPs
+	var lastProgressCIDR string
+	var lastProgressIP string
 
 	scanEvents := core.AutoScanEvents{
+		OnLog: func(msg string) {
+			logger.Info("[扫描] ASN=%s: %s", asnStr, msg)
+		},
 		OnIPScanned: func(delta int, currentCIDR string, currentIP string, currentIdx int, totalCIDRs int) {
 			newTotal := atomic.AddInt64(&totalScannedIPs, int64(delta))
 			progressMu.Lock()
+			lastProgressCIDR = currentCIDR
+			lastProgressIP = currentIP
 			now := time.Now()
 			if now.Sub(lastProgressTime) >= 300*time.Millisecond {
 				lastProgressTime = now
@@ -419,17 +457,26 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 			if res == nil || res.Domain == "" {
 				return
 			}
+			resultMu.Lock()
 			if seenDomains[res.Domain] {
+				resultMu.Unlock()
 				return
 			}
 			stars := core.CalculateTargetStars(res)
 			if stars < req.MinStars {
+				resultMu.Unlock()
 				return
 			}
 			seenDomains[res.Domain] = true
 			fromScanCount++
+			resultMu.Unlock()
 
 			rec := storage.DetectionResultToRecord(res, asnStr, country, ip, stars)
+			if s.store != nil {
+				if starred, err := s.store.GetTargetStarred(rec.Domain); err == nil {
+					rec.IsStarred = starred
+				}
+			}
 			var certExpirePtr *time.Time
 			if !rec.CertExpireAt.IsZero() {
 				certExpirePtr = &rec.CertExpireAt
@@ -451,6 +498,7 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 				IsCDN:           rec.IsCDN,
 				IsDefaultPage:   rec.IsDefaultPage,
 				DefaultPageType: rec.DefaultPageType,
+				IsStarred:       rec.IsStarred,
 				CreatedAt:       rec.LastCheckedAt,
 			}
 
@@ -460,6 +508,9 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 			if !req.ScanAll && fromCacheCount+fromScanCount >= req.Limit {
 				cancelScan()
 			}
+		},
+		OnError: func(err error) {
+			logger.Error("❌ [扫描] 断点或扫描状态持久化失败: ASN=%s, error=%v", asnStr, err)
 		},
 	}
 
@@ -487,6 +538,24 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 
 	autoScanner := core.NewAutoScanner(engine, s.store, scannerEngine, autoCfg, scanEvents)
 	_, scanErr := autoScanner.Run(scanCtx)
+	if scanErr != nil && !errors.Is(scanErr, core.ErrAllCompleted) && !errors.Is(scanErr, context.Canceled) {
+		logger.Error("❌ [扫描] 自动扫描执行失败: ASN=%s, IP=%s, error=%v", asnStr, targetIP, scanErr)
+	}
+
+	// 最后一个进度回调可能因 300ms 节流未发送，结束前补发一次，确保前端
+	// 在失败或中断时看到的累计数字与已保存断点一致。
+	progressMu.Lock()
+	finalCIDR := lastProgressCIDR
+	finalIP := lastProgressIP
+	progressMu.Unlock()
+	_ = emit(ProvisionEvent{
+		Event: "progress",
+		Data: ProgressEventData{
+			ScannedIPs:  atomic.LoadInt64(&totalScannedIPs),
+			CurrentCIDR: finalCIDR,
+			CurrentIP:   finalIP,
+		},
+	})
 
 	reason := "scan_exhausted"
 	if fromCacheCount+fromScanCount >= req.Limit {
@@ -495,6 +564,9 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 		reason = "limit_hit"
 	} else if ctx.Err() != nil {
 		reason = "cancelled"
+	} else if errors.Is(scanErr, core.ErrAllCompleted) {
+		// 所有网段已经在之前完成，不属于本次扫描失败。
+		reason = "scan_exhausted"
 	} else if scanErr != nil && !errors.Is(scanErr, context.Canceled) {
 		reason = "scan_error: " + scanErr.Error()
 	}
@@ -520,18 +592,25 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 	targetIP := strings.TrimSpace(req.IP)
 	var targetASN string
 	var targetCountry string
+	var targetAddr netip.Addr
+	var targetAddrValid bool
 	var prefixes []string
 	var matchedCIDRs []string
 	var cidrCount int
 	var totalIPs int64
 	var hasCheckpoint bool
 	var lastCheckpointIP string
+	var checkpointedIPs int64
 	var completedCIDRCount int
 
 	var asnNum int
 	// 1. 若提供了目标 IP，智能解析其 ASN 与国家及网段
 	if targetIP != "" {
 		if parsedIP := net.ParseIP(targetIP); parsedIP != nil {
+			if addr, err := netip.ParseAddr(targetIP); err == nil {
+				targetAddr = addr.Unmap()
+				targetAddrValid = true
+			}
 			if s.geoipReader != nil {
 				if rec, err := s.geoipReader.Country(parsedIP); err == nil && rec.Country.IsoCode != "" {
 					targetCountry = strings.ToUpper(rec.Country.IsoCode)
@@ -560,7 +639,8 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 		if req.IPv6Only && !prefix.Addr().Is6() {
 			continue
 		}
-		if s.geoipReader != nil && targetCountry != "" {
+		isTargetCIDR := targetAddrValid && prefix.Contains(targetAddr)
+		if !isTargetCIDR && s.geoipReader != nil && targetCountry != "" {
 			if rec, err := s.geoipReader.Country(net.ParseIP(prefix.Addr().String())); err == nil {
 				if !strings.EqualFold(rec.Country.IsoCode, targetCountry) {
 					continue
@@ -578,6 +658,7 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 	if targetASN != "" && s.store != nil {
 		if cps, err := s.store.GetCheckpoints(targetASN); err == nil && len(cps) > 0 {
 			hasCheckpoint = true
+			checkpointedIPs = core.CalculateScannedIPs(matchedCIDRs, cps)
 			for _, cp := range cps {
 				if cp.Completed {
 					completedCIDRCount++
@@ -671,6 +752,7 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 		SuggestScan:        !isResidential,
 		CIDRCount:          cidrCount,
 		TotalIPs:           totalIPs,
+		ScannedIPs:         checkpointedIPs,
 		HasCheckpoint:      hasCheckpoint,
 		LastCheckpointIP:   lastCheckpointIP,
 		CompletedCIDRCount: completedCIDRCount,
@@ -714,6 +796,7 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 			IsCDN:           rec.IsCDN,
 			IsDefaultPage:   rec.IsDefaultPage,
 			DefaultPageType: rec.DefaultPageType,
+			IsStarred:       rec.IsStarred,
 			CreatedAt:       rec.LastCheckedAt,
 		}
 
@@ -771,6 +854,9 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 
 	// 4. 高效 O(N log N) 排序
 	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].IsStarred != ranked[j].IsStarred {
+			return ranked[i].IsStarred
+		}
 		return ranked[i].Score > ranked[j].Score
 	})
 
@@ -834,6 +920,9 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 
 	if recheckedAny {
 		sort.Slice(ranked, func(i, j int) bool {
+			if ranked[i].IsStarred != ranked[j].IsStarred {
+				return ranked[i].IsStarred
+			}
 			return ranked[i].Score > ranked[j].Score
 		})
 	}
@@ -938,10 +1027,22 @@ func (s *ProvisionService) CheckSingleDomain(ctx context.Context, domain, manual
 		return nil, errors.New("domain cannot be empty")
 	}
 	manualIP = strings.TrimSpace(manualIP)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// 单域名复核使用独立的连接管理器，并设置服务端兜底截止时间。
+	// 前台全量扫描即使占满网络资源，也不能让资产管理页面永久等待。
+	probeTimeout := 30 * time.Second
+	if s.appConfig != nil && s.appConfig.Concurrency.CheckTimeout > 0 {
+		probeTimeout = s.appConfig.Concurrency.CheckTimeout
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
 
 	connMgr := network.NewConnectionManager(s.appConfig)
 	pipeline := core.NewPipeline(connMgr, s.appConfig)
-	res, err := pipeline.ExecuteWithTargetIP(ctx, d, manualIP)
+	res, err := pipeline.ExecuteWithTargetIP(probeCtx, d, manualIP)
 	if err != nil {
 		return nil, fmt.Errorf("pipeline execution failed: %w", err)
 	}
@@ -960,7 +1061,10 @@ func (s *ProvisionService) CheckSingleDomain(ctx context.Context, domain, manual
 	}
 
 	if ipStr == "" {
-		if ips, err := net.LookupIP(d); err == nil && len(ips) > 0 {
+		lookupCtx, cancelLookup := context.WithTimeout(probeCtx, 2*time.Second)
+		ips, err := net.DefaultResolver.LookupIPAddr(lookupCtx, d)
+		cancelLookup()
+		if err == nil && len(ips) > 0 {
 			ipStr = ips[0].String()
 		}
 	}
@@ -973,7 +1077,7 @@ func (s *ProvisionService) CheckSingleDomain(ctx context.Context, domain, manual
 				}
 			}
 			if s.asnClient != nil {
-				if asnNum, _, err := s.asnClient.PrefixesForIP(ctx, ipStr); err == nil && asnNum > 0 {
+				if asnNum, _, err := s.asnClient.PrefixesForIP(probeCtx, ipStr); err == nil && asnNum > 0 {
 					asnStr = fmt.Sprintf("AS%d", asnNum)
 				}
 			}
@@ -994,6 +1098,9 @@ func (s *ProvisionService) CheckSingleDomain(ctx context.Context, domain, manual
 	}
 
 	if s.store != nil {
+		if starred, err := s.store.GetTargetStarred(rec.Domain); err == nil {
+			rec.IsStarred = starred
+		}
 		if err := s.store.UpsertTarget(rec); err != nil {
 			return nil, fmt.Errorf("failed to save target to database: %w", err)
 		}
@@ -1016,6 +1123,14 @@ func (s *ProvisionService) UpdateTargetActive(domain string, active bool) error 
 		return errors.New("store not available")
 	}
 	return s.store.UpdateTargetActive(domain, active)
+}
+
+// UpdateTargetStarred 更新资产的用户收藏状态
+func (s *ProvisionService) UpdateTargetStarred(domain string, starred bool) error {
+	if s.store == nil {
+		return errors.New("store not available")
+	}
+	return s.store.UpdateTargetStarred(domain, starred)
 }
 
 // DeleteTarget 物理删除资产代理

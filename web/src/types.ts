@@ -16,6 +16,7 @@ export interface TargetItem {
   is_cdn: boolean;
   is_default_page: boolean;
   default_page_type?: string;
+  is_starred: boolean;
   created_at: string;
 }
 
@@ -39,6 +40,7 @@ export interface SmartFilterOptions {
 }
 
 export interface ScanProgressInfo {
+  status: 'idle' | 'scanning' | 'success' | 'error' | 'stopped';
   isScanning: boolean;
   scannedIPs: number;
   totalIPs: number;
@@ -61,6 +63,7 @@ export interface TargetSummaryInfo {
   suggest_scan?: boolean;
   cidr_count?: number;
   total_ips?: number;
+  scanned_ips?: number;
   has_checkpoint?: boolean;
   last_checkpoint_ip?: string;
   completed_cidr_count?: number;
@@ -85,6 +88,7 @@ export interface TargetRecord {
   is_default_page: boolean;
   default_page_type?: string;
   stars: number;
+  is_starred: boolean;
   is_active: boolean;
   check_fail_count: number;
   first_seen_at: string;

@@ -565,6 +565,16 @@ func CalculateTotalIPs(cidrs []string) int64 {
 	return CalculateRemainingIPs(cidrs, nil)
 }
 
+// CalculateScannedIPs 根据断点计算已经完成探测的 IP 数量，用于恢复后的累计进度展示。
+func CalculateScannedIPs(cidrs []string, checkpoints map[string]*storage.CheckpointRecord) int64 {
+	total := CalculateTotalIPs(cidrs)
+	remaining := CalculateRemainingIPs(cidrs, checkpoints)
+	if remaining >= total {
+		return 0
+	}
+	return total - remaining
+}
+
 // CalculateRemainingIPs 计算扣除已完成/部分完成断点网段后的剩余待扫描 IP 理论总数
 func CalculateRemainingIPs(cidrs []string, checkpoints map[string]*storage.CheckpointRecord) int64 {
 	var total int64

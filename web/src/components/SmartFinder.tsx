@@ -7,7 +7,7 @@ import type {
   ScanProgressInfo,
   TargetRecord,
 } from '../types';
-import { apiFetch, getApiToken, setApiToken as saveApiToken } from '../api';
+import { apiFetch, getApiToken, setApiToken as saveApiToken, setTargetStarred } from '../api';
 import { ConfigModal } from './ConfigModal';
 import { TargetDetailModal } from './TargetDetailModal';
 import { formatCertExpireDate } from '../format';
@@ -42,6 +42,7 @@ import {
   List,
   ExternalLink,
   Info,
+  Star,
 } from 'lucide-react';
 
 const DEFAULT_FILTER: SmartFilterOptions = {
@@ -57,6 +58,8 @@ const DEFAULT_FILTER: SmartFilterOptions = {
   domainSuffixes: '',
 };
 
+const FRONTEND_SCAN_TASK_KEY = 'rc_frontend_scan_task_id';
+
 export const SmartFinder = () => {
   const [ip, setIP] = useState('');
 
@@ -67,6 +70,8 @@ export const SmartFinder = () => {
   // 鉴权 Token
   const [apiToken, setApiToken] = useState(() => getApiToken());
   const [showTokenSettings, setShowTokenSettings] = useState(false);
+  const [tokenPrompt, setTokenPrompt] = useState(false);
+  const [tokenDraft, setTokenDraft] = useState(() => getApiToken());
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -78,6 +83,7 @@ export const SmartFinder = () => {
 
   // 实时扫描进度同步状态
   const [scanProgress, setScanProgress] = useState<ScanProgressInfo>({
+    status: 'idle',
     isScanning: false,
     scannedIPs: 0,
     totalIPs: 0,
@@ -132,6 +138,10 @@ export const SmartFinder = () => {
 
   // Refs 维护实时最新的状态，避免闭包捕获陈旧值
   const esRef = useRef<EventSource | null>(null);
+  const taskIDRef = useRef<string | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const taskTargetDomainsRef = useRef<Set<string>>(new Set());
   const summaryRef = useRef<TargetSummaryInfo | null>(null);
   const filterRef = useRef<SmartFilterOptions>(filter);
   const scanMetricsRef = useRef<{
@@ -171,12 +181,27 @@ export const SmartFinder = () => {
       if (esRef.current) {
         esRef.current.close();
       }
+      if (reconnectTimerRef.current !== null) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
     };
   }, []);
 
   const handleTokenChange = (val: string) => {
     setApiToken(val);
     saveApiToken(val);
+  };
+
+  const promptForToken = () => {
+    setTokenDraft(apiToken);
+    setTokenPrompt(true);
+  };
+
+  const savePromptToken = () => {
+    handleTokenChange(tokenDraft);
+    setTokenPrompt(false);
+    setShowTokenSettings(true);
   };
 
   // 快捷测试 IP 资产
@@ -360,12 +385,26 @@ export const SmartFinder = () => {
 
   // 终止流式扫描
   const stopScan = () => {
+    if (reconnectTimerRef.current !== null) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    reconnectAttemptRef.current = 0;
+    const taskID = taskIDRef.current;
+    if (taskID) {
+      void apiFetch(`/api/scan/tasks/${encodeURIComponent(taskID)}`, { method: 'DELETE' }).catch(() => {});
+      taskIDRef.current = null;
+      try {
+        localStorage.removeItem(FRONTEND_SCAN_TASK_KEY);
+      } catch (_) {}
+    }
     if (esRef.current) {
       esRef.current.close();
       esRef.current = null;
     }
     setScanProgress((prev) => ({
       ...prev,
+      status: 'stopped',
       isScanning: false,
       message: `⏹ 扫描已由用户手动停止，当前探测断点已安全归档入库。`,
     }));
@@ -384,8 +423,18 @@ export const SmartFinder = () => {
       esRef.current.close();
       esRef.current = null;
     }
+    if (reconnectTimerRef.current !== null) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    reconnectAttemptRef.current = 0;
+    if (taskIDRef.current) {
+      void apiFetch(`/api/scan/tasks/${encodeURIComponent(taskIDRef.current)}`, { method: 'DELETE' }).catch(() => {});
+      clearStoredScanTask();
+    }
+    taskTargetDomainsRef.current.clear();
 
-    setScanProgress((prev) => ({ ...prev, isScanning: false }));
+    setScanProgress((prev) => ({ ...prev, status: 'idle', isScanning: false, message: '' }));
     setLoading(true);
     setError('');
     setRawTargets([]);
@@ -402,6 +451,10 @@ export const SmartFinder = () => {
 
       const res = await apiFetch(url, { headers });
       const data = await res.json();
+      if (res.status === 401) {
+        promptForToken();
+        throw new Error('API Token 验证失败，请输入正确的 Token');
+      }
       if (!res.ok || data.code !== 200) {
         throw new Error(data.error || '请求匹配失败');
       }
@@ -449,6 +502,7 @@ export const SmartFinder = () => {
         page_title: updated.page_title,
         is_cdn: updated.is_cdn,
         is_default_page: updated.is_default_page,
+        is_starred: updated.is_starred,
         default_page_type: updated.default_page_type,
         created_at: updated.last_checked_at || current.created_at,
         score,
@@ -459,10 +513,29 @@ export const SmartFinder = () => {
     setSelectedDetailTarget((current) => (current && current.domain === updated.domain ? mergeUpdatedTarget(current) : current));
   };
 
-  // 启动实时扫描：实时同步扫描进度，有新的符合过滤器的结果立即返回与渲染
-  const startScanStream = (scanAll: boolean = true) => {
+  const toggleTargetStarred = async (target: RankedTargetItem, event?: React.MouseEvent) => {
+    event?.stopPropagation();
+    try {
+      const starred = await setTargetStarred(target.domain, !target.is_starred);
+      const reorder = (items: RankedTargetItem[]) =>
+        items
+          .map((item) => (item.domain === target.domain ? { ...item, is_starred: starred } : item))
+          .sort((a, b) => (a.is_starred === b.is_starred ? b.score - a.score : a.is_starred ? -1 : 1));
+      setRawTargets(reorder);
+      setSelectedDetailTarget((current) => (current && current.domain === target.domain ? { ...current, is_starred: starred } : current));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '更新收藏状态失败');
+    }
+  };
+
+  // 连接后台扫描任务：断开 SSE 只会断开订阅，不会取消服务端任务。
+  const connectScanStream = (
+    existingTaskID: string | null = null,
+    scanAll: boolean = true,
+    isReconnect: boolean = false
+  ) => {
     const cleanIP = ip.trim();
-    if (!cleanIP) {
+    if (!existingTaskID && !cleanIP) {
       setError('请输入节点服务器 IP');
       return;
     }
@@ -471,33 +544,72 @@ export const SmartFinder = () => {
       esRef.current.close();
     }
 
-    const now = Date.now();
-    scanMetricsRef.current = {
-      startTime: now,
-      lastTime: now,
-      lastCount: 0,
-    };
+    if (existingTaskID) {
+      taskIDRef.current = existingTaskID;
+    }
 
-    setScanProgress({
-      isScanning: true,
-      scannedIPs: 0,
-      totalIPs: summary?.total_ips || 0,
-      currentCIDR: '',
-      currentIP: '',
-      speed: 0,
-      percent: 0,
-      foundCount: 0,
-      matchedCount: 0,
-      message: '正在建立流式探测长连接通道，提前同步目标 ASN 拓扑元数据...',
-    });
+    if (!isReconnect) {
+      taskTargetDomainsRef.current.clear();
+      reconnectAttemptRef.current = 0;
+    }
+
+    const now = Date.now();
+    const checkpointedScanned = summary?.scanned_ips || 0;
+    if (!isReconnect) {
+      scanMetricsRef.current = {
+        startTime: now,
+        lastTime: now,
+        lastCount: checkpointedScanned,
+      };
+      setScanProgress({
+        status: 'scanning',
+        isScanning: true,
+        scannedIPs: checkpointedScanned,
+        totalIPs: summary?.total_ips || 0,
+        currentCIDR: '',
+        currentIP: '',
+        speed: 0,
+        percent: summary?.total_ips ? Math.min(100, Math.round((checkpointedScanned / summary.total_ips) * 100)) : 0,
+        foundCount: 0,
+        matchedCount: 0,
+        message: existingTaskID
+          ? '正在重新连接后台扫描任务，同步历史进度与扫描结果...'
+          : '正在建立流式探测长连接通道，提前同步目标 ASN 拓扑元数据...',
+      });
+    } else {
+      setScanProgress((prev) => ({
+        ...prev,
+        status: 'scanning',
+        isScanning: true,
+        message: 'SSE 连接已断开，正在重新连接后台扫描任务...',
+      }));
+    }
     setError('');
 
     const tokenParam = apiToken.trim() ? `&token=${encodeURIComponent(apiToken.trim())}` : '';
     const scanAllParam = scanAll ? '&scan_all=1' : '';
-    const url = `/api/targets/stream?ip=${encodeURIComponent(cleanIP)}&limit=50&min_stars=1&require_no_cn=0${scanAllParam}${tokenParam}`;
+    const url = existingTaskID
+      ? `/api/targets/stream?task_id=${encodeURIComponent(existingTaskID)}${tokenParam}`
+      : `/api/targets/stream?ip=${encodeURIComponent(cleanIP)}&limit=50&min_stars=1&require_no_cn=0${scanAllParam}${tokenParam}`;
 
     const es = new EventSource(url);
     esRef.current = es;
+
+    es.onopen = () => {
+      if (esRef.current === es) {
+        reconnectAttemptRef.current = 0;
+      }
+    };
+
+    // 任务事件：记录任务来源与 ID，页面关闭后下次打开可自动重连。
+    es.addEventListener('task', (evt: any) => {
+      try {
+        const data = JSON.parse(evt.data);
+        if (!data.task_id) return;
+        taskIDRef.current = data.task_id;
+        localStorage.setItem(FRONTEND_SCAN_TASK_KEY, data.task_id);
+      } catch (_) {}
+    });
 
     // 1. 初始化事件: 首帧同步 ASN 拓扑与断点信息
     es.addEventListener('init', (evt: any) => {
@@ -513,6 +625,7 @@ export const SmartFinder = () => {
           suggest_scan: data.suggest_scan,
           cidr_count: data.cidr_count,
           total_ips: data.total_ips,
+          scanned_ips: data.scanned_ips || 0,
           has_checkpoint: data.has_checkpoint,
           last_checkpoint_ip: data.last_checkpoint_ip,
           same_asn_hits: data.cached_hits,
@@ -520,6 +633,8 @@ export const SmartFinder = () => {
         };
         setSummary(updatedSummary);
         summaryRef.current = updatedSummary;
+        const checkpointedScanned = Number(data.scanned_ips) || 0;
+        scanMetricsRef.current.lastCount = checkpointedScanned;
 
         let msg = `⚡ 拓扑就绪：${data.asn} (${data.country}) · ${data.is_residential ? '家庭宽带' : '机房数据中心'}`;
         if (data.cidr_count) {
@@ -527,13 +642,17 @@ export const SmartFinder = () => {
         }
         if (data.has_checkpoint && data.last_checkpoint_ip) {
           msg += `，发现断点，正从 ${data.last_checkpoint_ip} 自动精准续传...`;
+        } else if (data.has_checkpoint) {
+          msg += '，发现已保存断点，正在跳过已完成网段并继续扫描...';
         } else {
           msg += `，正在开启全并发流水线探测...`;
         }
 
         setScanProgress((prev) => ({
           ...prev,
+          scannedIPs: checkpointedScanned,
           totalIPs: data.total_ips || prev.totalIPs,
+          percent: data.total_ips > 0 ? Math.min(100, Math.round((checkpointedScanned / data.total_ips) * 100)) : 0,
           message: msg,
         }));
       } catch (_) {}
@@ -546,7 +665,8 @@ export const SmartFinder = () => {
         const currentScanned = Number(data.scanned_ips) || 0;
         const nowMs = Date.now();
         const elapsedSec = (nowMs - scanMetricsRef.current.startTime) / 1000;
-        const speed = elapsedSec > 0 ? Math.round(currentScanned / elapsedSec) : 0;
+        const currentRunScanned = Math.max(0, currentScanned - scanMetricsRef.current.lastCount);
+        const speed = elapsedSec > 0 ? Math.round(currentRunScanned / elapsedSec) : 0;
 
         setScanProgress((prev) => {
           const tot = prev.totalIPs > 0 ? prev.totalIPs : summaryRef.current?.total_ips || 0;
@@ -567,6 +687,9 @@ export const SmartFinder = () => {
     es.addEventListener('target', (evt: any) => {
       try {
         const item: TargetItem = JSON.parse(evt.data);
+        // 断线重连会回放任务已保存的 target 事件，不能重复计数或重复高亮。
+        if (taskTargetDomainsRef.current.has(item.domain)) return;
+        taskTargetDomainsRef.current.add(item.domain);
         const activeSummary = summaryRef.current;
         const targetASNNorm = activeSummary?.asn?.toUpperCase().replace(/^AS/, '');
         const itemASNNorm = item.asn?.toUpperCase().replace(/^AS/, '');
@@ -587,7 +710,9 @@ export const SmartFinder = () => {
         setRawTargets((prev) => {
           const exists = prev.some((p) => p.domain === item.domain);
           if (exists) return prev;
-          return [ranked, ...prev];
+          return [...prev, ranked].sort((a, b) =>
+            a.is_starred === b.is_starred ? b.score - a.score : a.is_starred ? -1 : 1
+          );
         });
 
         if (matchesCurrentFilter) {
@@ -611,33 +736,179 @@ export const SmartFinder = () => {
     // 4. 完成事件
     es.addEventListener('done', (evt: any) => {
       let totalFound = 0;
+      let fromCache = 0;
+      let fromScan = 0;
+      let reason = '';
       try {
         const doneData = JSON.parse(evt.data);
         totalFound = doneData.total_found || 0;
+        fromCache = doneData.from_cache || 0;
+        fromScan = doneData.from_scan || 0;
+        reason = doneData.reason || '';
       } catch (_) {}
+
+      const scanError = reason.startsWith('scan_error:')
+        ? reason.slice('scan_error:'.length).trim()
+        : '';
+      const wasCancelled = reason === 'cancelled';
+      const completedSuccessfully = !scanError && !wasCancelled;
 
       setScanProgress((prev) => ({
         ...prev,
+        status: completedSuccessfully ? 'success' : wasCancelled ? 'stopped' : 'error',
         isScanning: false,
-        percent: 100,
-        message: `✅ 实时扫描已全部完成！共探测发现 ${totalFound || prev.foundCount} 个资产，当前展示 ${prev.matchedCount} 个符合过滤标准的目标。`,
+        percent: completedSuccessfully ? 100 : prev.percent,
+        message: scanError
+          ? `❌ 实时扫描中途失败：${scanError}。已保留 ${totalFound || prev.foundCount} 个已发现资产，请稍后重试。`
+          : wasCancelled
+            ? `⚠️ 实时扫描已中断：已保留 ${totalFound || prev.foundCount} 个已发现资产，请检查服务状态后重试。`
+            : `✅ 实时扫描已全部完成！共探测发现 ${totalFound || prev.foundCount} 个资产（缓存 ${fromCache}，本次扫描 ${fromScan}），当前展示 ${prev.matchedCount} 个符合过滤标准的目标。`,
       }));
+
+      if (scanError) {
+        setError(`实时扫描失败：${scanError}`);
+      } else if (wasCancelled) {
+        setError('实时扫描已中断，已发现的资产已保留。');
+      }
 
       es.close();
       esRef.current = null;
+      taskIDRef.current = null;
+      try {
+        localStorage.removeItem(FRONTEND_SCAN_TASK_KEY);
+      } catch (_) {}
     });
 
     // 5. 异常或中断事件
-    es.addEventListener('error', () => {
-      setScanProgress((prev) => ({
-        ...prev,
-        isScanning: false,
-        message: prev.foundCount > 0 ? `⚠️ 流式探测已断开，已安全保存已发现的 ${prev.foundCount} 个资产。` : '',
-      }));
+    es.addEventListener('error', (evt: any) => {
+      let detail = '';
+      try {
+        const data = JSON.parse(evt?.data || '{}');
+        detail = data.error || '';
+      } catch (_) {}
+
+      // 服务端的 error 事件会紧接着 done 事件到达，保持连接以便
+      // 前端收到最终状态；只有没有 data 的浏览器网络错误才重连。
+      if (detail) {
+        setError(detail);
+        setScanProgress((prev) => ({
+          ...prev,
+          status: 'scanning',
+          isScanning: true,
+          message: `⚠️ 扫描服务报告异常：${detail}，正在等待任务最终状态...`,
+        }));
+        return;
+      }
+
+      const taskID = taskIDRef.current;
+      if (!taskID || esRef.current !== es) return;
       es.close();
       esRef.current = null;
+      setScanProgress((prev) => ({
+        ...prev,
+        status: 'scanning',
+        isScanning: true,
+        message: `⚠️ SSE 连接中断，已发现 ${prev.foundCount} 个资产，正在自动重连...`,
+      }));
+      scheduleScanReconnect(taskID);
     });
   };
+
+  const clearStoredScanTask = () => {
+    taskIDRef.current = null;
+    try {
+      localStorage.removeItem(FRONTEND_SCAN_TASK_KEY);
+    } catch (_) {}
+  };
+
+  const scheduleScanReconnect = (taskID: string) => {
+    if (!taskID || reconnectTimerRef.current !== null) return;
+
+    const attempt = reconnectAttemptRef.current;
+    const delay = Math.min(30_000, Math.max(1_000, 1_000 * 2 ** Math.min(attempt, 5)));
+    reconnectAttemptRef.current = attempt + 1;
+    reconnectTimerRef.current = setTimeout(async () => {
+      reconnectTimerRef.current = null;
+      try {
+        const res = await apiFetch(`/api/scan/tasks/${encodeURIComponent(taskID)}`);
+        if (res.status === 404) {
+          clearStoredScanTask();
+          setScanProgress((prev) => ({ ...prev, status: 'error', isScanning: false, message: '后台扫描任务已不存在，请重新发起扫描。' }));
+          setError('后台扫描任务已不存在，请重新发起扫描。');
+          return;
+        }
+        if (!res.ok) throw new Error(`任务状态查询失败 (${res.status})`);
+        connectScanStream(taskID, true, true);
+      } catch (err: any) {
+        setScanProgress((prev) => ({
+          ...prev,
+          status: 'scanning',
+          isScanning: true,
+          message: `⚠️ 暂时无法恢复 SSE（${err.message || '网络错误'}），继续重试...`,
+        }));
+        scheduleScanReconnect(taskID);
+      }
+    }, delay);
+  };
+
+  const startScanStream = async (scanAll: boolean = true) => {
+    const cleanIP = ip.trim();
+    if (!cleanIP) {
+      setError('请输入节点服务器 IP');
+      return;
+    }
+
+    // 同一页面切换到新的扫描时，先停止旧的前端任务，避免后台遗留并发扫描。
+    if (reconnectTimerRef.current !== null) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    reconnectAttemptRef.current = 0;
+    if (taskIDRef.current) {
+      const oldTaskID = taskIDRef.current;
+      void apiFetch(`/api/scan/tasks/${encodeURIComponent(oldTaskID)}`, { method: 'DELETE' }).catch(() => {});
+      clearStoredScanTask();
+    }
+
+    try {
+      const res = await apiFetch('/api/scan/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ip: cleanIP,
+          limit: 50,
+          min_stars: 1,
+          require_no_cn: false,
+          scan_all: scanAll,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.code !== 200 || !data.data?.task_id) {
+        throw new Error(data.error || '创建后台扫描任务失败');
+      }
+
+      const taskID = data.data.task_id as string;
+      taskIDRef.current = taskID;
+      try {
+        localStorage.setItem(FRONTEND_SCAN_TASK_KEY, taskID);
+      } catch (_) {}
+      connectScanStream(taskID, scanAll);
+    } catch (err: any) {
+      setScanProgress((prev) => ({ ...prev, status: 'error', isScanning: false }));
+      setError(err.message || '创建后台扫描任务失败');
+    }
+  };
+
+  // 页面重新打开时，自动恢复最近一次由前端创建的后台任务。
+  useEffect(() => {
+    let savedTaskID = '';
+    try {
+      savedTaskID = localStorage.getItem(FRONTEND_SCAN_TASK_KEY) || '';
+    } catch (_) {}
+    if (savedTaskID) {
+      connectScanStream(savedTaskID);
+    }
+  }, []);
 
   const copyDomain = (domain: string) => {
     navigator.clipboard.writeText(domain);
@@ -646,7 +917,27 @@ export const SmartFinder = () => {
   };
 
   return (
-    <div>
+      <div>
+      {tokenPrompt && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="token-prompt-title">
+          <div className="modal glass-panel" style={{ maxWidth: '460px' }}>
+            <div className="modal-header">
+              <div>
+                <h3 id="token-prompt-title">需要 API Token</h3>
+                <p style={{ color: 'var(--text-sub)', marginTop: '6px', fontSize: '0.85rem' }}>服务端拒绝了当前 Token，请输入正确的 API Token 后重试。</p>
+              </div>
+              <button type="button" className="btn-icon" onClick={() => setTokenPrompt(false)} aria-label="关闭"><X size={18} /></button>
+            </div>
+            <div className="modal-body">
+              <input autoFocus type="password" value={tokenDraft} onChange={(e) => setTokenDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') savePromptToken(); }} placeholder="输入 API Token" style={{ width: '100%', padding: '10px 12px', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: 'var(--text-main)' }} />
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-ghost" onClick={() => setTokenPrompt(false)}>取消</button>
+              <button type="button" className="btn btn-primary" onClick={savePromptToken}>保存 Token</button>
+            </div>
+          </div>
+        </div>
+      )}
       <section className="hero-section">
         <div className="hero-title-row">
           <div>
@@ -1279,7 +1570,7 @@ export const SmartFinder = () => {
 
           {/* 实时扫描进度卡片 (实时同步扫描进度) */}
           {(scanProgress.isScanning || scanProgress.message) && (
-            <div className="scan-progress-card">
+            <div className={`scan-progress-card scan-progress-card-${scanProgress.status}`}>
               <div className="scan-progress-header">
                 <div className="scan-status-title">
                   {scanProgress.isScanning ? (
@@ -1287,6 +1578,10 @@ export const SmartFinder = () => {
                       <span className="radar-ping-ring"></span>
                       <span className="radar-ping-dot"></span>
                     </div>
+                  ) : scanProgress.status === 'error' ? (
+                    <AlertTriangle size={16} style={{ color: 'var(--accent-rose)' }} />
+                  ) : scanProgress.status === 'stopped' ? (
+                    <Square size={14} style={{ color: 'var(--accent-amber)' }} />
                   ) : (
                     <Check size={16} style={{ color: 'var(--accent-emerald)' }} />
                   )}
@@ -1671,6 +1966,15 @@ export const SmartFinder = () => {
                         <span className="star-rating">
                           {'★'.repeat(target.stars)}
                         </span>
+                        <button
+                          type="button"
+                          className="btn-icon"
+                          style={{ padding: '2px 5px', color: target.is_starred ? 'var(--accent-amber)' : undefined }}
+                          onClick={(e) => toggleTargetStarred(target, e)}
+                          title={target.is_starred ? '取消收藏' : '收藏'}
+                        >
+                          <Star size={15} fill={target.is_starred ? 'currentColor' : 'none'} />
+                        </button>
                       </div>
 
                       <div
@@ -1897,6 +2201,15 @@ export const SmartFinder = () => {
                           <span className="star-rating" style={{ fontSize: '0.78rem' }}>
                             {'★'.repeat(target.stars)}
                           </span>
+                          <button
+                            type="button"
+                            className="btn-icon"
+                            style={{ padding: '1px 4px', color: target.is_starred ? 'var(--accent-amber)' : undefined }}
+                            onClick={(e) => toggleTargetStarred(target, e)}
+                            title={target.is_starred ? '取消收藏' : '收藏'}
+                          >
+                            <Star size={13} fill={target.is_starred ? 'currentColor' : 'none'} />
+                          </button>
                         </div>
 
                         {target.page_title && (

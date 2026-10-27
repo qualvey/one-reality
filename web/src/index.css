@@ -1,5 +1,5 @@
 /* ==========================================================================
-   RealityChecker Console - Cyber Obsidian Design System
+   reasni - Cyber Obsidian Design System
    Vanilla CSS with Pure Design Tokens & Modern Micro-interactions
    ========================================================================== */
 
@@ -131,7 +131,8 @@ h1, h2, h3, h4 {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 32px;
+  gap: 20px;
+  padding: 14px 30px;
   background: rgba(10, 14, 22, 0.85);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -144,7 +145,8 @@ h1, h2, h3, h4 {
 .nav-brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
+  flex: 0 0 auto;
   cursor: pointer;
   text-decoration: none;
 }
@@ -172,7 +174,9 @@ h1, h2, h3, h4 {
 
 .brand-badge {
   font-size: 0.65rem;
-  padding: 2px 7px;
+  padding: 3px 7px;
+  line-height: 1.15;
+  white-space: nowrap;
   border-radius: var(--radius-full);
   background: rgba(56, 189, 248, 0.15);
   color: var(--accent-cyan);
@@ -188,18 +192,24 @@ h1, h2, h3, h4 {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-full);
   padding: 4px;
+  flex: 1 1 auto;
+  justify-content: center;
+  min-width: 0;
 }
 
 .nav-tab-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 18px;
+  gap: 7px;
+  min-height: 42px;
+  padding: 7px 16px;
   border-radius: var(--radius-full);
   border: none;
   background: transparent;
-  color: var(--text-muted);
-  font-size: 0.88rem;
+  color: #aebdce;
+  font-size: 0.84rem;
+  line-height: 1.25;
+  white-space: nowrap;
   font-weight: 500;
   cursor: pointer;
   transition: all var(--transition-fast);
@@ -214,13 +224,14 @@ h1, h2, h3, h4 {
   color: #ffffff;
   background: linear-gradient(135deg, rgba(56, 189, 248, 0.25), rgba(37, 99, 235, 0.35));
   border: 1px solid rgba(56, 189, 248, 0.35);
-  box-shadow: 0 2px 10px rgba(56, 189, 248, 0.2);
+  box-shadow: 0 2px 7px rgba(56, 189, 248, 0.16);
 }
 
 .nav-actions {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 16px;
+  flex: 0 0 auto;
 }
 
 .status-indicator {
@@ -230,7 +241,8 @@ h1, h2, h3, h4 {
   font-size: 0.8rem;
   color: var(--text-muted);
   background: rgba(255, 255, 255, 0.03);
-  padding: 6px 12px;
+  padding: 7px 13px;
+  white-space: nowrap;
   border-radius: var(--radius-full);
   border: 1px solid var(--border-subtle);
 }
@@ -757,6 +769,22 @@ h1, h2, h3, h4 {
   box-shadow: 0 0 25px rgba(56, 189, 248, 0.15);
 }
 
+.scan-progress-card-success {
+  border-color: rgba(16, 185, 129, 0.45);
+  box-shadow: 0 0 25px rgba(16, 185, 129, 0.12);
+}
+
+.scan-progress-card-error {
+  border-color: rgba(244, 63, 94, 0.5);
+  background: linear-gradient(135deg, rgba(55, 20, 35, 0.9), rgba(30, 15, 25, 0.85));
+  box-shadow: 0 0 25px rgba(244, 63, 94, 0.14);
+}
+
+.scan-progress-card-stopped {
+  border-color: rgba(245, 158, 11, 0.45);
+  box-shadow: 0 0 25px rgba(245, 158, 11, 0.1);
+}
+
 .scan-progress-header {
   display: flex;
   align-items: center;
@@ -773,6 +801,18 @@ h1, h2, h3, h4 {
   font-size: 0.92rem;
   font-weight: 600;
   color: var(--accent-cyan);
+}
+
+.scan-progress-card-success .scan-status-title {
+  color: var(--accent-emerald);
+}
+
+.scan-progress-card-error .scan-status-title {
+  color: var(--accent-rose);
+}
+
+.scan-progress-card-stopped .scan-status-title {
+  color: var(--accent-amber);
 }
 
 .radar-ping {
@@ -1329,6 +1369,18 @@ h1, h2, h3, h4 {
     padding: 12px 16px;
     flex-wrap: wrap;
     gap: 12px;
+  }
+  .nav-tabs {
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+    justify-content: flex-start;
+  }
+  .nav-tab-btn {
+    flex: 0 0 auto;
+  }
+  .nav-actions {
+    margin-left: auto;
   }
   .search-form {
     grid-template-columns: 1fr;

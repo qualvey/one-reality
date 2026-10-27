@@ -27,7 +27,7 @@ func (irs *IPResolverStage) Execute(ctx *types.PipelineContext) error {
 		ip = ctx.TargetIP
 	} else {
 		// 解析IP地址
-		ip, err = irs.resolveIP(ctx.Domain)
+		ip, err = irs.resolveIP(ctx.Context, ctx.Domain)
 		if err != nil {
 			return fmt.Errorf("IP解析失败: %v", err)
 		}
@@ -49,16 +49,21 @@ func (irs *IPResolverStage) Execute(ctx *types.PipelineContext) error {
 
 // quickConnectivityTest 快速连通性测试
 func (irs *IPResolverStage) quickConnectivityTest(ctx *types.PipelineContext, ip string) bool {
+	parentCtx := context.Background()
+	if ctx != nil && ctx.Context != nil {
+		parentCtx = ctx.Context
+	}
+
 	dialFunc := func(c context.Context, target string) (net.Conn, error) {
 		if ctx != nil && ctx.Config != nil && ctx.Config.Proxy.Scanner && ctx.Config.Proxy.URL != "" {
 			if dc, err := network.MakeDialContext(ctx.Config.Proxy.URL, 2*time.Second); err == nil && dc != nil {
 				return dc(c, "tcp", target)
 			}
 		}
-		return net.DialTimeout("tcp", target, 2*time.Second)
+		return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(c, "tcp", target)
 	}
 
-	bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	bgCtx, cancel := context.WithTimeout(parentCtx, 2*time.Second)
 	defer cancel()
 
 	// 测试HTTPS端口443的连通性
@@ -75,7 +80,7 @@ func (irs *IPResolverStage) quickConnectivityTest(ctx *types.PipelineContext, ip
 }
 
 // resolveIP 解析IP地址
-func (irs *IPResolverStage) resolveIP(domain string) (string, error) {
+func (irs *IPResolverStage) resolveIP(parentCtx context.Context, domain string) (string, error) {
 	// 检查是否已经是IP地址
 	if net.ParseIP(domain) != nil {
 		return domain, nil
@@ -92,8 +97,11 @@ func (irs *IPResolverStage) resolveIP(domain string) (string, error) {
 		},
 	}
 
-	// 解析域名
-	ips, err := resolver.LookupIPAddr(context.Background(), domain)
+	// 解析域名，沿用流水线上下文，避免请求取消后 DNS 仍然阻塞。
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ips, err := resolver.LookupIPAddr(parentCtx, domain)
 	if err != nil {
 		return "", err
 	}

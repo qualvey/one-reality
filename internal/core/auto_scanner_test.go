@@ -45,6 +45,20 @@ func TestAutoScanner_CalculateRemainingIPs(t *testing.T) {
 	}
 }
 
+func TestAutoScanner_CalculateScannedIPs(t *testing.T) {
+	cidrs := []string{"192.168.1.0/24", "10.0.0.0/16"}
+	checkpoints := map[string]*storage.CheckpointRecord{
+		"192.168.1.0/24": {CIDR: "192.168.1.0/24", Completed: true},
+		"10.0.0.0/16":    {CIDR: "10.0.0.0/16", LastIP: "10.0.0.99"},
+	}
+
+	// 已完成的 256 个地址，加上第二个网段中 100 个已扫描地址。
+	got := CalculateScannedIPs(cidrs, checkpoints)
+	if got != 356 {
+		t.Errorf("expected 356 scanned IPs, got %d", got)
+	}
+}
+
 func TestPrioritizeCIDRsByIP(t *testing.T) {
 	cidrs := []string{
 		"10.0.0.0/8",

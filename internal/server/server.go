@@ -20,7 +20,6 @@ import (
 	"RealityChecker/web"
 )
 
-
 // ServerConfig HTTP 服务配置
 type ServerConfig struct {
 	Addr           string        `json:"addr"`
@@ -37,7 +36,9 @@ func DefaultServerConfig() ServerConfig {
 		APIToken:       "",
 		AllowedOrigins: []string{"*"},
 		ReadTimeout:    30 * time.Second,
-		WriteTimeout:   5 * time.Minute, // 支持长耗时流式扫描
+		// SSE 连接可能持续超过任意固定时长。空值表示不设置全局写超时，
+		// 流式接口通过心跳保持代理连接活跃。
+		WriteTimeout: 0,
 	}
 }
 
@@ -53,8 +54,8 @@ func NewTargetServer(cfg ServerConfig, svc *service.ProvisionService) *TargetSer
 	if cfg.Addr == "" {
 		cfg.Addr = ":8881"
 	}
-	if cfg.WriteTimeout <= 0 {
-		cfg.WriteTimeout = 5 * time.Minute
+	if cfg.WriteTimeout < 0 {
+		cfg.WriteTimeout = 0
 	}
 
 	ts := &TargetServer{
@@ -68,6 +69,8 @@ func NewTargetServer(cfg ServerConfig, svc *service.ProvisionService) *TargetSer
 	mux.HandleFunc("/api/filter/default", ts.handleDefaultFilter)
 	mux.HandleFunc("/api/targets/smart", ts.handleTargetsSmart)
 	mux.HandleFunc("/api/targets/stream", ts.handleTargetsStream)
+	mux.HandleFunc("/api/scan/tasks", ts.handleScanTasks)
+	mux.HandleFunc("/api/scan/tasks/", ts.handleScanTask)
 	mux.HandleFunc("/api/targets/check", ts.handleTargetsCheck)
 	mux.HandleFunc("/api/targets", ts.handleTargetsManage)
 	mux.HandleFunc("/api/targets/", ts.handleTargetItemAction)
@@ -183,6 +186,12 @@ func (w *statusLoggingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, err
 		return hijacker.Hijack()
 	}
 	return nil, nil, http.ErrNotSupported
+}
+
+// Unwrap 让 http.ResponseController 能够访问底层连接，例如为 SSE 清除
+// http.Server.WriteTimeout 设置的初始写截止时间。
+func (w *statusLoggingResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }
 
 // getClientIP 提取请求的真实客户端 IP
@@ -544,16 +553,46 @@ func (s *TargetServer) handleTargetItemAction(w http.ResponseWriter, r *http.Req
 	w.Header().Set("Content-Type", "application/json")
 	domain := strings.TrimPrefix(r.URL.Path, "/api/targets/")
 	domain = strings.TrimSpace(domain)
+	starAction := strings.HasSuffix(domain, "/star")
+	if starAction {
+		domain = strings.TrimSpace(strings.TrimSuffix(domain, "/star"))
+	}
 
 	if domain == "" {
 		http.Error(w, `{"code": 400, "error": "Missing domain parameter"}`, http.StatusBadRequest)
 		return
 	}
 
+	if starAction {
+		var starred bool
+		switch r.Method {
+		case http.MethodPost, http.MethodPut:
+			starred = true
+		case http.MethodDelete:
+			starred = false
+		default:
+			http.Error(w, `{"code": 405, "error": "Method Not Allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		if err := s.service.UpdateTargetStarred(domain, starred); err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 404, "error": err.Error()})
+			return
+		}
+		logger.Info("⭐ [API] %s 资产: domain=%s (客户端: %s)", map[bool]string{true: "收藏", false: "取消收藏"}[starred], domain, getClientIP(r))
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":       200,
+			"is_starred": starred,
+			"message":    "Updated successfully",
+		})
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPatch:
 		var payload struct {
-			IsActive bool `json:"is_active"`
+			IsActive  *bool `json:"is_active"`
+			IsStarred *bool `json:"is_starred"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
@@ -561,12 +600,21 @@ func (s *TargetServer) handleTargetItemAction(w http.ResponseWriter, r *http.Req
 			return
 		}
 
-		if err := s.service.UpdateTargetActive(domain, payload.IsActive); err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]any{"code": 500, "error": err.Error()})
-			return
+		if payload.IsActive != nil {
+			if err := s.service.UpdateTargetActive(domain, *payload.IsActive); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": 500, "error": err.Error()})
+				return
+			}
 		}
-		logger.Info("✏️ [API] 变更节点活跃状态: domain=%s, is_active=%v (客户端: %s)", domain, payload.IsActive, getClientIP(r))
+		if payload.IsStarred != nil {
+			if err := s.service.UpdateTargetStarred(domain, *payload.IsStarred); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": 500, "error": err.Error()})
+				return
+			}
+		}
+		logger.Info("✏️ [API] 变更节点状态: domain=%s, is_active=%v, is_starred=%v (客户端: %s)", domain, payload.IsActive, payload.IsStarred, getClientIP(r))
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "Updated successfully"})
 
 	case http.MethodDelete:
@@ -651,21 +699,98 @@ func parseBool(v string) bool {
 	return v == "1" || v == "true" || v == "yes" || v == "on"
 }
 
-// handleTargetsStream 处理 SSE 流式返回
-func (s *TargetServer) handleTargetsStream(w http.ResponseWriter, r *http.Request) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+// handleScanTasks 创建由前端拥有的后台扫描任务。
+func (s *TargetServer) handleScanTasks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"code": 405, "error": "Method Not Allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
 
+	var req service.ProvisionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"code": 400, "error": "Invalid request payload"}`, http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.IP) == "" {
+		http.Error(w, `{"code": 400, "error": "Missing ip"}`, http.StatusBadRequest)
+		return
+	}
+
+	info, err := s.service.StartFrontendScan(req)
+	if err != nil {
+		http.Error(w, `{"code": 500, "error": "Unable to create scan task"}`, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": info})
+}
+
+// handleScanTask 返回或停止由前端创建的后台扫描任务。
+func (s *TargetServer) handleScanTask(w http.ResponseWriter, r *http.Request) {
+	taskID := strings.TrimPrefix(r.URL.Path, "/api/scan/tasks/")
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" || strings.Contains(taskID, "/") {
+		http.Error(w, `{"code": 400, "error": "Invalid scan task id"}`, http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	switch r.Method {
+	case http.MethodGet:
+		info, err := s.service.GetFrontendScanTask(taskID)
+		if err != nil {
+			http.Error(w, `{"code": 404, "error": "Scan task not found"}`, http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": info})
+	case http.MethodDelete:
+		if err := s.service.StopFrontendScan(taskID); err != nil {
+			http.Error(w, `{"code": 404, "error": "Scan task not found"}`, http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "Scan task stop requested",
+			"task_id": taskID,
+		})
+	default:
+		http.Error(w, `{"code": 405, "error": "Method Not Allowed"}`, http.StatusMethodNotAllowed)
+	}
+}
+
+// handleTargetsStream 处理可断线重连的后台 SSE 流式返回。
+// 新请求会创建独立于 HTTP 请求生命周期的 frontend task；带 task_id
+// 的请求只订阅该任务，因此浏览器关闭不会取消服务端扫描。
+func (s *TargetServer) handleTargetsStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		logger.Error("❌ [API] SSE 流式探测不可用：响应写入器不支持 Flush (客户端: %s)", getClientIP(r))
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	// 即使调用方显式配置了全局 WriteTimeout，SSE 也不能沿用这个绝对
+	// 截止时间，否则长扫描会在固定时长后被 net/http 强制断开。
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+
 	req := parseProvisionRequest(r)
-	if req.IP == "" {
+	taskID := strings.TrimSpace(r.URL.Query().Get("task_id"))
+	if taskID == "" && req.IP == "" {
+		logger.Error("❌ [API] SSE 流式探测请求缺少 IP (客户端: %s)", getClientIP(r))
 		http.Error(w, "Missing 'ip' query parameter", http.StatusBadRequest)
 		return
 	}
 
-	logger.Info("📡 [API] SSE 流式探测握手连接: 客户端 %s 查询 IP: %s", getClientIP(r), req.IP)
+	if taskID == "" {
+		info, err := s.service.StartFrontendScan(req)
+		if err != nil {
+			http.Error(w, `{"code": 500, "error": "Unable to create scan task"}`, http.StatusInternalServerError)
+			return
+		}
+		taskID = info.TaskID
+		logger.Info("📡 [API] 创建前端后台扫描任务: task=%s, 客户端=%s, 查询 IP=%s", taskID, getClientIP(r), req.IP)
+	} else {
+		logger.Info("📡 [API] 前端扫描任务重连: task=%s, 客户端=%s", taskID, getClientIP(r))
+	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -675,17 +800,51 @@ func (s *TargetServer) handleTargetsStream(w http.ResponseWriter, r *http.Reques
 	emit := func(evt service.ProvisionEvent) error {
 		dataBytes, err := json.Marshal(evt.Data)
 		if err != nil {
+			logger.Error("❌ [API] SSE 序列化事件失败: event=%s, IP=%s, error=%v", evt.Event, req.IP, err)
 			return err
 		}
 		_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evt.Event, string(dataBytes))
 		if err != nil {
+			logger.Error("❌ [API] SSE 写入事件失败: event=%s, IP=%s, 客户端=%s, error=%v", evt.Event, req.IP, getClientIP(r), err)
 			return err
 		}
 		flusher.Flush()
 		return nil
 	}
 
-	_ = s.service.StreamTargets(r.Context(), req, emit)
+	ch, unsubscribe, err := s.service.SubscribeFrontendScan(taskID)
+	if err != nil {
+		http.Error(w, `{"code": 404, "error": "Scan task not found"}`, http.StatusNotFound)
+		return
+	}
+	defer unsubscribe()
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			// Only detach this SSE subscriber. The task itself owns its context
+			// and intentionally continues running in the background.
+			return
+		case evt, ok := <-ch:
+			if !ok {
+				return
+			}
+			if err := emit(evt); err != nil {
+				logger.Warn("⚠️ [API] SSE 订阅连接中断: task=%s, 客户端=%s, error=%v", taskID, getClientIP(r), err)
+				return
+			}
+		case <-heartbeat.C:
+			// SSE 注释帧不会触发前端事件，但能防止反向代理把空闲
+			// 长连接误判为断开。
+			if _, err := fmt.Fprint(w, ": heartbeat\n\n"); err != nil {
+				logger.Warn("⚠️ [API] SSE 心跳写入失败: task=%s, 客户端=%s, error=%v", taskID, getClientIP(r), err)
+				return
+			}
+			flusher.Flush()
+		}
+	}
 }
 
 // handleTargetsJSON 处理标准单次 JSON 批量返回
@@ -720,6 +879,7 @@ func (s *TargetServer) handleTargetsJSON(w http.ResponseWriter, r *http.Request)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err != nil {
+		logger.Error("❌ [API] 目标扫描 JSON 请求失败: IP=%s, 客户端=%s, error=%v", req.IP, getClientIP(r), err)
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"code":  500,
@@ -738,4 +898,3 @@ func (s *TargetServer) handleTargetsJSON(w http.ResponseWriter, r *http.Request)
 		},
 	})
 }
-

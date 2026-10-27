@@ -125,8 +125,8 @@ func TestServer_TargetsSmart(t *testing.T) {
 	var resp struct {
 		Code int `json:"code"`
 		Data struct {
-			Summary service.TargetSummaryInfo   `json:"summary"`
-			Targets []service.RankedTargetItem  `json:"targets"`
+			Summary service.TargetSummaryInfo  `json:"summary"`
+			Targets []service.RankedTargetItem `json:"targets"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
@@ -174,7 +174,35 @@ func TestServer_TargetsManage(t *testing.T) {
 		t.Fatalf("expected 1 item, got %d", resp.Data.Total)
 	}
 
-	// 2. 更新状态 PATCH
+	// 2. 收藏与取消收藏接口
+	starReq := httptest.NewRequest(http.MethodPost, "/api/targets/target-a.test.com/star", nil)
+	starW := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(starW, starReq)
+	if starW.Code != http.StatusOK {
+		t.Fatalf("expected 200 for star, got %d: %s", starW.Code, starW.Body.String())
+	}
+	starListReq := httptest.NewRequest(http.MethodGet, "/api/targets?page=1&page_size=10", nil)
+	starListW := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(starListW, starListReq)
+	var starredResp struct {
+		Data struct {
+			Items []*types.TargetRecord `json:"items"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(starListW.Body.Bytes(), &starredResp); err != nil {
+		t.Fatalf("failed to parse starred response: %v", err)
+	}
+	if len(starredResp.Data.Items) != 1 || !starredResp.Data.Items[0].IsStarred {
+		t.Fatal("expected target to be starred")
+	}
+	unstarReq := httptest.NewRequest(http.MethodDelete, "/api/targets/target-a.test.com/star", nil)
+	unstarW := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(unstarW, unstarReq)
+	if unstarW.Code != http.StatusOK {
+		t.Fatalf("expected 200 for unstar, got %d: %s", unstarW.Code, unstarW.Body.String())
+	}
+
+	// 3. 更新状态 PATCH
 	patchBody := strings.NewReader(`{"is_active": false}`)
 	patchReq := httptest.NewRequest(http.MethodPatch, "/api/targets/target-a.test.com", patchBody)
 	patchW := httptest.NewRecorder()
@@ -216,10 +244,12 @@ func TestServer_Stats(t *testing.T) {
 	}
 }
 
-
 func TestServer_TargetsStream(t *testing.T) {
 	ts, store := setupTestServer(t)
 	defer store.Close()
+	if ts.httpServer.WriteTimeout != 0 {
+		t.Fatalf("expected SSE server write timeout to be disabled, got %v", ts.httpServer.WriteTimeout)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/targets/stream?ip=1.2.3.4&country=US&limit=1", nil)
 	w := httptest.NewRecorder()
@@ -256,6 +286,62 @@ func TestServer_TargetsStream(t *testing.T) {
 
 	if len(eventTypes) < 3 {
 		t.Fatalf("expected at least 3 events (init, target, done), got %v", eventTypes)
+	}
+}
+
+func TestServer_TargetsStreamReconnectsCompletedTask(t *testing.T) {
+	ts, store := setupTestServer(t)
+	defer store.Close()
+
+	createReq := httptest.NewRequest(http.MethodPost, "/api/scan/tasks", strings.NewReader(`{"ip":"1.2.3.4","limit":1,"min_stars":1}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createW := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(createW, createReq)
+	if createW.Code != http.StatusOK {
+		t.Fatalf("expected task creation to return 200, got %d: %s", createW.Code, createW.Body.String())
+	}
+
+	var createResp struct {
+		Data struct {
+			TaskID string `json:"task_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createW.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("failed to decode task creation response: %v", err)
+	}
+	if createResp.Data.TaskID == "" {
+		t.Fatal("expected task id in creation response")
+	}
+
+	// The test store has a matching cached target, so this background task
+	// completes without entering the network scanner.
+	deadline := time.Now().Add(2 * time.Second)
+	completed := false
+	for time.Now().Before(deadline) {
+		statusReq := httptest.NewRequest(http.MethodGet, "/api/scan/tasks/"+createResp.Data.TaskID, nil)
+		statusW := httptest.NewRecorder()
+		ts.httpServer.Handler.ServeHTTP(statusW, statusReq)
+		if statusW.Code == http.StatusOK && strings.Contains(statusW.Body.String(), `"status":"completed"`) {
+			completed = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !completed {
+		t.Fatal("background task did not complete before timeout")
+	}
+
+	streamReq := httptest.NewRequest(http.MethodGet, "/api/targets/stream?task_id="+createResp.Data.TaskID, nil)
+	streamW := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(streamW, streamReq)
+	if streamW.Code != http.StatusOK {
+		t.Fatalf("expected reconnect stream to return 200, got %d", streamW.Code)
+	}
+	body := streamW.Body.String()
+	for _, event := range []string{"event: task", "event: init", "event: target", "event: done"} {
+		if !strings.Contains(body, event) {
+			t.Errorf("reconnect stream missing %s: %s", event, body)
+		}
 	}
 }
 
@@ -438,5 +524,3 @@ func TestServer_TargetsCheck(t *testing.T) {
 		}
 	}
 }
-
-
