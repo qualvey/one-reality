@@ -73,6 +73,7 @@ func (s *TargetStore) initSchema() error {
 		is_default_page INTEGER NOT NULL DEFAULT 0,
 		default_page_type TEXT,
 		stars INTEGER NOT NULL DEFAULT 0,
+		is_starred INTEGER NOT NULL DEFAULT 0,
 		is_active INTEGER NOT NULL DEFAULT 1,
 		check_fail_count INTEGER NOT NULL DEFAULT 0,
 		first_seen_at DATETIME,
@@ -120,9 +121,15 @@ func (s *TargetStore) initSchema() error {
 	if !targetCols["tags"] {
 		_, _ = s.db.Exec("ALTER TABLE reality_targets ADD COLUMN tags TEXT NOT NULL DEFAULT ''")
 	}
+	if !targetCols["is_starred"] {
+		_, _ = s.db.Exec("ALTER TABLE reality_targets ADD COLUMN is_starred INTEGER NOT NULL DEFAULT 0")
+	}
 
 	// 创建依赖新列的索引
 	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_targets_stars_active ON reality_targets (stars DESC, is_active)"); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_targets_starred_active ON reality_targets (is_starred DESC, stars DESC, is_active)"); err != nil {
 		return err
 	}
 
@@ -233,8 +240,8 @@ func (s *TargetStore) UpsertTargets(records []*types.TargetRecord) error {
 		INSERT INTO reality_targets (
 			domain, asn, country, ip, port, handshake_ms, cert_days, cert_expire_at, tags, status_code,
 			page_title, is_cdn, is_hot, is_default_page, default_page_type,
-			stars, is_active, check_fail_count, first_seen_at, last_checked_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			stars, is_starred, is_active, check_fail_count, first_seen_at, last_checked_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(domain) DO UPDATE SET
 			asn = excluded.asn,
 			country = excluded.country,
@@ -251,6 +258,7 @@ func (s *TargetStore) UpsertTargets(records []*types.TargetRecord) error {
 			is_default_page = excluded.is_default_page,
 			default_page_type = excluded.default_page_type,
 			stars = excluded.stars,
+			is_starred = reality_targets.is_starred,
 			is_active = excluded.is_active,
 			check_fail_count = excluded.check_fail_count,
 			last_checked_at = excluded.last_checked_at
@@ -321,6 +329,7 @@ func (s *TargetStore) UpsertTargets(records []*types.TargetRecord) error {
 			isDefault,
 			rec.DefaultPageType,
 			rec.Stars,
+			boolToInt(rec.IsStarred),
 			isActive,
 			rec.CheckFailCount,
 			firstSeen,
@@ -334,9 +343,16 @@ func (s *TargetStore) UpsertTargets(records []*types.TargetRecord) error {
 	return tx.Commit()
 }
 
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
 func scanTargetRecord(scanner interface{ Scan(dest ...any) error }) (*types.TargetRecord, error) {
 	var rec types.TargetRecord
-	var port, isCDN, isHot, isDefault, isActive, checkFailCount int
+	var port, isCDN, isHot, isDefault, isStarred, isActive, checkFailCount int
 	var pageTitle, defaultPageType, tagsStr sql.NullString
 	var firstSeenAt, certExpireAt sql.NullTime
 
@@ -357,6 +373,7 @@ func scanTargetRecord(scanner interface{ Scan(dest ...any) error }) (*types.Targ
 		&isDefault,
 		&defaultPageType,
 		&rec.Stars,
+		&isStarred,
 		&isActive,
 		&checkFailCount,
 		&firstSeenAt,
@@ -373,6 +390,7 @@ func scanTargetRecord(scanner interface{ Scan(dest ...any) error }) (*types.Targ
 	rec.IsCDN = (isCDN == 1)
 	rec.IsHot = (isHot == 1)
 	rec.IsDefaultPage = (isDefault == 1)
+	rec.IsStarred = (isStarred == 1)
 	rec.IsActive = (isActive == 1)
 	rec.CheckFailCount = checkFailCount
 	if firstSeenAt.Valid {
@@ -419,7 +437,7 @@ func (s *TargetStore) GetTargetsByASN(asn, country string, maxAge time.Duration)
 	query := `
 		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, cert_expire_at, tags, status_code,
 		       page_title, is_cdn, is_hot, is_default_page, default_page_type,
-		       stars, is_active, check_fail_count, first_seen_at, last_checked_at
+		       stars, is_starred, is_active, check_fail_count, first_seen_at, last_checked_at
 		FROM reality_targets
 		WHERE (asn = ? OR asn = ?) AND is_active = 1
 	`
@@ -436,7 +454,7 @@ func (s *TargetStore) GetTargetsByASN(asn, country string, maxAge time.Duration)
 		args = append(args, minTime)
 	}
 
-	query += " ORDER BY stars DESC, handshake_ms ASC"
+	query += " ORDER BY is_starred DESC, stars DESC, handshake_ms ASC"
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -464,9 +482,9 @@ func (s *TargetStore) GetAllTargets() ([]*types.TargetRecord, error) {
 	query := `
 		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, cert_expire_at, tags, status_code,
 		       page_title, is_cdn, is_hot, is_default_page, default_page_type,
-		       stars, is_active, check_fail_count, first_seen_at, last_checked_at
+		       stars, is_starred, is_active, check_fail_count, first_seen_at, last_checked_at
 		FROM reality_targets
-		ORDER BY stars DESC, handshake_ms ASC
+		ORDER BY is_starred DESC, stars DESC, handshake_ms ASC
 	`
 	rows, err := s.db.Query(query)
 	if err != nil {
@@ -548,6 +566,7 @@ func DetectionResultToRecord(res *types.DetectionResult, asn, country, ip string
 		IP:            ip,
 		Port:          443,
 		Stars:         stars,
+		IsStarred:     res.IsStarred,
 		IsActive:      true,
 		FirstSeenAt:   now,
 		LastCheckedAt: now,
@@ -589,6 +608,7 @@ func RecordToDetectionResult(rec *types.TargetRecord) *types.DetectionResult {
 
 	res := &types.DetectionResult{
 		Domain:   rec.Domain,
+		IsStarred: rec.IsStarred,
 		Suitable: true,
 		Network: &types.NetworkResult{
 			Accessible:      true,
@@ -1081,10 +1101,10 @@ func (s *TargetStore) GetTargetsForPatrol(minStars int, olderThan time.Duration,
 	query := `
 		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, cert_expire_at, tags, status_code,
 		       page_title, is_cdn, is_hot, is_default_page, default_page_type,
-		       stars, is_active, check_fail_count, first_seen_at, last_checked_at
+		       stars, is_starred, is_active, check_fail_count, first_seen_at, last_checked_at
 		FROM reality_targets
 		WHERE is_active = 1 AND stars >= ? AND last_checked_at <= ?
-		ORDER BY stars DESC, last_checked_at ASC
+		ORDER BY is_starred DESC, stars DESC, last_checked_at ASC
 	`
 	var args []any
 	args = append(args, minStars, cutoff)
@@ -1232,14 +1252,14 @@ func (s *TargetStore) QueryTargets(opts types.TargetQueryOptions) ([]*types.Targ
 	}
 
 	// 2. 排序方式
-	orderSQL := "ORDER BY stars DESC, handshake_ms ASC"
+	orderSQL := "ORDER BY is_starred DESC, stars DESC, handshake_ms ASC"
 	switch opts.SortBy {
 	case "handshake_asc":
-		orderSQL = "ORDER BY handshake_ms ASC, stars DESC"
+		orderSQL = "ORDER BY is_starred DESC, handshake_ms ASC, stars DESC"
 	case "recent_desc":
-		orderSQL = "ORDER BY last_checked_at DESC"
+		orderSQL = "ORDER BY is_starred DESC, last_checked_at DESC"
 	case "stars_desc":
-		orderSQL = "ORDER BY stars DESC, handshake_ms ASC"
+		orderSQL = "ORDER BY is_starred DESC, stars DESC, handshake_ms ASC"
 	}
 
 	// 3. 分页
@@ -1256,7 +1276,7 @@ func (s *TargetStore) QueryTargets(opts types.TargetQueryOptions) ([]*types.Targ
 	dataQuery := fmt.Sprintf(`
 		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, cert_expire_at, tags, status_code,
 		       page_title, is_cdn, is_hot, is_default_page, default_page_type,
-		       stars, is_active, check_fail_count, first_seen_at, last_checked_at
+		       stars, is_starred, is_active, check_fail_count, first_seen_at, last_checked_at
 		FROM reality_targets
 		WHERE %s
 		%s
@@ -1294,6 +1314,42 @@ func (s *TargetStore) UpdateTargetActive(domain string, active bool) error {
 
 	_, err := s.db.Exec("UPDATE reality_targets SET is_active = ? WHERE domain = ?", activeInt, strings.ToLower(strings.TrimSpace(domain)))
 	return err
+}
+
+// UpdateTargetStarred 更新资产的用户收藏状态
+func (s *TargetStore) UpdateTargetStarred(domain string, starred bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := s.db.Exec(
+		"UPDATE reality_targets SET is_starred = ? WHERE domain = ?",
+		boolToInt(starred), strings.ToLower(strings.TrimSpace(domain)),
+	)
+	if err != nil {
+		return err
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return err
+	} else if affected == 0 {
+		return fmt.Errorf("资产不存在: %s", domain)
+	}
+	return nil
+}
+
+// GetTargetStarred 获取资产的用户收藏状态
+func (s *TargetStore) GetTargetStarred(domain string) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var starred int
+	err := s.db.QueryRow(
+		"SELECT is_starred FROM reality_targets WHERE domain = ?",
+		strings.ToLower(strings.TrimSpace(domain)),
+	).Scan(&starred)
+	if err != nil {
+		return false, err
+	}
+	return starred == 1, nil
 }
 
 // DeleteTarget 物理删除单条资产
@@ -1378,7 +1434,3 @@ func (s *TargetStore) UpdateTargetCertRenewal(domain string, certExpireAt time.T
 	`, expireVal, certDays, tagsStr, handshakeMS, handshakeMS, now, strings.ToLower(strings.TrimSpace(domain)))
 	return err
 }
-
-
-
-

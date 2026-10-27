@@ -82,6 +82,44 @@ func TestTargetStore_UpsertAndQueryByASN(t *testing.T) {
 	}
 }
 
+func TestTargetStore_StarredTargetsArePrioritizedAndPersisted(t *testing.T) {
+	store, err := NewTargetStore(filepath.Join(t.TempDir(), "targets.db"))
+	if err != nil {
+		t.Fatalf("failed to create TargetStore: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.UpsertTargets([]*types.TargetRecord{
+		{Domain: "ordinary.test", IP: "1.1.1.1", Stars: 5, HandshakeMS: 1, LastCheckedAt: time.Now()},
+		{Domain: "favorite.test", IP: "1.1.1.2", Stars: 1, HandshakeMS: 500, LastCheckedAt: time.Now()},
+	}); err != nil {
+		t.Fatalf("failed to insert targets: %v", err)
+	}
+	if err := store.UpdateTargetStarred("favorite.test", true); err != nil {
+		t.Fatalf("failed to star target: %v", err)
+	}
+
+	results, total, err := store.QueryTargets(types.TargetQueryOptions{Page: 1, PageSize: 10, SortBy: "stars_desc"})
+	if err != nil {
+		t.Fatalf("QueryTargets failed: %v", err)
+	}
+	if total != 2 || len(results) != 2 {
+		t.Fatalf("expected 2 targets, got total=%d len=%d", total, len(results))
+	}
+	if results[0].Domain != "favorite.test" || !results[0].IsStarred {
+		t.Fatalf("expected starred target first, got %+v", results[0])
+	}
+
+	// 自动重新探测/upsert 不能覆盖用户收藏状态。
+	if err := store.UpsertTarget(&types.TargetRecord{Domain: "favorite.test", IP: "1.1.1.2", Stars: 5, LastCheckedAt: time.Now()}); err != nil {
+		t.Fatalf("failed to re-upsert target: %v", err)
+	}
+	starred, err := store.GetTargetStarred("favorite.test")
+	if err != nil || !starred {
+		t.Fatalf("expected starred state to persist, starred=%v err=%v", starred, err)
+	}
+}
+
 func TestTargetStore_ExportAndImport(t *testing.T) {
 	tempDir := t.TempDir()
 	dbPath1 := filepath.Join(tempDir, "db1.db")
@@ -279,7 +317,6 @@ func TestTargetStore_ASNRegistry(t *testing.T) {
 		t.Errorf("expected priority 0 CDN to remain completed after ResetAllASNsStatus, got %s", cfAfterReset.ScanStatus)
 	}
 }
-
 
 func TestTargetStore_PatrolAndLifecycle(t *testing.T) {
 	tempDir := t.TempDir()
@@ -653,6 +690,3 @@ func TestQueryTargets_FilterConditions(t *testing.T) {
 
 	_ = boolFalse
 }
-
-
-

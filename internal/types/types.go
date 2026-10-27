@@ -19,6 +19,7 @@ type DetectionResult struct {
 	HardRequirementsMet bool          `json:"hard_requirements_met"`
 	EarlyExit           bool          `json:"early_exit"`                     // 是否早期退出
 	StatusCodeCategory  string        `json:"status_code_category,omitempty"` // 状态码分类
+	IsStarred           bool          `json:"is_starred"`                     // 用户收藏标记
 
 	// 检测结果
 	Network     *NetworkResult     `json:"network,omitempty"`
@@ -391,6 +392,7 @@ type TargetRecord struct {
 	IsDefaultPage   bool      `json:"is_default_page"`
 	DefaultPageType string    `json:"default_page_type,omitempty"`
 	Stars           int       `json:"stars"`
+	IsStarred       bool      `json:"is_starred"` // 用户收藏标记
 	IsActive        bool      `json:"is_active"`
 	CheckFailCount  int       `json:"check_fail_count"`
 	FirstSeenAt     time.Time `json:"first_seen_at"`
@@ -703,4 +705,3 @@ type TargetStats struct {
 	CountryCounts   map[string]int `json:"country_counts"`
 	StarCounts      map[int]int    `json:"star_counts"`
 }
-

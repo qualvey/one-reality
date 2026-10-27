@@ -177,6 +177,7 @@ export const TargetDetailModal = ({ target, onClose, onOpenConfig, onRecheck }: 
               )}
 
               <span className="star-rating">{'★'.repeat(target.stars)}</span>
+              {target.is_starred && <span className="badge badge-warning">已收藏</span>}
 
               {score !== undefined && (
                 <span className="badge badge-info" style={{ fontFamily: 'var(--font-mono)' }}>

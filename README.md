@@ -35,7 +35,7 @@
   - **存量健康巡检与自愈 (Patrol & Auto-Purge)**：后台自动化资产巡检体系，周期性淘汰失效域名，支持全量合规资产导出与导入。
 
 - **多形态接入服务体系**：
-  - **RESTful API & SSE 流式长连接**：提供 `/api/targets/smart`、`/api/targets/stream`、`/api/targets/check` 标准接口，完美契合中间件与控制面板集成；
+  - **RESTful API & SSE 流式长连接**：提供 `/api/targets/smart`、`/api/targets/stream`、`/api/targets/check` 标准接口，并支持通过 `POST/DELETE /api/targets/{domain}/star` 收藏或取消收藏目标；收藏结果会优先展示；
   - **嵌入式可视化控制台 (Web UI)**：基于 React + TypeScript 构建，支持单二进制内嵌分发（`go:embed`），可视化管理资产、ASN 队列与即时测算；
   - **高并发 CLI & 管道流式处理**：原生支持 `reality-checker pipe` 管道批量验证与 `Ctrl+C` 平滑中断输出。
 ---

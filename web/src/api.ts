@@ -67,3 +67,15 @@ export async function recheckTarget(domain: string, ip: string): Promise<TargetR
 
   return data.data as TargetRecord;
 }
+
+/** 设置或取消目标收藏。收藏目标会在服务端结果中优先展示。 */
+export async function setTargetStarred(domain: string, starred: boolean): Promise<boolean> {
+  const res = await apiFetch(`/api/targets/${encodeURIComponent(domain)}/star`, {
+    method: starred ? 'POST' : 'DELETE',
+  });
+  const data = await res.json();
+  if (!res.ok || data.code !== 200) {
+    throw new Error(data.error || '更新收藏状态失败');
+  }
+  return Boolean(data.is_starred);
+}

@@ -23,6 +23,8 @@ type Store interface {
 	Export(exportPath string) error
 	Import(importPath string) (int, error)
 	GetStats() (*types.TargetStats, error)
+	GetTargetStarred(domain string) (bool, error)
+	UpdateTargetStarred(domain string, starred bool) error
 
 	// 2. 扫描网段断点续传
 	GetCheckpoints(taskKey string) (map[string]*CheckpointRecord, error)

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { TargetRecord, TargetItem } from '../types';
-import { apiFetch } from '../api';
+import { apiFetch, setTargetStarred } from '../api';
 import { ConfigModal } from './ConfigModal';
 import { QuickCheckModal } from './QuickCheckModal';
 import {
@@ -15,6 +15,7 @@ import {
   Filter,
   ChevronLeft,
   ChevronRight,
+  Star,
 } from 'lucide-react';
 
 export const TargetTable = () => {
@@ -167,6 +168,15 @@ export const TargetTable = () => {
       }
     } catch (err) {
       console.error('Failed to delete target:', err);
+    }
+  };
+
+  const toggleStarred = async (target: TargetRecord) => {
+    try {
+      await setTargetStarred(target.domain, !target.is_starred);
+      await fetchTargets();
+    } catch (err) {
+      console.error('Failed to update starred state:', err);
     }
   };
 
@@ -455,6 +465,14 @@ export const TargetTable = () => {
                     <span style={{ fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{row.domain}</span>
                     <button
                       className="btn-icon"
+                      style={{ padding: '2px 5px', color: row.is_starred ? 'var(--accent-amber)' : undefined }}
+                      title={row.is_starred ? '取消收藏' : '收藏'}
+                      onClick={() => toggleStarred(row)}
+                    >
+                      <Star size={14} fill={row.is_starred ? 'currentColor' : 'none'} />
+                    </button>
+                    <button
+                      className="btn-icon"
                       style={{ padding: '2px 5px', fontSize: '0.7rem' }}
                       title="复制域名"
                       onClick={() => copyDomain(row.domain)}
@@ -561,7 +579,7 @@ export const TargetTable = () => {
                     <div style={{ color: 'var(--accent-amber)', display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
                       <span>⚠️ 鉴权失败：服务端已开启 API Token 保护 (HTTP 401)</span>
                       <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                        请在顶栏或「智能同ASN推荐」页面设置并保存正确的 API Token
+                         请在顶栏或「智能推荐」页面设置并保存正确的 API Token
                       </span>
                     </div>
                   ) : (
