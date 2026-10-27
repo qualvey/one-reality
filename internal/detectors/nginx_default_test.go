@@ -1,6 +1,7 @@
 package detectors
 
 import (
+	"net/http"
 	"testing"
 )
 
@@ -52,6 +53,50 @@ func TestDetectNginxDefaultPage_TunnelPlaceholder(t *testing.T) {
 	}
 	if res.PageType != "tunnel/dummy" && res.PageType != "dummy" {
 		t.Fatalf("expected PageType dummy/tunnel, got %q", res.PageType)
+	}
+}
+
+func TestDetectNginxDefaultPage_BT5HostingPanel(t *testing.T) {
+	html := `<!doctype html>
+<html><body>
+<h1>站点已创建成功！</h1>
+<p>这是默认index.html，本页面由系统自动生成</p>
+<p>本页面在FTP根目录下的index.html</p>
+<p>您可以修改、删除或覆盖本页面</p>
+<p>FTP相关信息，请到“面板系统后台 &gt; FTP”查看</p>
+<footer>Powered by BT5-Linux免费面板</footer>
+</body></html>`
+
+	res := DetectNginxDefaultPage(http.StatusOK, map[string]string{
+		"Content-Type": "text/html; charset=utf-8",
+	}, []byte(html))
+	if !res.IsDefaultPage {
+		t.Fatalf("expected BT5 hosting panel placeholder to be detected, got: %+v", res)
+	}
+	if res.PageType != "hosting-panel" {
+		t.Fatalf("expected PageType 'hosting-panel', got %q", res.PageType)
+	}
+}
+
+func TestDetectNginxDefaultPage_HostingPanelTextSplitByMarkup(t *testing.T) {
+	body := `<h1>站点已创建<span>成功</span></h1>
+<p>这是默认 index.html，本页面由系统自动生成</p>
+<p>本页面在 FTP 根目录下的 index.html</p>`
+
+	res := DetectNginxDefaultPage(http.StatusOK, nil, []byte(body))
+	if !res.IsDefaultPage {
+		t.Fatalf("expected split hosting panel placeholder to be detected, got: %+v", res)
+	}
+}
+
+func TestDetectNginxDefaultPage_NormalSiteWithPanelWords(t *testing.T) {
+	body := `<html><head><title>Developer docs</title></head><body>
+<p>Upload your index.html file through FTP to the root directory.</p>
+</body></html>`
+
+	res := DetectNginxDefaultPage(http.StatusOK, nil, []byte(body))
+	if res.IsDefaultPage {
+		t.Fatalf("normal site mentioning FTP and index.html should not be detected, got: %+v", res)
 	}
 }
 

@@ -2,12 +2,15 @@ package detectors
 
 import (
 	"bytes"
+	"html"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 var (
-	titleRegex = regexp.MustCompile(`(?i)<title[^>]*>(.*?)</title>`)
+	titleRegex   = regexp.MustCompile(`(?i)<title[^>]*>(.*?)</title>`)
+	pageTagRegex = regexp.MustCompile(`(?is)<[^>]+>`)
 )
 
 // NginxDefaultCheckResult Nginx/默认页/占位回显页检测结果
@@ -57,6 +60,7 @@ func DetectNginxDefaultPage(statusCode int, headers map[string]string, body []by
 	titleLower := strings.ToLower(result.Title)
 	bodyLower := strings.ToLower(string(trimmedBody))
 	serverLower := strings.ToLower(result.ServerHeader)
+	pageText := normalizePageText(trimmedBody)
 
 	// 1. Tunnel / 代理占位 / Mock 服务特征匹配 (如 "hewwo from tuwunel woof!", "boringproxy", "default backend")
 	if strings.Contains(bodyLower, "tuwunel") ||
@@ -72,7 +76,18 @@ func DetectNginxDefaultPage(statusCode int, headers map[string]string, body []by
 		return result
 	}
 
-	// 2. 极短无任何 HTML 结构的纯文本回显/占位测试服务 (如 "ok", "hello world", "test", 20-100字节的纯文本字符串)
+	// 2. 面板自动建站占位页 (BT5/BT.cn 及兼容模板)
+	// 这类页面通常返回 200，不能仅依赖状态码或 Server Header 判断。
+	// 使用“建站成功 + 默认 index/FTP/自动生成”等组合特征，避免误杀正常网站中
+	// 单独出现的“FTP”或“index.html”文本。
+	if isHostingPanelPlaceholder(pageText) {
+		result.IsDefaultPage = true
+		result.PageType = "hosting-panel"
+		result.Reason = "识别为面板自动建站占位页 (BT5/FTP 默认页)"
+		return result
+	}
+
+	// 3. 极短无任何 HTML 结构的纯文本回显/占位测试服务 (如 "ok", "hello world", "test", 20-100字节的纯文本字符串)
 	if len(trimmedBody) < 150 {
 		hasHTMLStructure := strings.Contains(bodyLower, "<html") ||
 			strings.Contains(bodyLower, "<head") ||
@@ -92,7 +107,7 @@ func DetectNginxDefaultPage(statusCode int, headers map[string]string, body []by
 		}
 	}
 
-	// 3. 明确的 Nginx / OpenResty 欢迎页与安装页特征
+	// 4. 明确的 Nginx / OpenResty 欢迎页与安装页特征
 	if strings.Contains(titleLower, "welcome to nginx") {
 		result.IsDefaultPage = true
 		result.PageType = "nginx"
@@ -116,7 +131,7 @@ func DetectNginxDefaultPage(statusCode int, headers map[string]string, body []by
 		return result
 	}
 
-	// 4. Linux 发行版定制的 Nginx 默认测试页 (Debian / Ubuntu / CentOS / Fedora / RHEL)
+	// 5. Linux 发行版定制的 Nginx 默认测试页 (Debian / Ubuntu / CentOS / Fedora / RHEL)
 	if strings.Contains(titleLower, "test page for the nginx http server") ||
 		strings.Contains(titleLower, "welcome to nginx on debian") ||
 		strings.Contains(titleLower, "welcome to centos") && strings.Contains(bodyLower, "nginx") ||
@@ -129,7 +144,7 @@ func DetectNginxDefaultPage(statusCode int, headers map[string]string, body []by
 		return result
 	}
 
-	// 5. Apache / Caddy / Traefik / IIS 默认页特征
+	// 6. Apache / Caddy / Traefik / IIS 默认页特征
 	if strings.Contains(titleLower, "apache2 default page") ||
 		strings.Contains(titleLower, "apache2 debian default page") ||
 		strings.Contains(titleLower, "apache2 ubuntu default page") ||
@@ -160,7 +175,7 @@ func DetectNginxDefaultPage(statusCode int, headers map[string]string, body []by
 		return result
 	}
 
-	// 6. Nginx 默认居中错误页模版特征 (如 <center>nginx</center> 或 <center>nginx/1.24.0</center>)
+	// 7. Nginx 默认居中错误页模版特征 (如 <center>nginx</center> 或 <center>nginx/1.24.0</center>)
 	if isNginxErrorTemplate(bodyLower) {
 		result.IsDefaultPage = true
 		result.PageType = "nginx"
@@ -172,7 +187,7 @@ func DetectNginxDefaultPage(statusCode int, headers map[string]string, body []by
 		return result
 	}
 
-	// 7. 当 Server 为 Nginx/OpenResty 且响应体极短且包含典型默认签名时
+	// 8. 当 Server 为 Nginx/OpenResty 且响应体极短且包含典型默认签名时
 	if (strings.Contains(serverLower, "nginx") || strings.Contains(serverLower, "openresty") || strings.Contains(serverLower, "tengine")) &&
 		len(trimmedBody) < 1024 {
 		if strings.Contains(bodyLower, "<center>") && (strings.Contains(bodyLower, "nginx") || strings.Contains(bodyLower, "openresty")) {
@@ -184,6 +199,45 @@ func DetectNginxDefaultPage(statusCode int, headers map[string]string, body []by
 	}
 
 	return result
+}
+
+// normalizePageText 将 HTML 响应转换为适合特征匹配的紧凑文本。
+// 去除标签和空白后，可以识别被 HTML 标签、换行或实体拆开的面板模板文案。
+func normalizePageText(body []byte) string {
+	text := html.UnescapeString(string(body))
+	text = pageTagRegex.ReplaceAllString(text, " ")
+	text = strings.ToLower(text)
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, text)
+}
+
+// isHostingPanelPlaceholder 检测常见主机面板生成的“站点已创建成功”占位页。
+// 规则要求至少命中一个建站语义和一个模板语义；BT5 标识本身也可直接判定。
+func isHostingPanelPlaceholder(pageText string) bool {
+	if strings.Contains(pageText, "bt5-linux免费面板") ||
+		strings.Contains(pageText, "bt5linux免费面板") ||
+		strings.Contains(pageText, "bt5-linuxfreepanel") {
+		return true
+	}
+
+	created := strings.Contains(pageText, "站点已创建成功") ||
+		strings.Contains(pageText, "网站已创建成功") ||
+		strings.Contains(pageText, "websitecreatedsuccessfully") ||
+		strings.Contains(pageText, "sitecreatedsuccessfully")
+	if !created {
+		return false
+	}
+
+	return strings.Contains(pageText, "默认index.html") ||
+		strings.Contains(pageText, "defaultindex.html") ||
+		strings.Contains(pageText, "系统自动生成") ||
+		strings.Contains(pageText, "ftp根目录") ||
+		strings.Contains(pageText, "ftprootdirectory") ||
+		strings.Contains(pageText, "panel系统后台")
 }
 
 // isNginxErrorTemplate 检测是否为 Nginx 标准居中签名的默认 HTML 错误模板
