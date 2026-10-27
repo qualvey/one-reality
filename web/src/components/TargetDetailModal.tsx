@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import type { RankedTargetItem, TargetItem } from '../types';
+import type { RankedTargetItem, TargetItem, TargetRecord } from '../types';
+import { recheckTarget } from '../api';
 import { formatCertExpireDate } from '../format';
 import {
   X,
@@ -16,16 +17,21 @@ import {
   FileText,
   AlertTriangle,
   CheckCircle2,
+  RefreshCw,
 } from 'lucide-react';
 
 interface TargetDetailModalProps {
   target: RankedTargetItem | TargetItem | null;
   onClose: () => void;
   onOpenConfig?: (target: TargetItem) => void;
+  onRecheck?: (target: TargetRecord) => void;
 }
 
-export const TargetDetailModal = ({ target, onClose, onOpenConfig }: TargetDetailModalProps) => {
+export const TargetDetailModal = ({ target, onClose, onOpenConfig, onRecheck }: TargetDetailModalProps) => {
   const [copied, setCopied] = useState(false);
+  const [rechecking, setRechecking] = useState(false);
+  const [recheckError, setRecheckError] = useState('');
+  const [recheckSuccess, setRecheckSuccess] = useState(false);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -47,6 +53,23 @@ export const TargetDetailModal = ({ target, onClose, onOpenConfig }: TargetDetai
 
   const openDomainUrl = (domain: string) => {
     window.open(`https://${domain}`, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleRecheck = async () => {
+    if (!target || !onRecheck || rechecking) return;
+
+    setRechecking(true);
+    setRecheckError('');
+    setRecheckSuccess(false);
+    try {
+      const updated = await recheckTarget(target.domain, target.ip);
+      onRecheck(updated);
+      setRecheckSuccess(true);
+    } catch (err) {
+      setRecheckError(err instanceof Error ? err.message : '目标复检失败');
+    } finally {
+      setRechecking(false);
+    }
   };
 
   const isRanked = 'match_level' in target;
@@ -300,7 +323,7 @@ export const TargetDetailModal = ({ target, onClose, onOpenConfig }: TargetDetai
 
         {/* Footer 操作按钮 */}
         <div className="modal-footer" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px' }}>
-          <div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-start' }}>
             <button
               type="button"
               className="btn btn-secondary"
@@ -310,9 +333,23 @@ export const TargetDetailModal = ({ target, onClose, onOpenConfig }: TargetDetai
               <ExternalLink size={14} style={{ color: 'var(--accent-cyan)' }} />
               <span>在新标签打开网页</span>
             </button>
+            {recheckError && <span style={{ color: 'var(--accent-rose)', fontSize: '0.78rem' }}>{recheckError}</span>}
+            {recheckSuccess && <span style={{ color: 'var(--accent-emerald)', fontSize: '0.78rem' }}>✓ 复检完成，数据已更新</span>}
           </div>
 
           <div style={{ display: 'flex', gap: '10px' }}>
+            {onRecheck && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                onClick={handleRecheck}
+                disabled={rechecking}
+              >
+                <RefreshCw size={14} className={rechecking ? 'animate-spin' : ''} />
+                <span>{rechecking ? '复检中...' : '复检'}</span>
+              </button>
+            )}
             {onOpenConfig && (
               <button
                 type="button"

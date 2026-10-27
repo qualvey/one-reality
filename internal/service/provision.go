@@ -234,6 +234,7 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 		}
 		matchedCIDRs = append(matchedCIDRs, prefix.String())
 	}
+	matchedCIDRs = core.PrioritizeCIDRsByIP(matchedCIDRs, targetIP)
 
 	var cachedTargets []*types.TargetRecord
 	if !req.Fresh && s.store != nil {
@@ -568,6 +569,7 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 		}
 		matchedCIDRs = append(matchedCIDRs, prefix.String())
 	}
+	matchedCIDRs = core.PrioritizeCIDRsByIP(matchedCIDRs, targetIP)
 	cidrCount = len(matchedCIDRs)
 	if cidrCount > 0 {
 		totalIPs = core.CalculateTotalIPs(matchedCIDRs)

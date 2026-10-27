@@ -45,6 +45,31 @@ func TestAutoScanner_CalculateRemainingIPs(t *testing.T) {
 	}
 }
 
+func TestPrioritizeCIDRsByIP(t *testing.T) {
+	cidrs := []string{
+		"10.0.0.0/8",
+		"192.0.0.0/8",
+		"192.0.2.0/24",
+		"2001:db8::/32",
+	}
+
+	got := PrioritizeCIDRsByIP(cidrs, "192.0.2.10")
+	want := []string{
+		"192.0.0.0/8",
+		"192.0.2.0/24",
+		"10.0.0.0/8",
+		"2001:db8::/32",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d CIDRs, got %d", len(want), len(got))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("CIDR %d: expected %s, got %s", i, want[i], got[i])
+		}
+	}
+}
+
 func TestAutoScanner_InitialResultsLoaded(t *testing.T) {
 	initial := []*types.DetectionResult{
 		{Domain: "example.com", Suitable: true},
@@ -107,4 +132,3 @@ func TestAutoScanner_CandidateRejectedEvent(t *testing.T) {
 		t.Errorf("expected non-empty rejection reason")
 	}
 }
-

@@ -5,6 +5,7 @@ import type {
   TargetItem,
   SmartFilterOptions,
   ScanProgressInfo,
+  TargetRecord,
 } from '../types';
 import { apiFetch, getApiToken, setApiToken as saveApiToken } from '../api';
 import { ConfigModal } from './ConfigModal';
@@ -417,6 +418,45 @@ export const SmartFinder = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // 详情弹窗复检完成后，将服务端最新记录同步回当前结果池与弹窗
+  const handleTargetRecheck = (updated: TargetRecord) => {
+    const mergeUpdatedTarget = (current: RankedTargetItem): RankedTargetItem => {
+      let score = current.score;
+      if ('match_level' in current) {
+        score = current.match_level === 'same_asn' ? 1000 : current.match_level === 'same_country' ? 250 : 50;
+        score += updated.stars * 30;
+        if (updated.handshake_ms > 0) {
+          score -= Math.min(150, Math.floor(updated.handshake_ms / 3));
+        }
+        if (updated.cert_days >= 30) score += 20;
+        if (updated.tags?.includes('cert_renew_delayed')) score -= 100;
+        if (updated.status_code < 200 || updated.status_code >= 400) score -= 50;
+      }
+
+      return {
+        ...current,
+        asn: updated.asn || current.asn,
+        country: updated.country || current.country,
+        ip: updated.ip || current.ip,
+        stars: updated.stars,
+        handshake_ms: updated.handshake_ms,
+        cert_days: updated.cert_days,
+        cert_expire_at: updated.cert_expire_at,
+        tags: updated.tags,
+        status_code: updated.status_code,
+        page_title: updated.page_title,
+        is_cdn: updated.is_cdn,
+        is_default_page: updated.is_default_page,
+        default_page_type: updated.default_page_type,
+        created_at: updated.last_checked_at || current.created_at,
+        score,
+      };
+    };
+
+    setRawTargets((prev) => prev.map((item) => (item.domain === updated.domain ? mergeUpdatedTarget(item) : item)));
+    setSelectedDetailTarget((current) => (current && current.domain === updated.domain ? mergeUpdatedTarget(current) : current));
   };
 
   // 启动实时扫描：实时同步扫描进度，有新的符合过滤器的结果立即返回与渲染
@@ -2111,9 +2151,11 @@ export const SmartFinder = () => {
 
       {/* 目标资产详细信息弹窗 */}
       <TargetDetailModal
+        key={selectedDetailTarget?.domain || 'target-detail-empty'}
         target={selectedDetailTarget}
         onClose={() => setSelectedDetailTarget(null)}
         onOpenConfig={(target) => setSelectedTarget(target)}
+        onRecheck={handleTargetRecheck}
       />
 
       {/* 导出配置弹窗 */}

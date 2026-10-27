@@ -372,6 +372,7 @@ func resolveAutoInput(ctx context.Context, targetInput string, inFile string, co
 			filtered = append(filtered, prefix.String())
 		}
 	}
+	filtered = core.PrioritizeCIDRsByIP(filtered, targetInput)
 	if len(filtered) == 0 {
 		return nil, asnStr, targetCountry, fmt.Errorf("AS%d 没有与入口 IP 同国家（%s）且符合 IP 协议族限制的宣布网段", asnNumber, targetCountry)
 	}

@@ -9,10 +9,10 @@ interface ConfigModalProps {
 }
 
 export const ConfigModal = ({ target, serverIP, onClose }: ConfigModalProps) => {
-  if (!target) return null;
-
   const [format, setFormat] = useState<'singbox' | 'xray' | 'clash'>('singbox');
   const [copied, setCopied] = useState(false);
+
+  if (!target) return null;
 
   // 辅助随机生成测试用的 UUID 和 8位 short_id
   const randomUUID = '12345678-1234-4321-abcd-123456789abc';

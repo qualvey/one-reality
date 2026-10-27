@@ -1,3 +1,5 @@
+import type { TargetRecord } from './types';
+
 export const TOKEN_STORAGE_KEY = 'rc_api_token';
 
 /**
@@ -46,4 +48,22 @@ export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {})
     ...init,
     headers,
   });
+}
+
+/**
+ * 在线复检单个目标，并返回服务端持久化后的最新资产记录。
+ */
+export async function recheckTarget(domain: string, ip: string): Promise<TargetRecord> {
+  const res = await apiFetch('/api/targets/check', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ domain, ip }),
+  });
+
+  const data = await res.json();
+  if (!res.ok || data.code !== 200 || !data.data) {
+    throw new Error(data.error || '目标复检失败');
+  }
+
+  return data.data as TargetRecord;
 }
