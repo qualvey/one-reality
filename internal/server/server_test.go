@@ -181,6 +181,27 @@ func TestServer_TargetsManage(t *testing.T) {
 	if starW.Code != http.StatusOK {
 		t.Fatalf("expected 200 for star, got %d: %s", starW.Code, starW.Body.String())
 	}
+	dislikeReq := httptest.NewRequest(http.MethodPost, "/api/targets/target-a.test.com/dislike", nil)
+	dislikeW := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(dislikeW, dislikeReq)
+	if dislikeW.Code != http.StatusOK {
+		t.Fatalf("expected 200 for dislike, got %d: %s", dislikeW.Code, dislikeW.Body.String())
+	}
+	var dislikedResp struct {
+		IsDisliked bool `json:"is_disliked"`
+	}
+	if err := json.Unmarshal(dislikeW.Body.Bytes(), &dislikedResp); err != nil {
+		t.Fatalf("failed to parse dislike response: %v", err)
+	}
+	if !dislikedResp.IsDisliked {
+		t.Fatal("expected target to be disliked")
+	}
+	unlikeReq := httptest.NewRequest(http.MethodDelete, "/api/targets/target-a.test.com/dislike", nil)
+	unlikeW := httptest.NewRecorder()
+	ts.httpServer.Handler.ServeHTTP(unlikeW, unlikeReq)
+	if unlikeW.Code != http.StatusOK {
+		t.Fatalf("expected 200 for undislike, got %d", unlikeW.Code)
+	}
 	starListReq := httptest.NewRequest(http.MethodGet, "/api/targets?page=1&page_size=10", nil)
 	starListW := httptest.NewRecorder()
 	ts.httpServer.Handler.ServeHTTP(starListW, starListReq)

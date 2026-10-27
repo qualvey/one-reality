@@ -554,8 +554,12 @@ func (s *TargetServer) handleTargetItemAction(w http.ResponseWriter, r *http.Req
 	domain := strings.TrimPrefix(r.URL.Path, "/api/targets/")
 	domain = strings.TrimSpace(domain)
 	starAction := strings.HasSuffix(domain, "/star")
+	dislikeAction := strings.HasSuffix(domain, "/dislike")
 	if starAction {
 		domain = strings.TrimSpace(strings.TrimSuffix(domain, "/star"))
+	}
+	if dislikeAction {
+		domain = strings.TrimSpace(strings.TrimSuffix(domain, "/dislike"))
 	}
 
 	if domain == "" {
@@ -588,11 +592,37 @@ func (s *TargetServer) handleTargetItemAction(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	if dislikeAction {
+		var disliked bool
+		switch r.Method {
+		case http.MethodPost, http.MethodPut:
+			disliked = true
+		case http.MethodDelete:
+			disliked = false
+		default:
+			http.Error(w, `{"code": 405, "error": "Method Not Allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		if err := s.service.UpdateTargetDisliked(domain, disliked); err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 404, "error": err.Error()})
+			return
+		}
+		logger.Info("👎 [API] %s 资产: domain=%s (客户端: %s)", map[bool]string{true: "标记差评", false: "取消差评"}[disliked], domain, getClientIP(r))
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":        200,
+			"is_disliked": disliked,
+			"message":     "Updated successfully",
+		})
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPatch:
 		var payload struct {
-			IsActive  *bool `json:"is_active"`
-			IsStarred *bool `json:"is_starred"`
+			IsActive   *bool `json:"is_active"`
+			IsStarred  *bool `json:"is_starred"`
+			IsDisliked *bool `json:"is_disliked"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
@@ -614,7 +644,14 @@ func (s *TargetServer) handleTargetItemAction(w http.ResponseWriter, r *http.Req
 				return
 			}
 		}
-		logger.Info("✏️ [API] 变更节点状态: domain=%s, is_active=%v, is_starred=%v (客户端: %s)", domain, payload.IsActive, payload.IsStarred, getClientIP(r))
+		if payload.IsDisliked != nil {
+			if err := s.service.UpdateTargetDisliked(domain, *payload.IsDisliked); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": 500, "error": err.Error()})
+				return
+			}
+		}
+		logger.Info("✏️ [API] 变更节点状态: domain=%s, is_active=%v, is_starred=%v, is_disliked=%v (客户端: %s)", domain, payload.IsActive, payload.IsStarred, payload.IsDisliked, getClientIP(r))
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "Updated successfully"})
 
 	case http.MethodDelete:

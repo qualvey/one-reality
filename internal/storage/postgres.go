@@ -137,6 +137,7 @@ func (s *PostgresStore) initSchema(ctx context.Context) error {
 		default_page_type VARCHAR(64),
 		stars SMALLINT NOT NULL DEFAULT 0,
 		is_starred BOOLEAN NOT NULL DEFAULT FALSE,
+		is_disliked BOOLEAN NOT NULL DEFAULT FALSE,
 		is_active BOOLEAN NOT NULL DEFAULT TRUE,
 		check_fail_count INTEGER NOT NULL DEFAULT 0,
 		first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -194,6 +195,7 @@ func (s *PostgresStore) initSchema(ctx context.Context) error {
 		ALTER TABLE reality_targets ADD COLUMN IF NOT EXISTS cert_expire_at TIMESTAMPTZ;
 		ALTER TABLE reality_targets ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '';
 		ALTER TABLE reality_targets ADD COLUMN IF NOT EXISTS is_starred BOOLEAN NOT NULL DEFAULT FALSE;
+		ALTER TABLE reality_targets ADD COLUMN IF NOT EXISTS is_disliked BOOLEAN NOT NULL DEFAULT FALSE;
 		-- 旧版本将国家字段限制为 VARCHAR(8)，但检测回退值可能是完整国家名。
 		ALTER TABLE reality_targets ALTER COLUMN country TYPE TEXT;
 		ALTER TABLE asn_registry ALTER COLUMN country TYPE TEXT;
@@ -201,6 +203,9 @@ func (s *PostgresStore) initSchema(ctx context.Context) error {
 		return err
 	}
 	if _, err := s.pool.Exec(ctx, "CREATE INDEX IF NOT EXISTS idx_targets_starred_active ON reality_targets (is_starred DESC, stars DESC, is_active)"); err != nil {
+		return err
+	}
+	if _, err := s.pool.Exec(ctx, "CREATE INDEX IF NOT EXISTS idx_targets_disliked_priority ON reality_targets (is_disliked ASC, is_starred DESC, stars DESC, is_active)"); err != nil {
 		return err
 	}
 	return nil
@@ -232,8 +237,8 @@ func (s *PostgresStore) UpsertTargets(records []*types.TargetRecord) error {
 		INSERT INTO reality_targets (
 			domain, asn, country, ip, port, handshake_ms, cert_days, cert_expire_at, tags, status_code,
 			page_title, is_cdn, is_hot, is_default_page, default_page_type,
-			stars, is_starred, is_active, check_fail_count, first_seen_at, last_checked_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+			stars, is_starred, is_disliked, is_active, check_fail_count, first_seen_at, last_checked_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
 		ON CONFLICT (domain) DO UPDATE SET
 			asn = EXCLUDED.asn,
 			country = EXCLUDED.country,
@@ -251,6 +256,7 @@ func (s *PostgresStore) UpsertTargets(records []*types.TargetRecord) error {
 			default_page_type = EXCLUDED.default_page_type,
 			stars = EXCLUDED.stars,
 			is_starred = reality_targets.is_starred,
+			is_disliked = reality_targets.is_disliked,
 			is_active = EXCLUDED.is_active,
 			check_fail_count = EXCLUDED.check_fail_count,
 			last_checked_at = EXCLUDED.last_checked_at
@@ -311,6 +317,7 @@ func (s *PostgresStore) UpsertTargets(records []*types.TargetRecord) error {
 			sanitizeUTF8(rec.DefaultPageType),
 			rec.Stars,
 			rec.IsStarred,
+			rec.IsDisliked,
 			isActive,
 			rec.CheckFailCount,
 			firstSeen,
@@ -340,6 +347,7 @@ func scanPostgresTargetRecord(row pgx.Row) (*types.TargetRecord, error) {
 	var pageTitle, defaultPageType, tagsStr *string
 	var firstSeenAt, lastCheckedAt time.Time
 	var certExpireAt *time.Time
+	var isDisliked bool
 
 	err := row.Scan(
 		&rec.Domain,
@@ -359,6 +367,7 @@ func scanPostgresTargetRecord(row pgx.Row) (*types.TargetRecord, error) {
 		&defaultPageType,
 		&rec.Stars,
 		&rec.IsStarred,
+		&isDisliked,
 		&rec.IsActive,
 		&rec.CheckFailCount,
 		&firstSeenAt,
@@ -391,6 +400,7 @@ func scanPostgresTargetRecord(row pgx.Row) (*types.TargetRecord, error) {
 	}
 	rec.FirstSeenAt = firstSeenAt
 	rec.LastCheckedAt = lastCheckedAt
+	rec.IsDisliked = isDisliked
 
 	return &rec, nil
 }
@@ -412,7 +422,7 @@ func (s *PostgresStore) GetTargetsByASN(asn, country string, maxAge time.Duratio
 	query := `
 		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, cert_expire_at, tags, status_code,
 		       page_title, is_cdn, is_hot, is_default_page, default_page_type,
-		       stars, is_starred, is_active, check_fail_count, first_seen_at, last_checked_at
+		       stars, is_starred, is_disliked, is_active, check_fail_count, first_seen_at, last_checked_at
 		FROM reality_targets
 		WHERE (asn = $1 OR asn = $2)
 	`
@@ -434,7 +444,7 @@ func (s *PostgresStore) GetTargetsByASN(asn, country string, maxAge time.Duratio
 		argIdx++
 	}
 
-	query += " ORDER BY is_starred DESC, stars DESC, handshake_ms ASC"
+	query += " ORDER BY is_disliked ASC, is_starred DESC, stars DESC, handshake_ms ASC"
 
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -462,9 +472,9 @@ func (s *PostgresStore) GetAllTargets() ([]*types.TargetRecord, error) {
 	query := `
 		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, cert_expire_at, tags, status_code,
 		       page_title, is_cdn, is_hot, is_default_page, default_page_type,
-		       stars, is_starred, is_active, check_fail_count, first_seen_at, last_checked_at
+		       stars, is_starred, is_disliked, is_active, check_fail_count, first_seen_at, last_checked_at
 		FROM reality_targets
-		ORDER BY is_starred DESC, stars DESC, handshake_ms ASC
+		ORDER BY is_disliked ASC, is_starred DESC, stars DESC, handshake_ms ASC
 	`
 	rows, err := s.pool.Query(ctx, query)
 	if err != nil {
@@ -590,14 +600,14 @@ func (s *PostgresStore) QueryTargets(opts types.TargetQueryOptions) ([]*types.Ta
 		return nil, 0, err
 	}
 
-	orderSQL := "ORDER BY is_starred DESC, stars DESC, handshake_ms ASC"
+	orderSQL := "ORDER BY is_disliked ASC, is_starred DESC, stars DESC, handshake_ms ASC"
 	switch opts.SortBy {
 	case "handshake_asc":
-		orderSQL = "ORDER BY is_starred DESC, handshake_ms ASC, stars DESC"
+		orderSQL = "ORDER BY is_disliked ASC, is_starred DESC, handshake_ms ASC, stars DESC"
 	case "recent_desc":
-		orderSQL = "ORDER BY is_starred DESC, last_checked_at DESC"
+		orderSQL = "ORDER BY is_disliked ASC, is_starred DESC, last_checked_at DESC"
 	case "stars_desc":
-		orderSQL = "ORDER BY is_starred DESC, stars DESC, handshake_ms ASC"
+		orderSQL = "ORDER BY is_disliked ASC, is_starred DESC, stars DESC, handshake_ms ASC"
 	}
 
 	limit := opts.PageSize
@@ -613,7 +623,7 @@ func (s *PostgresStore) QueryTargets(opts types.TargetQueryOptions) ([]*types.Ta
 	dataQuery := fmt.Sprintf(`
 		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, cert_expire_at, tags, status_code,
 		       page_title, is_cdn, is_hot, is_default_page, default_page_type,
-		       stars, is_starred, is_active, check_fail_count, first_seen_at, last_checked_at
+		       stars, is_starred, is_disliked, is_active, check_fail_count, first_seen_at, last_checked_at
 		FROM reality_targets
 		WHERE %s
 		%s
@@ -686,6 +696,40 @@ func (s *PostgresStore) GetTargetStarred(domain string) (bool, error) {
 		return false, err
 	}
 	return starred, nil
+}
+
+// UpdateTargetDisliked 更新资产的用户差评状态
+func (s *PostgresStore) UpdateTargetDisliked(domain string, disliked bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd, err := s.pool.Exec(ctx,
+		"UPDATE reality_targets SET is_disliked = $1 WHERE domain = $2",
+		disliked, strings.ToLower(strings.TrimSpace(domain)),
+	)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("资产不存在: %s", domain)
+	}
+	return nil
+}
+
+// GetTargetDisliked 获取资产的用户差评状态
+func (s *PostgresStore) GetTargetDisliked(domain string) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var disliked bool
+	err := s.pool.QueryRow(ctx,
+		"SELECT is_disliked FROM reality_targets WHERE domain = $1",
+		strings.ToLower(strings.TrimSpace(domain)),
+	).Scan(&disliked)
+	if err != nil {
+		return false, err
+	}
+	return disliked, nil
 }
 
 // DeleteTarget 从数据库中永久删除指定资产
@@ -1240,10 +1284,10 @@ func (s *PostgresStore) GetTargetsForPatrol(minStars int, olderThan time.Duratio
 	query := `
 		SELECT domain, asn, country, ip, port, handshake_ms, cert_days, cert_expire_at, tags, status_code,
 		       page_title, is_cdn, is_hot, is_default_page, default_page_type,
-		       stars, is_starred, is_active, check_fail_count, first_seen_at, last_checked_at
+		       stars, is_starred, is_disliked, is_active, check_fail_count, first_seen_at, last_checked_at
 		FROM reality_targets
 		WHERE is_active = TRUE AND stars >= $1 AND last_checked_at <= $2
-		ORDER BY is_starred DESC, last_checked_at ASC
+		ORDER BY is_disliked ASC, is_starred DESC, last_checked_at ASC
 		LIMIT $3
 	`
 	rows, err := s.pool.Query(ctx, query, minStars, cutoff, limit)

@@ -19,6 +19,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   RefreshCw,
+  ThumbsDown,
 } from 'lucide-react';
 
 interface TargetDetailModalProps {
@@ -26,9 +27,10 @@ interface TargetDetailModalProps {
   onClose: () => void;
   onOpenConfig?: (target: TargetItem) => void;
   onRecheck?: (target: TargetRecord) => void;
+  onToggleDisliked?: (target: TargetItem) => void;
 }
 
-export const TargetDetailModal = ({ target, onClose, onOpenConfig, onRecheck }: TargetDetailModalProps) => {
+export const TargetDetailModal = ({ target, onClose, onOpenConfig, onRecheck, onToggleDisliked }: TargetDetailModalProps) => {
   const [copied, setCopied] = useState(false);
   const [rechecking, setRechecking] = useState(false);
   const [recheckError, setRecheckError] = useState('');
@@ -180,6 +182,7 @@ export const TargetDetailModal = ({ target, onClose, onOpenConfig, onRecheck }: 
 
               <span className="star-rating">{'★'.repeat(target.stars)}</span>
               {target.is_starred && <span className="badge badge-warning">已收藏</span>}
+              {target.is_disliked && <span className="badge badge-danger">差评：展示靠后</span>}
 
               {score !== undefined && (
                 <span className="badge badge-info" style={{ fontFamily: 'var(--font-mono)' }}>
@@ -299,7 +302,7 @@ export const TargetDetailModal = ({ target, onClose, onOpenConfig, onRecheck }: 
             <span className="spec-value">
               {target.status_code > 0 ? (
                 <span style={{ color: target.status_code < 400 ? 'var(--accent-emerald)' : 'var(--accent-amber)' }}>
-                  {target.status_code} OK
+                  HTTP {target.status_code}
                 </span>
               ) : (
                 '443 直通'
@@ -341,6 +344,17 @@ export const TargetDetailModal = ({ target, onClose, onOpenConfig, onRecheck }: 
           </div>
 
           <div style={{ display: 'flex', gap: '10px' }}>
+            {onToggleDisliked && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', color: target.is_disliked ? 'var(--accent-rose)' : undefined }}
+                onClick={() => onToggleDisliked(target)}
+              >
+                <ThumbsDown size={14} fill={target.is_disliked ? 'currentColor' : 'none'} />
+                <span>{target.is_disliked ? '取消差评' : '标记差评'}</span>
+              </button>
+            )}
             {onRecheck && (
               <button
                 type="button"

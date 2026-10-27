@@ -25,6 +25,8 @@ type Store interface {
 	GetStats() (*types.TargetStats, error)
 	GetTargetStarred(domain string) (bool, error)
 	UpdateTargetStarred(domain string, starred bool) error
+	GetTargetDisliked(domain string) (bool, error)
+	UpdateTargetDisliked(domain string, disliked bool) error
 
 	// 2. 扫描网段断点续传
 	GetCheckpoints(taskKey string) (map[string]*CheckpointRecord, error)

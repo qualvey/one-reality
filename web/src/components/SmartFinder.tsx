@@ -7,7 +7,7 @@ import type {
   ScanProgressInfo,
   TargetRecord,
 } from '../types';
-import { apiFetch, getApiToken, setApiToken as saveApiToken, setTargetStarred } from '../api';
+import { apiFetch, getApiToken, setApiToken as saveApiToken, setTargetStarred, setTargetDisliked } from '../api';
 import { ConfigModal } from './ConfigModal';
 import { TargetDetailModal } from './TargetDetailModal';
 import { formatCertExpireDate } from '../format';
@@ -44,6 +44,7 @@ import {
   ExternalLink,
   Info,
   Star,
+  ThumbsDown,
 } from 'lucide-react';
 
 const DEFAULT_FILTER: SmartFilterOptions = {
@@ -252,7 +253,7 @@ export const SmartFinder = () => {
     if (f.matchScope === 'same_asn' && !isSameASN) return false;
     if (f.matchScope === 'same_country' && !isSameASN && !isSameCountry) return false;
 
-    // 8. HTTP 状态码校验 (仅 200 OK 或 443 直出)
+    // 8. HTTP 状态码校验 (允许 2xx/3xx 或 443 直出)
     if (f.statusFilter === 'success_only') {
       if (item.status_code >= 400 || (item.status_code < 200 && item.status_code !== 0)) return false;
     }
@@ -504,6 +505,7 @@ export const SmartFinder = () => {
         is_cdn: updated.is_cdn,
         is_default_page: updated.is_default_page,
         is_starred: updated.is_starred,
+        is_disliked: updated.is_disliked,
         default_page_type: updated.default_page_type,
         created_at: updated.last_checked_at || current.created_at,
         score,
@@ -521,11 +523,32 @@ export const SmartFinder = () => {
       const reorder = (items: RankedTargetItem[]) =>
         items
           .map((item) => (item.domain === target.domain ? { ...item, is_starred: starred } : item))
-          .sort((a, b) => (a.is_starred === b.is_starred ? b.score - a.score : a.is_starred ? -1 : 1));
+          .sort((a, b) => {
+            if (a.is_disliked !== b.is_disliked) return a.is_disliked ? 1 : -1;
+            return a.is_starred === b.is_starred ? b.score - a.score : a.is_starred ? -1 : 1;
+          });
       setRawTargets(reorder);
       setSelectedDetailTarget((current) => (current && current.domain === target.domain ? { ...current, is_starred: starred } : current));
     } catch (err) {
       setError(err instanceof Error ? err.message : '更新收藏状态失败');
+    }
+  };
+
+  const toggleTargetDisliked = async (target: RankedTargetItem, event?: React.MouseEvent) => {
+    event?.stopPropagation();
+    try {
+      const disliked = await setTargetDisliked(target.domain, !target.is_disliked);
+      const reorder = (items: RankedTargetItem[]) =>
+        items
+          .map((item) => (item.domain === target.domain ? { ...item, is_disliked: disliked } : item))
+          .sort((a, b) => {
+            if (a.is_disliked !== b.is_disliked) return a.is_disliked ? 1 : -1;
+            return a.is_starred === b.is_starred ? b.score - a.score : a.is_starred ? -1 : 1;
+          });
+      setRawTargets(reorder);
+      setSelectedDetailTarget((current) => (current && current.domain === target.domain ? { ...current, is_disliked: disliked } : current));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '更新差评状态失败');
     }
   };
 
@@ -712,6 +735,7 @@ export const SmartFinder = () => {
           const exists = prev.some((p) => p.domain === item.domain);
           if (exists) return prev;
           return [...prev, ranked].sort((a, b) =>
+            a.is_disliked !== b.is_disliked ? (a.is_disliked ? 1 : -1) :
             a.is_starred === b.is_starred ? b.score - a.score : a.is_starred ? -1 : 1
           );
         });
@@ -1308,7 +1332,7 @@ export const SmartFinder = () => {
                     onChange={(e) => setFilter((f) => ({ ...f, statusFilter: e.target.value as any }))}
                   >
                     <option value="all">全部 (包含 443 协议直通)</option>
-                    <option value="success_only">仅 200 OK / 正常直通 (排除 4xx/5xx)</option>
+                    <option value="success_only">2xx/3xx 正常响应 / 443 直通 (排除 4xx/5xx)</option>
                   </select>
                 </div>
 
@@ -1977,6 +2001,16 @@ export const SmartFinder = () => {
                         >
                           <Star size={15} fill={target.is_starred ? 'currentColor' : 'none'} />
                         </button>
+                        <button
+                          type="button"
+                          className="btn-icon"
+                          style={{ padding: '2px 5px', color: target.is_disliked ? 'var(--accent-rose)' : undefined }}
+                          onClick={(e) => toggleTargetDisliked(target, e)}
+                          title={target.is_disliked ? '取消差评' : '标记为劣质目标'}
+                        >
+                          <ThumbsDown size={15} fill={target.is_disliked ? 'currentColor' : 'none'} />
+                        </button>
+                        {target.is_disliked && <span className="badge badge-danger">差评</span>}
                       </div>
 
                       <div
@@ -2043,7 +2077,7 @@ export const SmartFinder = () => {
                       <span className="spec-value">
                         {target.status_code > 0 ? (
                           <span style={{ color: target.status_code < 400 ? 'var(--accent-emerald)' : 'var(--accent-amber)' }}>
-                            {target.status_code} OK
+                            HTTP {target.status_code}
                           </span>
                         ) : (
                           '443 直出'
@@ -2212,6 +2246,15 @@ export const SmartFinder = () => {
                           >
                             <Star size={13} fill={target.is_starred ? 'currentColor' : 'none'} />
                           </button>
+                          <button
+                            type="button"
+                            className="btn-icon"
+                            style={{ padding: '1px 4px', color: target.is_disliked ? 'var(--accent-rose)' : undefined }}
+                            onClick={(e) => toggleTargetDisliked(target, e)}
+                            title={target.is_disliked ? '取消差评' : '标记为劣质目标'}
+                          >
+                            <ThumbsDown size={13} fill={target.is_disliked ? 'currentColor' : 'none'} />
+                          </button>
                         </div>
 
                         {target.page_title && (
@@ -2283,7 +2326,7 @@ export const SmartFinder = () => {
                               fontSize: '0.72rem',
                             }}
                           >
-                            {target.status_code} OK
+                            HTTP {target.status_code}
                           </span>
                         ) : (
                           <span className="badge badge-global" style={{ fontSize: '0.72rem' }}>443 直通</span>
@@ -2471,6 +2514,7 @@ export const SmartFinder = () => {
         onClose={() => setSelectedDetailTarget(null)}
         onOpenConfig={(target) => setSelectedTarget(target)}
         onRecheck={handleTargetRecheck}
+        onToggleDisliked={(target) => toggleTargetDisliked(target as RankedTargetItem)}
       />
 
       {/* 导出配置弹窗 */}

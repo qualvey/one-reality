@@ -79,3 +79,15 @@ export async function setTargetStarred(domain: string, starred: boolean): Promis
   }
   return Boolean(data.is_starred);
 }
+
+/** 设置或取消目标差评。差评目标在服务端结果中排到最后。 */
+export async function setTargetDisliked(domain: string, disliked: boolean): Promise<boolean> {
+  const res = await apiFetch(`/api/targets/${encodeURIComponent(domain)}/dislike`, {
+    method: disliked ? 'POST' : 'DELETE',
+  });
+  const data = await res.json();
+  if (!res.ok || data.code !== 200) {
+    throw new Error(data.error || '更新差评状态失败');
+  }
+  return Boolean(data.is_disliked);
+}

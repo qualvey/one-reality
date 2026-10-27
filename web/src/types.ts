@@ -17,6 +17,7 @@ export interface TargetItem {
   is_default_page: boolean;
   default_page_type?: string;
   is_starred: boolean;
+  is_disliked: boolean;
   created_at: string;
 }
 
@@ -89,6 +90,7 @@ export interface TargetRecord {
   default_page_type?: string;
   stars: number;
   is_starred: boolean;
+  is_disliked: boolean;
   is_active: boolean;
   check_fail_count: number;
   first_seen_at: string;

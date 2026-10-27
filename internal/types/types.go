@@ -393,6 +393,7 @@ type TargetRecord struct {
 	DefaultPageType string    `json:"default_page_type,omitempty"`
 	Stars           int       `json:"stars"`
 	IsStarred       bool      `json:"is_starred"` // 用户收藏标记
+	IsDisliked      bool      `json:"is_disliked"` // 用户差评标记
 	IsActive        bool      `json:"is_active"`
 	CheckFailCount  int       `json:"check_fail_count"`
 	FirstSeenAt     time.Time `json:"first_seen_at"`

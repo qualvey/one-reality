@@ -58,6 +58,7 @@ type TargetItem struct {
 	IsDefaultPage   bool       `json:"is_default_page"`
 	DefaultPageType string     `json:"default_page_type,omitempty"`
 	IsStarred       bool       `json:"is_starred"`
+	IsDisliked      bool       `json:"is_disliked"`
 	CreatedAt       time.Time  `json:"created_at"`
 }
 
@@ -365,6 +366,7 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 				IsDefaultPage:   rec.IsDefaultPage,
 				DefaultPageType: rec.DefaultPageType,
 				IsStarred:       rec.IsStarred,
+				IsDisliked:      rec.IsDisliked,
 				CreatedAt:       rec.LastCheckedAt,
 			}
 
@@ -476,6 +478,9 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 				if starred, err := s.store.GetTargetStarred(rec.Domain); err == nil {
 					rec.IsStarred = starred
 				}
+				if disliked, err := s.store.GetTargetDisliked(rec.Domain); err == nil {
+					rec.IsDisliked = disliked
+				}
 			}
 			var certExpirePtr *time.Time
 			if !rec.CertExpireAt.IsZero() {
@@ -499,6 +504,7 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 				IsDefaultPage:   rec.IsDefaultPage,
 				DefaultPageType: rec.DefaultPageType,
 				IsStarred:       rec.IsStarred,
+				IsDisliked:      rec.IsDisliked,
 				CreatedAt:       rec.LastCheckedAt,
 			}
 
@@ -797,6 +803,7 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 			IsDefaultPage:   rec.IsDefaultPage,
 			DefaultPageType: rec.DefaultPageType,
 			IsStarred:       rec.IsStarred,
+			IsDisliked:      rec.IsDisliked,
 			CreatedAt:       rec.LastCheckedAt,
 		}
 
@@ -854,6 +861,9 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 
 	// 4. 高效 O(N log N) 排序
 	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].IsDisliked != ranked[j].IsDisliked {
+			return !ranked[i].IsDisliked
+		}
 		if ranked[i].IsStarred != ranked[j].IsStarred {
 			return ranked[i].IsStarred
 		}
@@ -920,6 +930,9 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 
 	if recheckedAny {
 		sort.Slice(ranked, func(i, j int) bool {
+			if ranked[i].IsDisliked != ranked[j].IsDisliked {
+				return !ranked[i].IsDisliked
+			}
 			if ranked[i].IsStarred != ranked[j].IsStarred {
 				return ranked[i].IsStarred
 			}
@@ -1101,6 +1114,9 @@ func (s *ProvisionService) CheckSingleDomain(ctx context.Context, domain, manual
 		if starred, err := s.store.GetTargetStarred(rec.Domain); err == nil {
 			rec.IsStarred = starred
 		}
+		if disliked, err := s.store.GetTargetDisliked(rec.Domain); err == nil {
+			rec.IsDisliked = disliked
+		}
 		if err := s.store.UpsertTarget(rec); err != nil {
 			return nil, fmt.Errorf("failed to save target to database: %w", err)
 		}
@@ -1131,6 +1147,14 @@ func (s *ProvisionService) UpdateTargetStarred(domain string, starred bool) erro
 		return errors.New("store not available")
 	}
 	return s.store.UpdateTargetStarred(domain, starred)
+}
+
+// UpdateTargetDisliked 更新资产的用户差评状态。
+func (s *ProvisionService) UpdateTargetDisliked(domain string, disliked bool) error {
+	if s.store == nil {
+		return errors.New("store not available")
+	}
+	return s.store.UpdateTargetDisliked(domain, disliked)
 }
 
 // DeleteTarget 物理删除资产代理

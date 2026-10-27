@@ -120,6 +120,40 @@ func TestTargetStore_StarredTargetsArePrioritizedAndPersisted(t *testing.T) {
 	}
 }
 
+func TestTargetStore_DislikedTargetsArePrioritizedLastAndPersisted(t *testing.T) {
+	store, err := NewTargetStore(filepath.Join(t.TempDir(), "targets.db"))
+	if err != nil {
+		t.Fatalf("failed to create TargetStore: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.UpsertTargets([]*types.TargetRecord{
+		{Domain: "good.test", IP: "1.1.1.1", Stars: 1, LastCheckedAt: time.Now()},
+		{Domain: "bad.test", IP: "1.1.1.2", Stars: 5, LastCheckedAt: time.Now()},
+	}); err != nil {
+		t.Fatalf("failed to insert targets: %v", err)
+	}
+	if err := store.UpdateTargetDisliked("bad.test", true); err != nil {
+		t.Fatalf("failed to mark target disliked: %v", err)
+	}
+
+	results, _, err := store.QueryTargets(types.TargetQueryOptions{Page: 1, PageSize: 10, SortBy: "stars_desc"})
+	if err != nil {
+		t.Fatalf("QueryTargets failed: %v", err)
+	}
+	if len(results) != 2 || results[0].Domain != "good.test" || !results[1].IsDisliked {
+		t.Fatalf("expected disliked target last, got %+v", results)
+	}
+
+	if err := store.UpsertTarget(&types.TargetRecord{Domain: "bad.test", IP: "1.1.1.2", Stars: 5, LastCheckedAt: time.Now()}); err != nil {
+		t.Fatalf("failed to re-upsert target: %v", err)
+	}
+	disliked, err := store.GetTargetDisliked("bad.test")
+	if err != nil || !disliked {
+		t.Fatalf("expected disliked state to persist, disliked=%v err=%v", disliked, err)
+	}
+}
+
 func TestTargetStore_ExportAndImport(t *testing.T) {
 	tempDir := t.TempDir()
 	dbPath1 := filepath.Join(tempDir, "db1.db")

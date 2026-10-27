@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { TargetRecord, TargetItem } from '../types';
-import { apiFetch, setTargetStarred } from '../api';
+import { apiFetch, setTargetStarred, setTargetDisliked } from '../api';
 import { copyText } from '../utils/clipboard';
 import { ConfigModal } from './ConfigModal';
 import { QuickCheckModal } from './QuickCheckModal';
@@ -17,6 +17,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Star,
+  ThumbsDown,
 } from 'lucide-react';
 
 export const TargetTable = () => {
@@ -178,6 +179,15 @@ export const TargetTable = () => {
       await fetchTargets();
     } catch (err) {
       console.error('Failed to update starred state:', err);
+    }
+  };
+
+  const toggleDisliked = async (target: TargetRecord) => {
+    try {
+      await setTargetDisliked(target.domain, !target.is_disliked);
+      await fetchTargets();
+    } catch (err) {
+      console.error('Failed to update disliked state:', err);
     }
   };
 
@@ -472,6 +482,14 @@ export const TargetTable = () => {
                       onClick={() => toggleStarred(row)}
                     >
                       <Star size={14} fill={row.is_starred ? 'currentColor' : 'none'} />
+                    </button>
+                    <button
+                      className="btn-icon"
+                      style={{ padding: '2px 5px', color: row.is_disliked ? 'var(--accent-rose)' : undefined }}
+                      title={row.is_disliked ? '取消差评' : '标记为劣质目标'}
+                      onClick={() => toggleDisliked(row)}
+                    >
+                      <ThumbsDown size={14} fill={row.is_disliked ? 'currentColor' : 'none'} />
                     </button>
                     <button
                       className="btn-icon"

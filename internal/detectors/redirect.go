@@ -110,6 +110,9 @@ func (rs *RedirectStage) followRedirects(ctx context.Context, client *http.Clien
 		URL:           httpsScheme + domain,
 	}
 
+	// REALITY 目标检测从 HTTPS 开始。状态码应记录首个 HTTPS 响应；
+	// 例如 https://example.com 返回 301 并跳转到最终页面 200 时，
+	// 域名状态码仍应是 301，而不是被后续响应覆盖成 200。
 	currentURL := httpsScheme + domain
 
 	for i := 0; i < maxRedirects; i++ {
@@ -135,7 +138,11 @@ func (rs *RedirectStage) followRedirects(ctx context.Context, client *http.Clien
 		}
 
 		result.Accessible = true
-		result.StatusCode = resp.StatusCode
+		if result.StatusCode == 0 {
+			// 只记录首跳状态码。比如 http -> https 的 301 后续通常是
+			// 200，但不能因此把域名的 HTTP 状态误标成 200。
+			result.StatusCode = resp.StatusCode
+		}
 		result.URL = currentURL
 
 		// 保存HTTP响应头
@@ -170,8 +177,14 @@ func (rs *RedirectStage) followRedirects(ctx context.Context, client *http.Clien
 				parsedLocation, err := url.Parse(location)
 				if err == nil {
 					newDomain := parsedLocation.Hostname()
-					if newDomain != domain && newDomain != "" {
-						result.RedirectChain = append(result.RedirectChain, newDomain)
+					parsedCurrent, _ := url.Parse(currentURL)
+					currentDomain := parsedCurrent.Hostname()
+					// 同域名的 http -> https 也是一次真实重定向，不能因
+					// hostname 未变化而直接丢弃；RedirectChain 仍只记录域名。
+					if newDomain != "" && location != currentURL {
+						if newDomain != currentDomain {
+							result.RedirectChain = append(result.RedirectChain, newDomain)
+						}
 						result.IsRedirected = true
 						result.RedirectCount++
 						currentURL = location
