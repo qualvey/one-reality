@@ -45,7 +45,7 @@ export function App() {
       </main>
 
       <footer style={{ borderTop: '1px solid var(--border-subtle)', padding: '24px 32px', textAlign: 'center', fontSize: '0.8rem', color: 'var(--text-sub)' }}>
-        RealityChecker Console · 面向 REALITY 协议的高保真伪装发现与智能权重资产库
+        reasni · 面向 REALITY 协议的高保真伪装发现与智能权重资产库
       </footer>
     </div>
   );

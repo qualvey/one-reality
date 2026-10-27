@@ -21,7 +21,7 @@ export const Navbar = ({
         </div>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span className="brand-title">RealityChecker</span>
+            <span className="brand-title">reasni</span>
             <span className="brand-badge">PRO v1.2</span>
           </div>
         </div>
@@ -33,28 +33,28 @@ export const Navbar = ({
           onClick={() => onTabChange('smart')}
         >
           <Sparkles size={16} />
-          智能同ASN推荐
+          智能推荐
         </button>
         <button
           className={`nav-tab-btn ${currentTab === 'assets' ? 'active' : ''}`}
           onClick={() => onTabChange('assets')}
         >
           <Database size={16} />
-          资产全量管理
+          资产管理
         </button>
         <button
           className={`nav-tab-btn ${currentTab === 'asns' ? 'active' : ''}`}
           onClick={() => onTabChange('asns')}
         >
           <Globe2 size={16} />
-          全球 ASN 拓扑
+          ASN 拓扑
         </button>
         <button
           className={`nav-tab-btn ${currentTab === 'stats' ? 'active' : ''}`}
           onClick={() => onTabChange('stats')}
         >
           <BarChart3 size={16} />
-          数据分析概览
+          数据分析
         </button>
       </nav>
 

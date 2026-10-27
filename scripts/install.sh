@@ -265,12 +265,25 @@ install_reasni() {
         log_info "使用自定义并发数: -t ${OPT_THREADS}"
     fi
 
-    # 2. Token 生成与配置
+    # 2. Token 生成与配置。更新已有服务时必须优先保留旧 Token。
     if [ -z "${OPT_TOKEN}" ]; then
-        # 检查是否已有配置中的 token
-        if [ -f "${DEFAULT_ENV_FILE}" ] && grep -q 'token' "${DEFAULT_ENV_FILE}"; then
-            log_info "保留已有配置文件中的鉴权 Token"
-        else
+        # 从旧 DAEMON_OPTS 中提取 --token 的值，而不是仅判断 token 字符串存在。
+        # 旧逻辑只打印“保留”，但 OPT_TOKEN 仍为空，最终会生成新 Token。
+        if [ -f "${DEFAULT_ENV_FILE}" ] && grep -qE -- '(^|[[:space:]])--token([=[:space:]])' "${DEFAULT_ENV_FILE}"; then
+            OPT_TOKEN="$(sed -n 's/.*--token[=[:space:]]\+\([^"[:space:]]\+\).*/\1/p' "${DEFAULT_ENV_FILE}" | head -n 1)"
+            if [ -n "${OPT_TOKEN}" ]; then
+                log_info "保留已有配置文件中的鉴权 Token"
+            fi
+        fi
+
+        if [ -z "${OPT_TOKEN}" ]; then
+            # 兼容旧版本可能写入 daemon.env 的场景
+            if [ -f "${CONFIG_DIR}/daemon.env" ]; then
+                OPT_TOKEN="$(sed -n 's/.*--token[=[:space:]]\+\([^"[:space:]]\+\).*/\1/p' "${CONFIG_DIR}/daemon.env" | head -n 1)"
+            fi
+        fi
+
+        if [ -z "${OPT_TOKEN}" ]; then
             if command -v openssl >/dev/null 2>&1; then
                 OPT_TOKEN="$(openssl rand -hex 12)"
             else
