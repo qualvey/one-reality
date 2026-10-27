@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { TargetRecord, TargetItem } from '../types';
 import { apiFetch, setTargetStarred } from '../api';
+import { copyText } from '../utils/clipboard';
 import { ConfigModal } from './ConfigModal';
 import { QuickCheckModal } from './QuickCheckModal';
 import {
@@ -180,10 +181,11 @@ export const TargetTable = () => {
     }
   };
 
-  const copyDomain = (domain: string) => {
-    navigator.clipboard.writeText(domain);
-    setCopiedDomain(domain);
-    setTimeout(() => setCopiedDomain(null), 1500);
+  const copyDomain = async (domain: string) => {
+    if (await copyText(domain)) {
+      setCopiedDomain(domain);
+      setTimeout(() => setCopiedDomain(null), 1500);
+    }
   };
 
   const openConfigModal = (row: TargetRecord) => {

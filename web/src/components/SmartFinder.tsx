@@ -12,6 +12,7 @@ import { ConfigModal } from './ConfigModal';
 import { TargetDetailModal } from './TargetDetailModal';
 import { formatCertExpireDate } from '../format';
 import { getCountryDomainSuffix, getCountryFlagEmoji } from '../utils/countryTld';
+import { copyText } from '../utils/clipboard';
 import {
   Sparkles,
   Globe,
@@ -910,10 +911,11 @@ export const SmartFinder = () => {
     }
   }, []);
 
-  const copyDomain = (domain: string) => {
-    navigator.clipboard.writeText(domain);
-    setCopiedDomain(domain);
-    setTimeout(() => setCopiedDomain(null), 1800);
+  const copyDomain = async (domain: string) => {
+    if (await copyText(domain)) {
+      setCopiedDomain(domain);
+      setTimeout(() => setCopiedDomain(null), 1800);
+    }
   };
 
   return (

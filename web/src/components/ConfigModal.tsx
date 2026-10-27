@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { TargetItem } from '../types';
+import { copyText } from '../utils/clipboard';
 import { X, Copy, Check, Terminal, ShieldCheck } from 'lucide-react';
 
 interface ConfigModalProps {
@@ -105,10 +106,11 @@ export const ConfigModal = ({ target, serverIP, onClose }: ConfigModalProps) => 
 
   const codeStr = generateConfig();
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(codeStr);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleCopy = async () => {
+    if (await copyText(codeStr)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   return (

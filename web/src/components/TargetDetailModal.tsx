@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import type { RankedTargetItem, TargetItem, TargetRecord } from '../types';
 import { recheckTarget } from '../api';
 import { formatCertExpireDate } from '../format';
+import { copyText } from '../utils/clipboard';
 import {
   X,
   Copy,
@@ -45,10 +46,11 @@ export const TargetDetailModal = ({ target, onClose, onOpenConfig, onRecheck }: 
 
   if (!target) return null;
 
-  const copyDomain = (domain: string) => {
-    navigator.clipboard.writeText(domain);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1800);
+  const copyDomain = async (domain: string) => {
+    if (await copyText(domain)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    }
   };
 
   const openDomainUrl = (domain: string) => {
